@@ -1,4 +1,4 @@
-# `reprise-backend` — System Design
+# `reprise-backend` - System Design
 
 Deep design reference for the **Reprise AI** control plane and async orchestration tier (internal architecture codename: NEXUS). This document is derived from, and subordinate to, the frozen canon in the `reprise-docs` repo. Where this doc and canon ever disagree, canon wins. Canon docs referenced by filename below (verbatim): `03-container-architecture.md`, `04-service-catalog.md`, `19-api-architecture.md`, `05-data-architecture.md`, `06-multi-tenancy.md`, `07-event-architecture.md`, `18-saas-business-architecture.md`, and the naming authorities `_canon/01-service-catalog.md`, `_canon/02-data-model.md`, `_canon/03-event-taxonomy.md`.
 
@@ -8,7 +8,7 @@ Deep design reference for the **Reprise AI** control plane and async orchestrati
 
 `reprise-backend` is the **synchronous CRUD/control plane plus asynchronous orchestration** half of Reprise AI. It owns durable relational state, identity and tenancy, the SaaS business plane (billing/metering), integrations, meeting-room control, notifications, and the Temporal workflows that coordinate long-running, cross-service processes.
 
-It explicitly does **not** contain the AI/inference tier (LangGraph agents, embeddings, reranker, RAG, knowledge graph, search, ingestion — those live in `reprise-intelligence`) nor the real-time-streaming tier (`realtime-gateway`, `transcription-service` — `reprise-realtime`). Those tiers scale on different signals (GPU/tokens/queue depth; concurrent WebSocket connections) and bill against different cost centers, which is exactly why the system is cut where it is (`03-container-architecture.md` §8).
+It explicitly does **not** contain the AI/inference tier (LangGraph agents, embeddings, reranker, RAG, knowledge graph, search, ingestion - those live in `reprise-intelligence`) nor the real-time-streaming tier (`realtime-gateway`, `transcription-service` - `reprise-realtime`). Those tiers scale on different signals (GPU/tokens/queue depth; concurrent WebSocket connections) and bill against different cost centers, which is exactly why the system is cut where it is (`03-container-architecture.md` §8).
 
 The ten bounded contexts in this repo, by scaling family:
 
@@ -18,8 +18,8 @@ The ten bounded contexts in this repo, by scaling family:
 
 Two invariants bind every context and are not re-derived per service (`04-service-catalog.md` §1):
 
-1. **Tenant isolation at every layer** — `org_id` injected from the Clerk-verified JWT, RLS as the fail-closed backstop.
-2. **At-least-once event delivery with idempotency** — transactional outbox on produce, inbox + Redis dedupe on consume, per-topic DLQ.
+1. **Tenant isolation at every layer** - `org_id` injected from the Clerk-verified JWT, RLS as the fail-closed backstop.
+2. **At-least-once event delivery with idempotency** - transactional outbox on produce, inbox + Redis dedupe on consume, per-topic DLQ.
 
 ---
 
@@ -31,8 +31,8 @@ For each service: responsibility, owned tables/stores, events produced, events c
 
 - **Responsibility.** Single public ingress: TLS termination (with Cloudflare), WAF passthrough, global + per-tenant rate limiting, Clerk JWT pre-validation against cached JWKS, `org_id` extraction from the `org` claim, routing to `bff` or directly to a service / the WebSocket plane. Holds no business logic and owns no data.
 - **Owned tables/stores.** None (stateless, config-only).
-- **Events produced / consumed.** None — off the event bus entirely.
-- **Sync API.** Owns no path prefix of its own; it is the front of every prefix in `_canon/01-service-catalog.md` §6. Re-verification of the JWT still happens at the service tier — the gateway's pre-validation is a DDoS shield and an optimization, not a trust delegation.
+- **Events produced / consumed.** None - off the event bus entirely.
+- **Sync API.** Owns no path prefix of its own; it is the front of every prefix in `_canon/01-service-catalog.md` §6. Re-verification of the JWT still happens at the service tier - the gateway's pre-validation is a DDoS shield and an optimization, not a trust delegation.
 
 ### 2.2 `bff` (edge)
 
@@ -46,14 +46,14 @@ For each service: responsibility, owned tables/stores, events produced, events c
 - **Responsibility.** Identity & tenancy control plane: Clerk webhook user-sync (outbox + reconciliation, Clerk as source of truth), org/tenant provisioning & lifecycle, RBAC, SSO/SAML/SCIM, agent-to-agent authorization grants (deny-by-default), and the `get_user_context(user_id)` source-of-record for role/skills/team.
 - **Owned tables/stores.** `organizations` (tenant root, `id` = `org_id`), `users`, `teams`, `team_members`, `departments`, `tenant_settings`, `data_residency`, plus RBAC roles/grants, SSO config, SCIM state, agent-authz scopes. Redis: `nexus:{org_id}:user_ctx:{user_id}` (5-min TTL). (Org-hierarchy tables `teams`/`team_members`/`departments` are reassigned to `core-api` for CRUD per `03-container-architecture.md` §5; identity owns the identity-and-tenancy surface.)
 - **Events produced.** `tenant-events` (provisioned/suspended/deleted), `notifications`.
-- **Events consumed.** `user-sync-events` (Clerk inbox, sourced from the Clerk webhook — a managed-plane edge, not a Reprise-produced topic).
-- **Sync API.** REST: `POST /clerk/webhook`, `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*`, `GET /context/{user_id}`. **gRPC:** `GetUserContext(user_id)` — carries `org_id` in metadata; read heavily by the agent tier.
+- **Events consumed.** `user-sync-events` (Clerk inbox, sourced from the Clerk webhook - a managed-plane edge, not a Reprise-produced topic).
+- **Sync API.** REST: `POST /clerk/webhook`, `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*`, `GET /context/{user_id}`. **gRPC:** `GetUserContext(user_id)` - carries `org_id` in metadata; read heavily by the agent tier.
 
 ### 2.4 `core-api` (CRUD)
 
 - **Responsibility.** The relational heart and domain CRUD: meetings, participants/speakers, worklogs, decisions/actions read+write models, agent suggestions, agent-collaboration logs, chat persistence, teams/departments read paths. Holds the **outbox** that emits confirmed `decisions`/`actions`.
 - **Owned tables/stores.** `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments`. Does **not** own `transcript_chunks` (owned by `transcription-service` in `reprise-realtime`); serves its read view via FTS.
-- **Events produced.** `meeting-events` (created/updated/ended); and via transactional outbox, `decisions`/`actions` **on confirmation only** — never speculatively.
+- **Events produced.** `meeting-events` (created/updated/ended); and via transactional outbox, `decisions`/`actions` **on confirmation only** - never speculatively.
 - **Events consumed.** `agent-results`, `decisions`, `actions` (to update read models, idempotently).
 - **Sync API (REST).** `GET/POST/PATCH /meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat`; action endpoints `POST /decisions/:id/confirm`, `POST /actions/:id/confirm`. `GET /meetings/:id/transcript` is served here via FTS over `transcription-service`-owned data.
 
@@ -95,7 +95,7 @@ For each service: responsibility, owned tables/stores, events produced, events c
 - **Owned tables/stores.** `notification_log`, delivery receipts, user channel prefs (Postgres RLS by `org_id`). Redis priority queue `nexus:{org_id}:queue:agent:{user_id}`.
 - **Events produced.** `notification-delivery-events`.
 - **Events consumed.** `notifications`, `agent-results` (priority alerts).
-- **Sync API (REST).** `GET /notifications`, `PATCH /notifications/:id` (read/dismiss) — the durable read side of the realtime alert stream.
+- **Sync API (REST).** `GET /notifications`, `PATCH /notifications/:id` (read/dismiss) - the durable read side of the realtime alert stream.
 
 ### 2.10 `workflow-service` (async / Temporal)
 
@@ -127,18 +127,18 @@ User ──HTTPS+Clerk JWT──▶ Cloudflare (CDN, WAF, global rate limit)
 
 Edge responsibilities, in order:
 
-1. **Cloudflare** — cached static/RSC assets, WAF rules, global L7 rate limiting before any origin compute.
-2. **`api-gateway`** — single ingress: TLS, WAF passthrough, global + per-tenant rate limit, Clerk JWT pre-validation, **`org_id` extraction**, routing. **Fails closed** if `org_id` cannot be resolved — no request reaches a tenant-scoped store without a resolved tenant.
-3. **`bff`** — screen aggregation; the only caller of `/bff/*`; owns no data.
-4. **`web-app` ↔ `realtime-gateway`** — the WebSocket leg bypasses `bff` and rides through `api-gateway` directly to the real-time tier (in `reprise-realtime`). This is the only long-lived bidirectional path.
+1. **Cloudflare** - cached static/RSC assets, WAF rules, global L7 rate limiting before any origin compute.
+2. **`api-gateway`** - single ingress: TLS, WAF passthrough, global + per-tenant rate limit, Clerk JWT pre-validation, **`org_id` extraction**, routing. **Fails closed** if `org_id` cannot be resolved - no request reaches a tenant-scoped store without a resolved tenant.
+3. **`bff`** - screen aggregation; the only caller of `/bff/*`; owns no data.
+4. **`web-app` ↔ `realtime-gateway`** - the WebSocket leg bypasses `bff` and rides through `api-gateway` directly to the real-time tier (in `reprise-realtime`). This is the only long-lived bidirectional path.
 
-`org_id` is **never** a path or query parameter on tenant-scoped resources; it is always derived from the token, so a client cannot request another tenant's data by guessing an id (`19-api-architecture.md` §2.1). A cross-tenant access attempt returns `404`, not `403` — existence itself is tenant-confidential.
+`org_id` is **never** a path or query parameter on tenant-scoped resources; it is always derived from the token, so a client cannot request another tenant's data by guessing an id (`19-api-architecture.md` §2.1). A cross-tenant access attempt returns `404`, not `403` - existence itself is tenant-confidential.
 
 ---
 
-## 4. Data ownership rule — one writer per store
+## 4. Data ownership rule - one writer per store
 
-Every store has exactly one **owning service** that writes it; everyone else reads via that service's API or via events — never cross-writes. This is the exhaustive ownership projection of `03-container-architecture.md` §5. Tables owned **in this repo**:
+Every store has exactly one **owning service** that writes it; everyone else reads via that service's API or via events - never cross-writes. This is the exhaustive ownership projection of `03-container-architecture.md` §5. Tables owned **in this repo**:
 
 | Owning service | Tables / stores it writes |
 |---|---|
@@ -156,7 +156,7 @@ Every store has exactly one **owning service** that writes it; everyone else rea
 
 ## 5. Multi-tenancy
 
-The tenant key is **`org_id UUID`**, references `organizations(id)`, present on every tenant-scoped row, cache key, event record, and object prefix (`06-multi-tenancy.md` §1). Model: **pooled + PostgreSQL RLS** for the Free/Pro long tail; **cell-based isolation** (dedicated Postgres instance/cluster) for Enterprise — and RLS is **on even inside a cell** (defense-in-depth).
+The tenant key is **`org_id UUID`**, references `organizations(id)`, present on every tenant-scoped row, cache key, event record, and object prefix (`06-multi-tenancy.md` §1). Model: **pooled + PostgreSQL RLS** for the Free/Pro long tail; **cell-based isolation** (dedicated Postgres instance/cluster) for Enterprise - and RLS is **on even inside a cell** (defense-in-depth).
 
 The canonical RLS policy (frozen in `_canon/02-data-model.md` §7):
 
@@ -185,7 +185,7 @@ Transaction-local is mandatory: with a pooled connection (PgBouncer/Supabase poo
 
 The async backbone is **Redpanda** (Kafka API), **Avro + Schema Registry**, one subject per topic (`{topic}-value`), **BACKWARD** compatibility, every topic **partitioned by tenant** (`org_id` partition key). Delivery is **at-least-once with idempotency** (`07-event-architecture.md`, `_canon/03-event-taxonomy.md`):
 
-- **Transactional outbox.** A producer writes an outbox row in the **same DB transaction** as its state change; a relay publishes it to Redpanda. The state change and the intent-to-emit commit atomically — no lost events, no phantom events.
+- **Transactional outbox.** A producer writes an outbox row in the **same DB transaction** as its state change; a relay publishes it to Redpanda. The state change and the intent-to-emit commit atomically - no lost events, no phantom events.
 - **Inbox dedupe.** A consumer dedupes on `idempotency_key` via an **inbox** table plus the Redis cache key `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h TTL). A redelivered message is recognized and skipped; consume handlers are written to be idempotent regardless.
 - **Per-topic DLQ.** Poison messages (schema mismatch, repeated handler failure) land in a per-topic dead-letter queue for inspection and replay; they never block the partition.
 - **Consumer re-asserts `org_id`** from the event header before any write, so RLS scope applies identically on the async path.
@@ -213,9 +213,9 @@ This contract is the event-plane twin of the synchronous `Idempotency-Key` contr
 
 ---
 
-## 7. Confirmation rule — no silent graph writes
+## 7. Confirmation rule - no silent graph writes
 
-`agent-runtime-service` (in `reprise-intelligence`) *detects* candidate decisions and action items and surfaces them via `agent-results` to the sidebar. It **never** writes Postgres directly and **never** produces the `decisions`/`actions` topics. The user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does **`core-api`'s transactional outbox** emit the confirmed `decisions`/`actions` event that `knowledge-graph-service` consumes to create the AGE `PRODUCED` / `ASSIGNED_TO` edge. There are **no silent graph writes** — edges exist only behind a confirmed row (`03-container-architecture.md` §4.2, §9).
+`agent-runtime-service` (in `reprise-intelligence`) *detects* candidate decisions and action items and surfaces them via `agent-results` to the sidebar. It **never** writes Postgres directly and **never** produces the `decisions`/`actions` topics. The user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does **`core-api`'s transactional outbox** emit the confirmed `decisions`/`actions` event that `knowledge-graph-service` consumes to create the AGE `PRODUCED` / `ASSIGNED_TO` edge. There are **no silent graph writes** - edges exist only behind a confirmed row (`03-container-architecture.md` §4.2, §9).
 
 ---
 
@@ -247,10 +247,10 @@ A breached budget emits a `429 QUOTA_EXCEEDED` on the API path and a `billing-ev
 
 `workflow-service` hosts the durable orchestration; Temporal owns workflow state so the workers are stateless and scale on **task-queue depth**:
 
-- **`MeetingLifecycleWorkflow`** — driven by `meeting-events`; coordinates room open/close, post-meeting processing, and cleanup.
-- **`ActionFollowUpWorkflow`** — driven by confirmed `actions`; reminders at day 1/3/7, manager escalation via Slack DM at day 10 (durable timers, no cron).
-- **RTBF saga** — triggered by `admin-events` (erasure requested); deletes a tenant/user across all six stores in a single workflow keyed by `org_id`/`user_id`.
-- **Dunning saga** — driven by `billing-events`; staged payment-retry and downgrade.
+- **`MeetingLifecycleWorkflow`** - driven by `meeting-events`; coordinates room open/close, post-meeting processing, and cleanup.
+- **`ActionFollowUpWorkflow`** - driven by confirmed `actions`; reminders at day 1/3/7, manager escalation via Slack DM at day 10 (durable timers, no cron).
+- **RTBF saga** - triggered by `admin-events` (erasure requested); deletes a tenant/user across all six stores in a single workflow keyed by `org_id`/`user_id`.
+- **Dunning saga** - driven by `billing-events`; staged payment-retry and downgrade.
 
 ---
 
@@ -259,7 +259,7 @@ A breached budget emits a `429 QUOTA_EXCEEDED` on the API path and a `billing-ev
 - **CRUD / control plane** (`api-gateway`, `bff`, `identity-tenant-service`, `core-api`, `meeting-service`, `integration-service`, `billing-metering-service`, `admin-ops-service`, `notification-service`): autoscale on **HTTP req/s + p95 latency**, cost driven by CPU + Postgres connections. SLO: **REST p95 < 300 ms, p99 < 800 ms** (token-mint p95 < 250 ms).
 - **Async / orchestration** (`workflow-service`): autoscale on **Temporal task-queue depth**, cost driven by worker CPU.
 
-Every service is **horizontally stateless** — no session affinity, no in-process authoritative cache. Session state lives in the Clerk JWT; ephemeral caching lives in namespaced Redis. Early stage runs as a modular monolith on Railway/Render; production runs on Kubernetes (EKS/GKE) with per-service HPA/KEDA signals, peeled off in the canon extraction order.
+Every service is **horizontally stateless** - no session affinity, no in-process authoritative cache. Session state lives in the Clerk JWT; ephemeral caching lives in namespaced Redis. Early stage runs as a modular monolith on Railway/Render; production runs on Kubernetes (EKS/GKE) with per-service HPA/KEDA signals, peeled off in the canon extraction order.
 
 ---
 
@@ -278,7 +278,7 @@ Every service is **horizontally stateless** — no session affinity, no in-proce
 
 - **Typing.** Full Python type hints; Pydantic v2 models for all wire contracts; `mypy` in CI.
 - **Formatting / linting.** `ruff` + `black` (or `ruff format`); a failing lint fails the PR.
-- **Testing.** `pytest` with **TDD** — failing test first. `testcontainers` for real Postgres/Redis/Redpanda in integration tests (RLS fail-closed, outbox/inbox, Avro round-trips).
+- **Testing.** `pytest` with **TDD** - failing test first. `testcontainers` for real Postgres/Redis/Redpanda in integration tests (RLS fail-closed, outbox/inbox, Avro round-trips).
 - **Migrations.** Alembic; a new write path requires a data-model change (canon) before the migration. Migrations are forward-only and reviewed.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `chore:`, …). **No `Co-Authored-By` footer** in this project.
 - **Branching.** Trunk-based with short-lived branches and mandatory PR review.
@@ -289,19 +289,19 @@ Every service is **horizontally stateless** — no session affinity, no in-proce
 
 GitHub Actions pipeline:
 
-1. **Lint** — `ruff` + `black --check`.
-2. **Type-check** — `mypy`.
-3. **Test** — `pytest` with `testcontainers`.
-4. **Spec governance** — Spectral lint + `oasdiff` breaking-change gate against `main`; client/model generation from OpenAPI.
-5. **Build** — Docker image per service.
-6. **Deploy** — to Railway/Render (early) or Kubernetes EKS/GKE (production) via the `reprise-platform` Terraform/manifests.
+1. **Lint** - `ruff` + `black --check`.
+2. **Type-check** - `mypy`.
+3. **Test** - `pytest` with `testcontainers`.
+4. **Spec governance** - Spectral lint + `oasdiff` breaking-change gate against `main`; client/model generation from OpenAPI.
+5. **Build** - Docker image per service.
+6. **Deploy** - to Railway/Render (early) or Kubernetes EKS/GKE (production) via the `reprise-platform` Terraform/manifests.
 
 ---
 
 ## 15. Observability
 
 - **Tracing.** OpenTelemetry; the W3C `trace_id` is propagated from `api-gateway` through every hop, surfaced in error envelopes, and pivots to logs/Sentry.
-- **Metrics & dashboards.** Prometheus + Grafana — req/s, p95/p99 latency, error rates, **consumer lag** per topic, Temporal queue depth, per-tenant quota state.
+- **Metrics & dashboards.** Prometheus + Grafana - req/s, p95/p99 latency, error rates, **consumer lag** per topic, Temporal queue depth, per-tenant quota state.
 - **Errors.** Sentry, keyed by `trace_id`.
 - **Logs.** Structured **JSON** logs (always include `org_id`, `trace_id`, service, route).
 - **Alerts.** Consumer-lag alerts per topic (lag SLO breaches), quota/budget alerts (80%/95%/hard cap), p95 SLO breaches, DLQ depth.
