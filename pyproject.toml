@@ -1,0 +1,65 @@
+[project]
+name = "reprise-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "sqlalchemy[asyncio]>=2",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    "redis[hiredis]>=5",
+    "aiokafka>=0.11",
+    "fastavro>=1.9",
+    "temporalio>=1.7",
+    "stripe>=10",
+    "PyJWT>=2.8",
+    "cryptography>=42",
+    "livekit-api>=0.7",
+    "httpx>=0.27",
+    "grpcio>=1.63",
+    "grpcio-tools>=1.63",
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-exporter-otlp>=1.25",
+    "sentry-sdk[fastapi]>=2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "testcontainers[postgres,redis,kafka]>=4",
+    "ruff>=0.4",
+    "black>=24",
+    "mypy>=1.10",
+    "types-redis>=4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["services", "libs"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["slow: marks tests as slow (testcontainers)"]

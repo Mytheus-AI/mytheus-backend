@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package reprise.identity.v1;
+
+// GetUserContext is the tight-latency mesh-internal RPC served by
+// identity-tenant-service. It is read heavily by the AI tier's agents.
+// org_id travels in gRPC metadata (key: "org-id"), not in the message body.
+service IdentityService {
+  rpc GetUserContext(GetUserContextRequest) returns (UserContext);
+}
+
+message GetUserContextRequest {
+  string user_id = 1;
+}
+
+message UserContext {
+  string user_id      = 1;
+  string org_id       = 2;
+  string email        = 3;
+  string role         = 4;  // domain role (e.g. "Backend Engineer") — NOT an RBAC tier
+  repeated string skills = 5;
+  string bio          = 6;
+  string avatar_url   = 7;
+  string rbac_tier    = 8;  // "owner" | "admin" | "member"
+  repeated string team_ids = 9;
+  string department_id = 10;
+  int64 cache_expires_at = 11;  // unix ms; cached at nexus:{org_id}:user_ctx:{user_id} 5-min TTL
+}

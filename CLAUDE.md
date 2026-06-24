@@ -28,18 +28,18 @@ Confirmation rule. `core-api` is the sole producer of confirmed `decisions`/`act
 
 ## Service map
 
-| Service | Responsibility | Owns (tables / stores) | Produces | Consumes | API prefix |
-|---|---|---|---|---|---|
-| `api-gateway` | Single public ingress: TLS, WAF, rate limit, JWT pre-validate, `org_id` extract, route. No business logic. | none (stateless, config-only) | none | none | front of every prefix; owns none |
-| `bff` | Backend-for-frontend: screen-shaped read aggregation, fan-out, short read cache. No domain ownership. | none (short `nexus:{org_id}:…` Redis read cache) | none | none | `/bff/*` |
-| `identity-tenant-service` | Identity and tenancy: org/tenant provisioning, RBAC, SSO/SAML/SCIM, Clerk user-sync, agent-authz grants, user-context source of record. | `organizations` (id = `org_id`), `users`, `tenant_settings`, `data_residency`, RBAC/SSO/SCIM/agent-authz state | `tenant-events`, `notifications` | `user-sync-events` (Clerk inbox) | REST `/orgs`, `/rbac`, `/scim/v2`, `/context`, `/clerk/webhook`; gRPC `GetUserContext` |
-| `core-api` | Relational heart and domain CRUD; outbox for confirmed `decisions`/`actions`. | `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments` | `meeting-events`; `decisions`/`actions` (on confirm only) | `agent-results`, `decisions`, `actions` | `/meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/suggestions`, `/chat` |
-| `meeting-service` | LiveKit transport adapter: room token mint, webhooks, server-side audio hook to transcription. | `meeting_rooms`; `nexus-recordings` bucket | `meeting-room-events` | `meeting-events` | `/api/meetings/:id/token`, `/livekit/webhook` |
-| `integration-service` | External integrations: Google Calendar, Slack, Jira (default)/Linear (alt). Guardrail R8. | `integration_connections`, `oauth_tokens` (envelope-encrypted) | `integration-events`, `actions` (status sync) | `actions`, `meeting-events`, `notifications` | `/oauth/{provider}`, `/webhooks/{provider}` |
-| `billing-metering-service` | SaaS monetization: Stripe billing/seats/dunning/tax, usage metering, quota enforcement (R4). | `plans` (global, no `org_id`), `subscriptions`, `usage_events`, `usage_aggregates`, `quotas`, `invoices`, `agent_budgets`; `nexus-invoices` bucket | `billing-events`, `notifications` | `usage-events`, `tenant-events` | `/billing/*`, `/usage`, `/plans`, `/stripe/webhook` |
-| `admin-ops-service` | Tenant-admin and internal-ops consoles; compliance audit trail. | feature flags, ops audit log, `audit_logs` (append-only), impersonation grants; `nexus-audit-archive` | `admin-events` | `tenant-events`, `billing-events`, `graph-events` | `/admin/tenant/*`, `/admin/ops/*` |
-| `notification-service` | Unified delivery (in-app, email, Slack). Sole authorized external-channel fan-out for `notifications`. | `notification_log`, delivery receipts, channel prefs; Redis priority queue `nexus:{org_id}:queue:agent:{user_id}` | `notification-delivery-events` | `notifications`, `agent-results` | `/notifications` |
-| `workflow-service` | Temporal durable orchestration: meeting lifecycle, action follow-up, RTBF saga, dunning saga. | none durable (Temporal owns workflow state); may write `nexus-exports`/`nexus-audit-archive` | `notifications` | `billing-events`, `tenant-events`, `meeting-events`, `actions`, `admin-events` | internal `/workflows/*` (not public) |
+| Service                    | Responsibility                                                                                                                          | Owns (tables / stores)                                                                                                                                                                                | Produces                                                  | Consumes                                                                       | API prefix                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `api-gateway`              | Single public ingress: TLS, WAF, rate limit, JWT pre-validate, `org_id` extract, route. No business logic.                              | none (stateless, config-only)                                                                                                                                                                         | none                                                      | none                                                                           | front of every prefix; owns none                                                                      |
+| `bff`                      | Backend-for-frontend: screen-shaped read aggregation, fan-out, short read cache. No domain ownership.                                   | none (short `nexus:{org_id}:…` Redis read cache)                                                                                                                                                      | none                                                      | none                                                                           | `/bff/*`                                                                                              |
+| `identity-tenant-service`  | Identity and tenancy: org/tenant provisioning, RBAC, SSO/SAML/SCIM, Clerk user-sync, agent-authz grants, user-context source of record. | `organizations` (id = `org_id`), `users`, `tenant_settings`, `data_residency`, RBAC/SSO/SCIM/agent-authz state                                                                                        | `tenant-events`, `notifications`                          | `user-sync-events` (Clerk inbox)                                               | REST `/orgs`, `/rbac`, `/scim/v2`, `/context`, `/clerk/webhook`; gRPC `GetUserContext`                |
+| `core-api`                 | Relational heart and domain CRUD; outbox for confirmed `decisions`/`actions`.                                                           | `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments` | `meeting-events`; `decisions`/`actions` (on confirm only) | `agent-results`, `decisions`, `actions`                                        | `/meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/suggestions`, `/chat` |
+| `meeting-service`          | LiveKit transport adapter: room token mint, webhooks, server-side audio hook to transcription.                                          | `meeting_rooms`; `nexus-recordings` bucket                                                                                                                                                            | `meeting-room-events`                                     | `meeting-events`                                                               | `/api/meetings/:id/token`, `/livekit/webhook`                                                         |
+| `integration-service`      | External integrations: Google Calendar, Slack, Jira (default)/Linear (alt). Guardrail R8.                                               | `integration_connections`, `oauth_tokens` (envelope-encrypted)                                                                                                                                        | `integration-events`, `actions` (status sync)             | `actions`, `meeting-events`, `notifications`                                   | `/oauth/{provider}`, `/webhooks/{provider}`                                                           |
+| `billing-metering-service` | SaaS monetization: Stripe billing/seats/dunning/tax, usage metering, quota enforcement (R4).                                            | `plans` (global, no `org_id`), `subscriptions`, `usage_events`, `usage_aggregates`, `quotas`, `invoices`, `agent_budgets`; `nexus-invoices` bucket                                                    | `billing-events`, `notifications`                         | `usage-events`, `tenant-events`                                                | `/billing/*`, `/usage`, `/plans`, `/stripe/webhook`                                                   |
+| `admin-ops-service`        | Tenant-admin and internal-ops consoles; compliance audit trail.                                                                         | feature flags, ops audit log, `audit_logs` (append-only), impersonation grants; `nexus-audit-archive`                                                                                                 | `admin-events`                                            | `tenant-events`, `billing-events`, `graph-events`                              | `/admin/tenant/*`, `/admin/ops/*`                                                                     |
+| `notification-service`     | Unified delivery (in-app, email, Slack). Sole authorized external-channel fan-out for `notifications`.                                  | `notification_log`, delivery receipts, channel prefs; Redis priority queue `nexus:{org_id}:queue:agent:{user_id}`                                                                                     | `notification-delivery-events`                            | `notifications`, `agent-results`                                               | `/notifications`                                                                                      |
+| `workflow-service`         | Temporal durable orchestration: meeting lifecycle, action follow-up, RTBF saga, dunning saga.                                           | none durable (Temporal owns workflow state); may write `nexus-exports`/`nexus-audit-archive`                                                                                                          | `notifications`                                           | `billing-events`, `tenant-events`, `meeting-events`, `actions`, `admin-events` | internal `/workflows/*` (not public)                                                                  |
 
 Note: `teams`/`team_members`/`departments` CRUD is assigned to `core-api`; identity holds the identity-and-tenancy surface. `transcript_chunks` is owned by `transcription-service` in `reprise-realtime` and is read-only here (served via FTS).
 
@@ -71,14 +71,14 @@ Each service is a Python package under `services/`. Anything cross-cutting (the 
 
 ## Invariants you must not break
 
-| Rule | Why | If you break it |
-|---|---|---|
-| `org_id` on every hop | Tenant isolation is fail-closed at every layer: header + gRPC metadata carry it, `SET app.current_org` scopes RLS, the `nexus:{org_id}:` prefix scopes Redis. | Cross-tenant data leak. The most severe class of bug in this product. |
-| One writer per store | Bounded contexts split cleanly only if no table has two writers. A new write path is a data-model decision, not a code decision. | Two services race the same rows; the future service split re-cuts a domain. Fix canon first. |
+| Rule                                            | Why                                                                                                                                                            | If you break it                                                                                                     |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `org_id` on every hop                           | Tenant isolation is fail-closed at every layer: header + gRPC metadata carry it, `SET app.current_org` scopes RLS, the `nexus:{org_id}:` prefix scopes Redis.  | Cross-tenant data leak. The most severe class of bug in this product.                                               |
+| One writer per store                            | Bounded contexts split cleanly only if no table has two writers. A new write path is a data-model decision, not a code decision.                               | Two services race the same rows; the future service split re-cuts a domain. Fix canon first.                        |
 | At-least-once + idempotency on every async edge | Redpanda redelivers. Outbox makes the state change and the emit atomic; inbox/dedupe makes redelivery a no-op; DLQ keeps one poison message off the partition. | Lost events, phantom events, double-applied side effects (e.g. a graph edge created twice), or a stalled partition. |
-| No silent commits | `decisions`/`actions` represent confirmed user intent; the knowledge graph trusts them. | The graph gains edges the user never confirmed. Only `core-api`'s outbox emits these, only on confirm. |
-| Deny-by-default agent authz | Agent-to-agent and cross-tenant requests must fail closed and be audited (`agent_collaborations`). | An agent acts across a tenant boundary it was never granted. |
-| Stateless services + durable stores only | Horizontal scale requires no session affinity and no in-process authoritative cache. State lives in Postgres, Redis, object storage, Temporal, or the JWT. | A pod restart or scale-out drops authoritative state; load balancing breaks. |
+| No silent commits                               | `decisions`/`actions` represent confirmed user intent; the knowledge graph trusts them.                                                                        | The graph gains edges the user never confirmed. Only `core-api`'s outbox emits these, only on confirm.              |
+| Deny-by-default agent authz                     | Agent-to-agent and cross-tenant requests must fail closed and be audited (`agent_collaborations`).                                                             | An agent acts across a tenant boundary it was never granted.                                                        |
+| Stateless services + durable stores only        | Horizontal scale requires no session affinity and no in-process authoritative cache. State lives in Postgres, Redis, object storage, Temporal, or the JWT.     | A pod restart or scale-out drops authoritative state; load balancing breaks.                                        |
 
 ## Naming authority
 
@@ -93,6 +93,7 @@ Never invent or rename a service, table, or topic silently. A rename goes throug
 ## Common tasks (recipes)
 
 Add a REST endpoint to a service.
+
 1. Confirm the path prefix belongs to this service (`_canon/01-service-catalog.md`); no two services share a prefix.
 2. Define Pydantic v2 request/response models; the response is the canonical persisted resource, never a partial echo.
 3. Write the route under the service package; depend on the shared tenancy helper so `app.current_org` is set transaction-locally before any tenant-scoped query.
@@ -101,12 +102,14 @@ Add a REST endpoint to a service.
 6. Add the failing test first (RLS isolation + happy path).
 
 Add a new event producer (with outbox).
+
 1. Confirm the topic name and that this service is an allowed producer in `_canon/03-event-taxonomy.md`; align the Avro schema with `reprise-events` (BACKWARD compatible).
 2. In the same DB transaction as the state change, write an outbox row (using the `libs/shared` outbox). Never publish to Redpanda directly from request code.
 3. The relay publishes the outbox row; partition key is `org_id`. Include `org_id` and an `idempotency_key` in the envelope.
 4. Test that the state change and the outbox row commit atomically (and roll back together).
 
 Add a new event consumer (with inbox/dedupe + DLQ).
+
 1. Confirm this service is an allowed consumer of the topic in `_canon/03-event-taxonomy.md`.
 2. Re-assert `org_id` from the event header and `SET app.current_org` before any write.
 3. Dedupe on `idempotency_key` via the inbox table plus `nexus:{org_id}:dedupe:{topic}:{idempotency_key}` (24h TTL); write the handler to be idempotent regardless.
@@ -114,6 +117,7 @@ Add a new event consumer (with inbox/dedupe + DLQ).
 5. Test redelivery is a no-op and that a poison message lands in the DLQ.
 
 Add a table + Alembic migration (with RLS policy).
+
 1. Edit `_canon/02-data-model.md` FIRST (a new write path is a data-model change). One owning service only.
 2. Add `org_id UUID` referencing `organizations(id)` to every tenant-scoped row. `plans` is the deliberate exception (global, no `org_id`).
 3. `uv run alembic revision --autogenerate -m "feat: add <table>"`; in the migration enable RLS with the canonical policy:
@@ -127,11 +131,13 @@ Add a table + Alembic migration (with RLS policy).
 4. Migrations are forward-only and reviewed. Add an RLS-isolation test (a query under tenant A must not see tenant B's rows).
 
 Add a gRPC method.
+
 1. Define the message/service in `proto/`; regenerate stubs. Keep changes BACKWARD compatible.
 2. `org_id` travels in gRPC metadata, not in the message body; the handler sets `app.current_org` from it.
 3. gRPC stays mesh-internal (e.g. `GetUserContext`); it is never routed publicly.
 
 Add a Temporal workflow/activity.
+
 1. Add it under `services/workflow-service/`; Temporal owns workflow state, so keep workers stateless.
 2. Workflows are driven by consumed events or task-queue signals; activities drive CRUD over REST against `core-api`/`integration-service` (do not cross-write their tables).
 3. Use durable timers for delays (e.g. action reminders at day 1/3/7), not cron. Key tenant-scoped sagas (e.g. RTBF) by `org_id`/`user_id`.
@@ -193,3 +199,7 @@ Required env vars (see `.env.example` for the full list): `DATABASE_URL` (pooled
 - Trunk-based development, short-lived branches, mandatory PR review.
 - CI must pass: ruff + black + mypy + pytest (testcontainers) + Spectral lint + `oasdiff` breaking-change gate against `main`.
 - Every endpoint declares its auth requirement in the OpenAPI spec (no declared auth = failed review). A breaking REST change needs a major-version bump (`/api/v2`); a breaking topic or table change needs an ADR (and a canon edit) first.
+
+## MUST FOLLOW RULE
+
+-after building/implementing/fixing or after any session or after any particular feature implementation or anything you do always write about it comprehensively in the PREVIOUS.md file and explain it properly so that any person and their coding agents will understand it thoroughly and properly after my session.also mention why it has built like that or why that particular decision was taken.
