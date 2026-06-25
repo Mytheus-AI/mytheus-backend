@@ -8,10 +8,8 @@ from fastapi import FastAPI
 
 from libs.shared.errors import add_exception_handlers
 from libs.shared.telemetry import setup_telemetry
-from services.notification_service.routes import notifications
-
 app = FastAPI(title="notification-service", version="1.0.0")
 setup_telemetry(app, service_name="notification-service")
 add_exception_handlers(app)
 
-app.include_router(notifications.router, prefix="/notifications")
+# TODO: add router for /notifications (read/dismiss REST surface)

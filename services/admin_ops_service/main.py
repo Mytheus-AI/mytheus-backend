@@ -11,11 +11,8 @@ from fastapi import FastAPI
 
 from libs.shared.errors import add_exception_handlers
 from libs.shared.telemetry import setup_telemetry
-from services.admin_ops_service.routes import tenant_admin, ops
-
 app = FastAPI(title="admin-ops-service", version="1.0.0")
 setup_telemetry(app, service_name="admin-ops-service")
 add_exception_handlers(app)
 
-app.include_router(tenant_admin.router, prefix="/admin/tenant")
-app.include_router(ops.router, prefix="/admin/ops")
+# TODO: add routers for /admin/tenant/* and /admin/ops/*

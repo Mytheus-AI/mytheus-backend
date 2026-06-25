@@ -12,14 +12,13 @@ from fastapi import FastAPI
 
 from libs.shared.errors import add_exception_handlers
 from libs.shared.telemetry import setup_telemetry
-from services.identity_tenant_service.routes import auth, orgs, rbac, scim, context
+from services.identity_tenant_service.routes import auth, scim
 
 app = FastAPI(title="identity-tenant-service", version="1.0.0")
 setup_telemetry(app, service_name="identity-tenant-service")
 add_exception_handlers(app)
 
-app.include_router(auth.router)
-app.include_router(orgs.router, prefix="/orgs")
-app.include_router(rbac.router, prefix="/rbac")
-app.include_router(scim.router, prefix="/scim/v2")
-app.include_router(context.router, prefix="/context")
+app.include_router(auth.router)            # POST /supabase/webhook
+app.include_router(scim.router, prefix="/scim/v2")  # SCIM 2.0 stubs (Enterprise)
+
+# TODO: add routers for /orgs /rbac /context

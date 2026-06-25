@@ -27,6 +27,9 @@ fix:
 	uv run ruff check --fix . && uv run black .
 
 # Run a single service (modular-monolith dev mode)
+run-gateway:
+	uv run uvicorn services.api_gateway.main:app --reload --port 8080
+
 run-core-api:
 	uv run uvicorn services.core_api.main:app --reload --port 8002
 

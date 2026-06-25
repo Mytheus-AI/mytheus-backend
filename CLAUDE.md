@@ -202,4 +202,4 @@ Required env vars (see `.env.example` for the full list): `DATABASE_URL` (pooled
 
 ## MUST FOLLOW RULE
 
--after building/implementing/fixing or after any session or after any particular feature implementation or anything you do always write about it comprehensively in the PREVIOUS.md file and explain it properly so that any person and their coding agents will understand it thoroughly and properly after my session.also mention why it has built like that or why that particular decision was taken.
+-after building/implementing/fixing or after any session or after any particular feature implementation or anything you do always write about it comprehensively in the PREVIOUS.md file and explain it properly so that any person and their coding agents will understand it thoroughly and properly after my session.also mention why it has built like that or why that particular decision was taken.also do not overcomplicate any thing.. make the optimal/professional simple approch working code first and only make it more complicated if required.
