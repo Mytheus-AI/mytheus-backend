@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package reprise.identity.v1;
+package mytheus.identity.v1;
 
 // GetUserContext is the tight-latency mesh-internal RPC served by
 // identity-tenant-service. It is read heavily by the AI tier's agents.

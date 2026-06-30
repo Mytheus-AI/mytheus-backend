@@ -5,7 +5,7 @@
 ### 1. Replaced Clerk Auth with Supabase Auth
 
 **Why this decision was taken:**
-The project already uses Supabase Postgres. Using Supabase Auth eliminates a separate third-party vendor dependency (Clerk), reduces the credential surface, and allows auth + database to share a single Supabase project. The existing Clerk decision was recorded in ADR-0010 (`reprise-docs/adr/0010-auth-clerk-enterprise-sso.md`); this change supersedes that ADR for the identity provider only — the surrounding architecture (JWT-in-bearer, org_id in every hop, RBAC tiers, SCIM stubs) is preserved.
+The project already uses Supabase Postgres. Using Supabase Auth eliminates a separate third-party vendor dependency (Clerk), reduces the credential surface, and allows auth + database to share a single Supabase project. The existing Clerk decision was recorded in ADR-0010 (`mytheus-docs/adr/0010-auth-clerk-enterprise-sso.md`); this change supersedes that ADR for the identity provider only — the surrounding architecture (JWT-in-bearer, org_id in every hop, RBAC tiers, SCIM stubs) is preserved.
 
 **Key changes from Clerk → Supabase Auth:**
 
@@ -46,18 +46,18 @@ In session 1, the scaffold went too far: it created a `raise NotImplementedError
 - `migrations/sql/rls_policies.sql` — the RLS template comment is documentation (it's in CLAUDE.md already); the outbox/inbox DDL belongs in an Alembic migration generated from SQLAlchemy models, not a standalone SQL file in a skeleton with no models yet.
 
 **Why `libs/shared/events.py` was kept (not deleted):**
-CLAUDE.md explicitly states that event envelopes belong in `libs/shared/`. The `reprise-events` repo owns Avro schemas and Schema Registry subjects; `libs/shared/events.py` is the Python wrapper/envelope class that this service uses to enqueue outbox rows. These are distinct concerns.
+CLAUDE.md explicitly states that event envelopes belong in `libs/shared/`. The `mytheus-events` repo owns Avro schemas and Schema Registry subjects; `libs/shared/events.py` is the Python wrapper/envelope class that this service uses to enqueue outbox rows. These are distinct concerns.
 
 **Why `conftest.py` was kept:**
 CLAUDE.md specifies testcontainers as the backing-service strategy for tests. The root conftest.py implements exactly that pattern. It's minimal (25 lines) and is the correct foundation for future tests.
 
 **Why `libs/shared/outbox.py` and `inbox.py` were kept:**
-CLAUDE.md explicitly says `outbox/inbox base classes` belong in `libs/shared/`. These are not the Avro schemas (those are in reprise-events); they are the Python helpers that write outbox rows in a transaction and dedupe inbox messages.
+CLAUDE.md explicitly says `outbox/inbox base classes` belong in `libs/shared/`. These are not the Avro schemas (those are in mytheus-events); they are the Python helpers that write outbox rows in a transaction and dedupe inbox messages.
 
 ### Final structure after cleanup
 
 ```
-reprise-backend/
+mytheus-backend/
 ├── pyproject.toml
 ├── docker-compose.yml
 ├── .env.example
@@ -110,10 +110,10 @@ reprise-backend/
 28 meaningful Python files (vs 60+ before cleanup).
 
 **Notes on libs/shared file count:** The lean skeleton originally described "~6 files" but CLAUDE.md explicitly names event envelopes and idempotency-key handling as cross-cutting concerns that belong here. The 8-file count is correct:
-- `events.py` — `outbox.py` imports `EventEnvelope` from it; these are coupled. The `reprise-events` repo owns Avro schemas; this is the Python envelope wrapper.
+- `events.py` — `outbox.py` imports `EventEnvelope` from it; these are coupled. The `mytheus-events` repo owns Avro schemas; this is the Python envelope wrapper.
 - `idempotency.py` — working middleware (not a stub); CLAUDE.md mandates Idempotency-Key on every mutating POST.
 
-**Note on `api_gateway/`:** Was previously only a `nginx.conf` (infra config that belongs in `reprise-platform`). Replaced with a proper Python package stub (`main.py` + `__init__.py`) matching the other 9 service packages. The nginx.conf was deleted.
+**Note on `api_gateway/`:** Was previously only a `nginx.conf` (infra config that belongs in `mytheus-platform`). Replaced with a proper Python package stub (`main.py` + `__init__.py`) matching the other 9 service packages. The nginx.conf was deleted.
 
 ---
 
@@ -126,8 +126,8 @@ reprise-backend/
 5. **gRPC server** — Implement `GetUserContext` in `identity_tenant_service`; generate stubs with `make proto`.
 6. **Temporal reconciliation** — Scheduled workflow calling Supabase Admin API (`GET /auth/v1/admin/users`) to diff and reconcile `public.users` hourly.
 7. **Supabase hook activation** — Run `migrations/sql/custom_claims_hook.sql` against the Supabase project and enable in Dashboard (Auth → Hooks → "Customize Access Token (JWT) Claims" → select `public.custom_access_token_hook`).
-8. **Tests** — RLS isolation tests, outbox/inbox idempotency tests, Avro round-trip tests against `reprise-events` schemas.
-9. **Update sibling repos** — `reprise-ui` and `reprise-mobile` still reference Clerk (`@clerk/nextjs`, `@clerk/clerk-expo`). They need updating to `@supabase/ssr` and Supabase Mobile Auth respectively once this backend auth migration is confirmed working.
+8. **Tests** — RLS isolation tests, outbox/inbox idempotency tests, Avro round-trip tests against `mytheus-events` schemas.
+9. **Update sibling repos** — `mytheus-ui` and `mytheus-mobile` still reference Clerk (`@clerk/nextjs`, `@clerk/clerk-expo`). They need updating to `@supabase/ssr` and Supabase Mobile Auth respectively once this backend auth migration is confirmed working.
 
 ## Key invariants (never break these)
 

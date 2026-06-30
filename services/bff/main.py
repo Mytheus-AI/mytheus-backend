@@ -1,7 +1,7 @@
 """Backend-for-frontend service.
 
 Screen-shaped read aggregation. No domain ownership; no data written here.
-The only caller of /bff/* is reprise-ui.
+The only caller of /bff/* is mytheus-ui.
 """
 from fastapi import FastAPI
 

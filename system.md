@@ -1,14 +1,14 @@
-# `reprise-backend` - System Design
+# `mytheus-backend` - System Design
 
-Deep design reference for the **Reprise AI** control plane and async orchestration tier (internal architecture codename: NEXUS). This document is derived from, and subordinate to, the frozen canon in the `reprise-docs` repo. Where this doc and canon ever disagree, canon wins. Canon docs referenced by filename below (verbatim): `03-container-architecture.md`, `04-service-catalog.md`, `19-api-architecture.md`, `05-data-architecture.md`, `06-multi-tenancy.md`, `07-event-architecture.md`, `18-saas-business-architecture.md`, and the naming authorities `_canon/01-service-catalog.md`, `_canon/02-data-model.md`, `_canon/03-event-taxonomy.md`.
+Deep design reference for the **Mytheus** control plane and async orchestration tier (internal architecture codename: NEXUS). This document is derived from, and subordinate to, the frozen canon in the `mytheus-docs` repo. Where this doc and canon ever disagree, canon wins. Canon docs referenced by filename below (verbatim): `03-container-architecture.md`, `04-service-catalog.md`, `19-api-architecture.md`, `05-data-architecture.md`, `06-multi-tenancy.md`, `07-event-architecture.md`, `18-saas-business-architecture.md`, and the naming authorities `_canon/01-service-catalog.md`, `_canon/02-data-model.md`, `_canon/03-event-taxonomy.md`.
 
 ---
 
 ## 1. Purpose & bounded contexts
 
-`reprise-backend` is the **synchronous CRUD/control plane plus asynchronous orchestration** half of Reprise AI. It owns durable relational state, identity and tenancy, the SaaS business plane (billing/metering), integrations, meeting-room control, notifications, and the Temporal workflows that coordinate long-running, cross-service processes.
+`mytheus-backend` is the **synchronous CRUD/control plane plus asynchronous orchestration** half of Mytheus. It owns durable relational state, identity and tenancy, the SaaS business plane (billing/metering), integrations, meeting-room control, notifications, and the Temporal workflows that coordinate long-running, cross-service processes.
 
-It explicitly does **not** contain the AI/inference tier (LangGraph agents, embeddings, reranker, RAG, knowledge graph, search, ingestion - those live in `reprise-intelligence`) nor the real-time-streaming tier (`realtime-gateway`, `transcription-service` - `reprise-realtime`). Those tiers scale on different signals (GPU/tokens/queue depth; concurrent WebSocket connections) and bill against different cost centers, which is exactly why the system is cut where it is (`03-container-architecture.md` §8).
+It explicitly does **not** contain the AI/inference tier (LangGraph agents, embeddings, reranker, RAG, knowledge graph, search, ingestion - those live in `mytheus-intelligence`) nor the real-time-streaming tier (`realtime-gateway`, `transcription-service` - `mytheus-realtime`). Those tiers scale on different signals (GPU/tokens/queue depth; concurrent WebSocket connections) and bill against different cost centers, which is exactly why the system is cut where it is (`03-container-architecture.md` §8).
 
 The ten bounded contexts in this repo, by scaling family:
 
@@ -39,20 +39,20 @@ For each service: responsibility, owned tables/stores, events produced, events c
 - **Responsibility.** Backend-for-frontend: aggregates/denormalizes reads so the web app makes one call per screen, fans out to services over REST/gRPC, shapes payloads, applies a short read-through Redis cache. No domain ownership.
 - **Owned tables/stores.** None (short `nexus:{org_id}:…` Redis read cache only).
 - **Events produced / consumed.** None.
-- **Sync API (REST).** `GET/POST /bff/*` (screen-shaped), the **only** caller of those endpoints, consumed only by `reprise-ui`. Downstream reads: `identity-tenant-service`, `core-api`, `integration-service`, `billing-metering-service`, `admin-ops-service`, plus the AI-tier `rag-service`/`search-service`.
+- **Sync API (REST).** `GET/POST /bff/*` (screen-shaped), the **only** caller of those endpoints, consumed only by `mytheus-ui`. Downstream reads: `identity-tenant-service`, `core-api`, `integration-service`, `billing-metering-service`, `admin-ops-service`, plus the AI-tier `rag-service`/`search-service`.
 
 ### 2.3 `identity-tenant-service` (CRUD)
 
 - **Responsibility.** Identity & tenancy control plane: Clerk webhook user-sync (outbox + reconciliation, Clerk as source of truth), org/tenant provisioning & lifecycle, RBAC, SSO/SAML/SCIM, agent-to-agent authorization grants (deny-by-default), and the `get_user_context(user_id)` source-of-record for role/skills/team.
 - **Owned tables/stores.** `organizations` (tenant root, `id` = `org_id`), `users`, `teams`, `team_members`, `departments`, `tenant_settings`, `data_residency`, plus RBAC roles/grants, SSO config, SCIM state, agent-authz scopes. Redis: `nexus:{org_id}:user_ctx:{user_id}` (5-min TTL). (Org-hierarchy tables `teams`/`team_members`/`departments` are reassigned to `core-api` for CRUD per `03-container-architecture.md` §5; identity owns the identity-and-tenancy surface.)
 - **Events produced.** `tenant-events` (provisioned/suspended/deleted), `notifications`.
-- **Events consumed.** `user-sync-events` (Clerk inbox, sourced from the Clerk webhook - a managed-plane edge, not a Reprise-produced topic).
+- **Events consumed.** `user-sync-events` (Clerk inbox, sourced from the Clerk webhook - a managed-plane edge, not a Mytheus-produced topic).
 - **Sync API.** REST: `POST /clerk/webhook`, `GET/POST /orgs`, `/rbac/*`, `/scim/v2/*`, `GET /context/{user_id}`. **gRPC:** `GetUserContext(user_id)` - carries `org_id` in metadata; read heavily by the agent tier.
 
 ### 2.4 `core-api` (CRUD)
 
 - **Responsibility.** The relational heart and domain CRUD: meetings, participants/speakers, worklogs, decisions/actions read+write models, agent suggestions, agent-collaboration logs, chat persistence, teams/departments read paths. Holds the **outbox** that emits confirmed `decisions`/`actions`.
-- **Owned tables/stores.** `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments`. Does **not** own `transcript_chunks` (owned by `transcription-service` in `reprise-realtime`); serves its read view via FTS.
+- **Owned tables/stores.** `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments`. Does **not** own `transcript_chunks` (owned by `transcription-service` in `mytheus-realtime`); serves its read view via FTS.
 - **Events produced.** `meeting-events` (created/updated/ended); and via transactional outbox, `decisions`/`actions` **on confirmation only** - never speculatively.
 - **Events consumed.** `agent-results`, `decisions`, `actions` (to update read models, idempotently).
 - **Sync API (REST).** `GET/POST/PATCH /meetings`, `/teams`, `/departments`, `/worklogs`, `/decisions`, `/actions`, `/chat`; action endpoints `POST /decisions/:id/confirm`, `POST /actions/:id/confirm`. `GET /meetings/:id/transcript` is served here via FTS over `transcription-service`-owned data.
@@ -68,9 +68,9 @@ For each service: responsibility, owned tables/stores, events produced, events c
 ### 2.6 `integration-service` (CRUD)
 
 - **Responsibility.** External integrations: Google Calendar OAuth (auto-create meetings, match participants by email, route attachments to ingestion), Slack bot OAuth, Jira (default) / Linear (alt) bidirectional action-item sync + status webhooks. **Guardrail R8: Calendar + Slack + one of Jira/Linear only.**
-- **Owned tables/stores.** `integration_connections` (provider, `external_account_id`, status, scopes, `installed_by`) and `oauth_tokens` (envelope-encrypted at rest, per-tenant KMS data key; never returned by API), plus external↔Reprise id maps and webhook cursors. Postgres RLS by `org_id`. (Canon §3 prose names the map `integration_links`; the frozen data-model table names are `integration_connections` + `oauth_tokens`, used here.)
+- **Owned tables/stores.** `integration_connections` (provider, `external_account_id`, status, scopes, `installed_by`) and `oauth_tokens` (envelope-encrypted at rest, per-tenant KMS data key; never returned by API), plus external↔Mytheus id maps and webhook cursors. Postgres RLS by `org_id`. (Canon §3 prose names the map `integration_links`; the frozen data-model table names are `integration_connections` + `oauth_tokens`, used here.)
 - **Events produced.** `integration-events` (event→meeting, attachment-to-ingest, external status → action update) and `actions` (status sync back).
-- **Events consumed.** `actions` (push Reprise action → external ticket), `meeting-events`, `notifications`.
+- **Events consumed.** `actions` (push Mytheus action → external ticket), `meeting-events`, `notifications`.
 - **Sync API (REST).** OAuth callbacks `/oauth/{provider}`, provider webhooks `/webhooks/{provider}`.
 
 ### 2.7 `billing-metering-service` (CRUD)
@@ -130,7 +130,7 @@ Edge responsibilities, in order:
 1. **Cloudflare** - cached static/RSC assets, WAF rules, global L7 rate limiting before any origin compute.
 2. **`api-gateway`** - single ingress: TLS, WAF passthrough, global + per-tenant rate limit, Clerk JWT pre-validation, **`org_id` extraction**, routing. **Fails closed** if `org_id` cannot be resolved - no request reaches a tenant-scoped store without a resolved tenant.
 3. **`bff`** - screen aggregation; the only caller of `/bff/*`; owns no data.
-4. **`web-app` ↔ `realtime-gateway`** - the WebSocket leg bypasses `bff` and rides through `api-gateway` directly to the real-time tier (in `reprise-realtime`). This is the only long-lived bidirectional path.
+4. **`web-app` ↔ `realtime-gateway`** - the WebSocket leg bypasses `bff` and rides through `api-gateway` directly to the real-time tier (in `mytheus-realtime`). This is the only long-lived bidirectional path.
 
 `org_id` is **never** a path or query parameter on tenant-scoped resources; it is always derived from the token, so a client cannot request another tenant's data by guessing an id (`19-api-architecture.md` §2.1). A cross-tenant access attempt returns `404`, not `403` - existence itself is tenant-confidential.
 
@@ -200,8 +200,8 @@ This contract is the event-plane twin of the synchronous `Idempotency-Key` contr
 |---|---|---|
 | `tenant-events` | `identity-tenant-service` | `billing-metering-service`, `admin-ops-service`, `workflow-service` |
 | `meeting-events` | `core-api` | `meeting-service`, `workflow-service` |
-| `meeting-room-events` | `meeting-service` | (consumed by `transcription-service` in `reprise-realtime`) |
-| `integration-events` | `integration-service` | (consumed by `ingestion-service` in `reprise-intelligence`) |
+| `meeting-room-events` | `meeting-service` | (consumed by `transcription-service` in `mytheus-realtime`) |
+| `integration-events` | `integration-service` | (consumed by `ingestion-service` in `mytheus-intelligence`) |
 | `usage-events` | (produced by the AI tier) | `billing-metering-service` |
 | `billing-events` | `billing-metering-service` | `workflow-service`, `admin-ops-service` |
 | `notifications` | `identity-tenant-service`, `billing-metering-service`, `integration-service`, `workflow-service` (+ agent tier) | `notification-service` |
@@ -215,7 +215,7 @@ This contract is the event-plane twin of the synchronous `Idempotency-Key` contr
 
 ## 7. Confirmation rule - no silent graph writes
 
-`agent-runtime-service` (in `reprise-intelligence`) *detects* candidate decisions and action items and surfaces them via `agent-results` to the sidebar. It **never** writes Postgres directly and **never** produces the `decisions`/`actions` topics. The user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does **`core-api`'s transactional outbox** emit the confirmed `decisions`/`actions` event that `knowledge-graph-service` consumes to create the AGE `PRODUCED` / `ASSIGNED_TO` edge. There are **no silent graph writes** - edges exist only behind a confirmed row (`03-container-architecture.md` §4.2, §9).
+`agent-runtime-service` (in `mytheus-intelligence`) *detects* candidate decisions and action items and surfaces them via `agent-results` to the sidebar. It **never** writes Postgres directly and **never** produces the `decisions`/`actions` topics. The user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does **`core-api`'s transactional outbox** emit the confirmed `decisions`/`actions` event that `knowledge-graph-service` consumes to create the AGE `PRODUCED` / `ASSIGNED_TO` edge. There are **no silent graph writes** - edges exist only behind a confirmed row (`03-container-architecture.md` §4.2, §9).
 
 ---
 
@@ -294,7 +294,7 @@ GitHub Actions pipeline:
 3. **Test** - `pytest` with `testcontainers`.
 4. **Spec governance** - Spectral lint + `oasdiff` breaking-change gate against `main`; client/model generation from OpenAPI.
 5. **Build** - Docker image per service.
-6. **Deploy** - to Railway/Render (early) or Kubernetes EKS/GKE (production) via the `reprise-platform` Terraform/manifests.
+6. **Deploy** - to Railway/Render (early) or Kubernetes EKS/GKE (production) via the `mytheus-platform` Terraform/manifests.
 
 ---
 

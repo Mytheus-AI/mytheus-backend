@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-`reprise-backend` is the FastAPI CRUD/control-plane plus async-orchestration tier of Reprise AI (internal architecture codename: NEXUS). It is a modular monolith today that splits into the ten services below on Kubernetes later; the single rule that makes that split safe is: every store has exactly one writer, and `org_id` rides every hop (REST header, gRPC metadata, `SET app.current_org`, and the `nexus:{org_id}:` Redis prefix).
+`mytheus-backend` is the FastAPI CRUD/control-plane plus async-orchestration tier of Mytheus (internal architecture codename: NEXUS). It is a modular monolith today that splits into the ten services below on Kubernetes later; the single rule that makes that split safe is: every store has exactly one writer, and `org_id` rides every hop (REST header, gRPC metadata, `SET app.current_org`, and the `nexus:{org_id}:` Redis prefix).
 
-For the deep design, read `system.md`. For frozen names, read the canon in `reprise-docs`: `_canon/01-service-catalog.md` (services + API ownership), `_canon/02-data-model.md` (tables + tenant keys), `_canon/03-event-taxonomy.md` (topics + producers/consumers + schema). Where this file disagrees with canon, canon wins.
+For the deep design, read `system.md`. For frozen names, read the canon in `mytheus-docs`: `_canon/01-service-catalog.md` (services + API ownership), `_canon/02-data-model.md` (tables + tenant keys), `_canon/03-event-taxonomy.md` (topics + producers/consumers + schema). Where this file disagrees with canon, canon wins.
 
 ## Repo at a glance
 
-This repo is the synchronous CRUD/control plane plus the async/orchestration tier. It does NOT contain the AI/inference tier (`reprise-intelligence`: LangGraph agents, embeddings, RAG, knowledge graph) or the real-time WebSocket tier (`reprise-realtime`: realtime-gateway, transcription-service). Those scale on different signals and bill against different cost centers, which is why the system is cut here.
+This repo is the synchronous CRUD/control plane plus the async/orchestration tier. It does NOT contain the AI/inference tier (`mytheus-intelligence`: LangGraph agents, embeddings, RAG, knowledge graph) or the real-time WebSocket tier (`mytheus-realtime`: realtime-gateway, transcription-service). Those scale on different signals and bill against different cost centers, which is why the system is cut here.
 
 Ten bounded contexts live here, by scaling family:
 
@@ -18,13 +18,13 @@ Early stage: one deployable on Railway/Render, every service a Python module. Pr
 
 ## Architecture orientation
 
-Edge path. All external traffic enters Cloudflare (CDN, WAF, global L7 rate limit), then the single ingress `api-gateway` (TLS, per-tenant rate limit, Clerk JWT pre-validation against cached JWKS, `org_id` extraction from the `org` claim, routing). The gateway FAILS CLOSED: if `org_id` cannot be resolved, no request reaches a tenant-scoped store. From there `bff` aggregates screen-shaped reads (the only caller of `/bff/*`), or the gateway routes straight to a service. The WebSocket leg bypasses `bff` and rides the gateway directly to `reprise-realtime`. Every internal hop propagates `org_id` as a REST header and gRPC metadata; the service tier RE-VERIFIES the JWT (the gateway is a DDoS shield, not a trust delegation).
+Edge path. All external traffic enters Cloudflare (CDN, WAF, global L7 rate limit), then the single ingress `api-gateway` (TLS, per-tenant rate limit, Clerk JWT pre-validation against cached JWKS, `org_id` extraction from the `org` claim, routing). The gateway FAILS CLOSED: if `org_id` cannot be resolved, no request reaches a tenant-scoped store. From there `bff` aggregates screen-shaped reads (the only caller of `/bff/*`), or the gateway routes straight to a service. The WebSocket leg bypasses `bff` and rides the gateway directly to `mytheus-realtime`. Every internal hop propagates `org_id` as a REST header and gRPC metadata; the service tier RE-VERIFIES the JWT (the gateway is a DDoS shield, not a trust delegation).
 
 Sync surface. REST is the external, resource-oriented contract (`/api/v1/...`, OpenAPI 3.1, spec-first). gRPC is internal/mesh-only for tight-latency calls, the canonical one being `identity-tenant-service.GetUserContext(user_id)` which carries `org_id` in metadata and is read heavily by the agent tier. `org_id` is never a path or query parameter; cross-tenant access returns `404`, never `403` (existence is tenant-confidential).
 
 Async backbone. Redpanda (Kafka API), Avro + Schema Registry, one subject per topic (`{topic}-value`), BACKWARD compatibility, every topic partitioned by `org_id`. Delivery is at-least-once with idempotency: transactional outbox on produce, inbox + Redis dedupe on consume, per-topic DLQ for poison messages. Consumers re-assert `org_id` from the event header before any write so RLS applies identically on the async path.
 
-Confirmation rule. `core-api` is the sole producer of confirmed `decisions`/`actions`. Agents (in `reprise-intelligence`) only detect candidates and surface them via `agent-results`; they never write Postgres and never produce `decisions`/`actions`. A user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does `core-api`'s outbox emit the event that `knowledge-graph-service` consumes to create the graph edge. There are no silent graph writes.
+Confirmation rule. `core-api` is the sole producer of confirmed `decisions`/`actions`. Agents (in `mytheus-intelligence`) only detect candidates and surface them via `agent-results`; they never write Postgres and never produce `decisions`/`actions`. A user confirms via `core-api` (`POST /decisions/:id/confirm`, `POST /actions/:id/confirm`); only then does `core-api`'s outbox emit the event that `knowledge-graph-service` consumes to create the graph edge. There are no silent graph writes.
 
 ## Service map
 
@@ -41,12 +41,12 @@ Confirmation rule. `core-api` is the sole producer of confirmed `decisions`/`act
 | `notification-service`     | Unified delivery (in-app, email, Slack). Sole authorized external-channel fan-out for `notifications`.                                  | `notification_log`, delivery receipts, channel prefs; Redis priority queue `nexus:{org_id}:queue:agent:{user_id}`                                                                                     | `notification-delivery-events`                            | `notifications`, `agent-results`                                               | `/notifications`                                                                                      |
 | `workflow-service`         | Temporal durable orchestration: meeting lifecycle, action follow-up, RTBF saga, dunning saga.                                           | none durable (Temporal owns workflow state); may write `nexus-exports`/`nexus-audit-archive`                                                                                                          | `notifications`                                           | `billing-events`, `tenant-events`, `meeting-events`, `actions`, `admin-events` | internal `/workflows/*` (not public)                                                                  |
 
-Note: `teams`/`team_members`/`departments` CRUD is assigned to `core-api`; identity holds the identity-and-tenancy surface. `transcript_chunks` is owned by `transcription-service` in `reprise-realtime` and is read-only here (served via FTS).
+Note: `teams`/`team_members`/`departments` CRUD is assigned to `core-api`; identity holds the identity-and-tenancy surface. `transcript_chunks` is owned by `transcription-service` in `mytheus-realtime` and is read-only here (served via FTS).
 
 ## Where things live
 
 ```
-reprise-backend/
+mytheus-backend/
 ├── services/
 │   ├── api-gateway/            # ingress config + thin control-plane glue (no data)
 │   ├── bff/                    # FastAPI screen aggregation (/bff/*)
@@ -82,13 +82,13 @@ Each service is a Python package under `services/`. Anything cross-cutting (the 
 
 ## Naming authority
 
-Service, table, and topic names are frozen in the canon in `reprise-docs`:
+Service, table, and topic names are frozen in the canon in `mytheus-docs`:
 
 - `_canon/01-service-catalog.md` - service names and sync-API ownership.
 - `_canon/02-data-model.md` - table/store names and tenant keys.
 - `_canon/03-event-taxonomy.md` - topic names, producers/consumers, schema.
 
-Never invent or rename a service, table, or topic silently. A rename goes through the Glossary plus an ADR first, then propagates from canon outward. Keep these identifiers verbatim, always: `org_id`, `app.current_org`, the `nexus:{org_id}:` Redis prefix, `nexus_knowledge`, `transcript_chunks`, `get_user_context`. The product name in prose is Reprise AI.
+Never invent or rename a service, table, or topic silently. A rename goes through the Glossary plus an ADR first, then propagates from canon outward. Keep these identifiers verbatim, always: `org_id`, `app.current_org`, the `nexus:{org_id}:` Redis prefix, `nexus_knowledge`, `transcript_chunks`, `get_user_context`. The product name in prose is Mytheus.
 
 ## Common tasks (recipes)
 
@@ -103,7 +103,7 @@ Add a REST endpoint to a service.
 
 Add a new event producer (with outbox).
 
-1. Confirm the topic name and that this service is an allowed producer in `_canon/03-event-taxonomy.md`; align the Avro schema with `reprise-events` (BACKWARD compatible).
+1. Confirm the topic name and that this service is an allowed producer in `_canon/03-event-taxonomy.md`; align the Avro schema with `mytheus-events` (BACKWARD compatible).
 2. In the same DB transaction as the state change, write an outbox row (using the `libs/shared` outbox). Never publish to Redpanda directly from request code.
 3. The relay publishes the outbox row; partition key is `org_id`. Include `org_id` and an `idempotency_key` in the envelope.
 4. Test that the state change and the outbox row commit atomically (and roll back together).
@@ -147,7 +147,7 @@ Add a Temporal workflow/activity.
 
 - Runner: `pytest`, TDD (failing test first).
 - Backing services: `testcontainers` spins up real Postgres, Redis, and Redpanda per session, so integration tests hit real engines, not mocks.
-- What to test, minimum: RLS isolation (tenant A cannot read tenant B; a query with no `app.current_org` set returns nothing, i.e. fail-closed); outbox/inbox idempotency (state + outbox commit atomically; redelivery is a no-op); contract tests against the `reprise-events` Avro schemas (round-trip + BACKWARD compatibility); the RFC 7807 error model.
+- What to test, minimum: RLS isolation (tenant A cannot read tenant B; a query with no `app.current_org` set returns nothing, i.e. fail-closed); outbox/inbox idempotency (state + outbox commit atomically; redelivery is a no-op); contract tests against the `mytheus-events` Avro schemas (round-trip + BACKWARD compatibility); the RFC 7807 error model.
 - Quality gates: `ruff` + `black --check` + `mypy` all green; a failing lint or type-check fails the PR.
 
 ```bash
@@ -180,17 +180,17 @@ Required env vars (see `.env.example` for the full list): `DATABASE_URL` (pooled
 - Cross-writing another service's table because it is "right there" in the shared Postgres. Read it via that service's API or via events; never write it.
 - Producing an event without the outbox (publishing to Redpanda from request code). It breaks atomicity: you get lost or phantom events on a crash or rollback.
 - Consuming without dedupe. At-least-once means you WILL be redelivered; a non-idempotent handler double-applies the side effect.
-- Breaking a topic schema's BACKWARD compatibility. Existing consumers cannot read new messages; coordinate via `reprise-events` and never remove/retype a field in place.
+- Breaking a topic schema's BACKWARD compatibility. Existing consumers cannot read new messages; coordinate via `mytheus-events` and never remove/retype a field in place.
 - Writing the knowledge graph (or emitting `decisions`/`actions`) without confirmation. Only `core-api`'s outbox emits these, and only on user confirm.
 - Putting `org_id` in a path/query, or returning `403` for cross-tenant access (use `404`). Logging or returning OAuth tokens/secrets (they are envelope-encrypted and never leave the service).
 - Blocking a synchronous REST call on an LLM or a cross-service fan-out. Commit an intent and return a pollable/subscribable resource instead.
 
 ## Working with other repos
 
-- Depends on `reprise-events` for the Avro schemas, topic taxonomy, and Schema Registry contracts. Every producer/consumer here is bound by those.
-- Serves `reprise-ui` and `reprise-mobile` over REST through `bff` (`reprise-ui` is the only caller of `/bff/*`).
-- Feeds `reprise-realtime` (realtime-gateway, transcription-service) and `reprise-intelligence` (agent-runtime, RAG, embeddings, knowledge-graph) via Redpanda. Those tiers own `transcript_chunks`, vectors, and the AGE `nexus_knowledge` graph; this repo reads them but never writes them.
-- Canon and ADRs live in `reprise-docs`; infra/manifests live in `reprise-platform`.
+- Depends on `mytheus-events` for the Avro schemas, topic taxonomy, and Schema Registry contracts. Every producer/consumer here is bound by those.
+- Serves `mytheus-ui` and `mytheus-mobile` over REST through `bff` (`mytheus-ui` is the only caller of `/bff/*`).
+- Feeds `mytheus-realtime` (realtime-gateway, transcription-service) and `mytheus-intelligence` (agent-runtime, RAG, embeddings, knowledge-graph) via Redpanda. Those tiers own `transcript_chunks`, vectors, and the AGE `nexus_knowledge` graph; this repo reads them but never writes them.
+- Canon and ADRs live in `mytheus-docs`; infra/manifests live in `mytheus-platform`.
 
 ## Commit and PR conventions
 

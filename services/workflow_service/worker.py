@@ -17,7 +17,7 @@ from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 
 _TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 _TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
-_TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "reprise-backend")
+_TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "mytheus-backend")
 
 
 async def main() -> None:

@@ -1,16 +1,16 @@
-# Reprise AI - Backend / Control Plane (`reprise-backend`)
+# Mytheus - Backend / Control Plane (`mytheus-backend`)
 
-> The CRUD control plane and async orchestration tier for **Reprise AI** - an intelligent meeting-orchestration multi-tenant SaaS (internal architecture codename: NEXUS).
+> The CRUD control plane and async orchestration tier for **Mytheus** - an intelligent meeting-orchestration multi-tenant SaaS (internal architecture codename: NEXUS).
 
 ## What this is
 
-`reprise-backend` is the **synchronous control plane plus asynchronous orchestration** tier of Reprise AI. It owns the relational heart (meetings, decisions, actions, worklogs), identity and tenancy, billing and metering, integrations, real-time room control, notifications, and the durable Temporal workflows that stitch them together. It is the request/response and event-consuming half of the platform; the AI/inference and real-time-streaming tiers live in sibling repositories (see [Related repos](#related-repos)).
+`mytheus-backend` is the **synchronous control plane plus asynchronous orchestration** tier of Mytheus. It owns the relational heart (meetings, decisions, actions, worklogs), identity and tenancy, billing and metering, integrations, real-time room control, notifications, and the durable Temporal workflows that stitch them together. It is the request/response and event-consuming half of the platform; the AI/inference and real-time-streaming tiers live in sibling repositories (see [Related repos](#related-repos)).
 
 It is **not** the AI tier (no LangGraph agents, no embeddings, no GPU inference) and **not** the WebSocket fan-out tier - those scale on different signals and bill against different cost centers. This repo scales on **HTTP req/s** (CRUD services, p95 < 300 ms SLO) and **Temporal task-queue depth** (the async tier).
 
 Early on, these services run as a **modular monolith on Railway/Render** - every service below is a module in one deployable. As load grows, the seams below are the extraction points: the monolith **splits into the listed services on Kubernetes (EKS/GKE)** with per-service autoscalers. The bounded-context boundaries are drawn so the split never re-cuts a domain.
 
-Architecture source of truth: the canon docs in the `reprise-docs` repo. The most relevant are `03-container-architecture.md`, `04-service-catalog.md`, `19-api-architecture.md`, `06-multi-tenancy.md`, and `07-event-architecture.md`.
+Architecture source of truth: the canon docs in the `mytheus-docs` repo. The most relevant are `03-container-architecture.md`, `04-service-catalog.md`, `19-api-architecture.md`, `06-multi-tenancy.md`, and `07-event-architecture.md`.
 
 ## Services in this repo
 
@@ -46,7 +46,7 @@ Architecture source of truth: the canon docs in the `reprise-docs` repo. The mos
 A `uv`/Poetry-managed monorepo. Each service is a Python package under `services/`; shared code is a single `libs/shared` package; proto and migrations are top-level so they are owned across services.
 
 ```
-reprise-backend/
+mytheus-backend/
 ├── services/
 │   ├── api-gateway/            # Envoy/Nginx config + thin control-plane glue
 │   ├── bff/                    # FastAPI screen aggregation (/bff/*)
@@ -137,14 +137,14 @@ uv run pytest -m "not slow"            # skip testcontainers-heavy tests
 
 ## Related repos
 
-- `reprise-docs` - the frozen canon and architecture source of truth (`_canon/`, the numbered docs).
-- `reprise-ui` - Next.js 14 web app (the only caller of `/bff/*`).
-- `reprise-mobile` - mobile client.
-- `reprise-realtime` - real-time tier: `realtime-gateway` (Socket.io fan-out) + `transcription-service` (Deepgram proxy).
-- `reprise-intelligence` - AI/inference tier: `agent-runtime-service`, `rag-service`, `embedding-service`, `reranker-service`, `knowledge-graph-service`, `search-service`, `ingestion-service`.
-- `reprise-events` - shared Avro schemas, topic taxonomy, and Schema Registry contracts.
-- `reprise-platform` - Terraform IaC, Kubernetes manifests, CI/CD, and deployment config.
+- `mytheus-docs` - the frozen canon and architecture source of truth (`_canon/`, the numbered docs).
+- `mytheus-ui` - Next.js 14 web app (the only caller of `/bff/*`).
+- `mytheus-mobile` - mobile client.
+- `mytheus-realtime` - real-time tier: `realtime-gateway` (Socket.io fan-out) + `transcription-service` (Deepgram proxy).
+- `mytheus-intelligence` - AI/inference tier: `agent-runtime-service`, `rag-service`, `embedding-service`, `reranker-service`, `knowledge-graph-service`, `search-service`, `ingestion-service`.
+- `mytheus-events` - shared Avro schemas, topic taxonomy, and Schema Registry contracts.
+- `mytheus-platform` - Terraform IaC, Kubernetes manifests, CI/CD, and deployment config.
 
 ## License
 
-Proprietary © Reprise AI. All rights reserved.
+Proprietary © Mytheus. All rights reserved.

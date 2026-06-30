@@ -5,7 +5,7 @@ org_id extraction, routing. Stateless — no data ownership.
 
 In the modular monolith (Railway/Render), traffic flows through this thin
 FastAPI layer before reaching downstream services. In production (Kubernetes),
-this is replaced or fronted by Envoy/Nginx managed in reprise-platform.
+this is replaced or fronted by Envoy/Nginx managed in mytheus-platform.
 
 The gateway FAILS CLOSED: if org_id cannot be resolved from the JWT, no
 request reaches a tenant-scoped store.

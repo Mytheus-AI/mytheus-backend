@@ -29,7 +29,7 @@ def add_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProblemDetail)
     async def problem_handler(request: Request, exc: ProblemDetail) -> JSONResponse:
         body: dict = {
-            "type": f"https://api.reprise.ai/errors/{exc.code}",
+            "type": f"https://api.mytheus.ai/errors/{exc.code}",
             "title": exc.code.replace("_", " ").title(),
             "status": exc.status,
             "detail": exc.detail,
