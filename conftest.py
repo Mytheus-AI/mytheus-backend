@@ -3,6 +3,7 @@
 testcontainers spins up real Postgres, Redis, and Redpanda per test session,
 so integration tests hit real engines (RLS policies, outbox/inbox, Avro round-trips).
 """
+
 import pytest
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer

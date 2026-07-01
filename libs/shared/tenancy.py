@@ -6,6 +6,7 @@ Rules:
   pooled connection (Supabase pooler / PgBouncer) a non-local GUC leaks one
   tenant's app.current_org into another tenant's connection reuse.
 """
+
 from __future__ import annotations
 
 from contextvars import ContextVar

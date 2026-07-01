@@ -1,18 +1,11 @@
-"""Admin & ops service.
+"""admin-ops-service — tenant-admin (/admin/tenant/*) and internal-ops (/admin/ops/*) consoles.
 
-Two consoles:
-  - Tenant admin (/admin/tenant/*): org-scoped self-serve (members, plan, integrations, export).
-  - Internal ops (/admin/ops/*): cross-tenant support, feature flags, audit-log access.
-
-audit_logs is append-only (no UPDATE/DELETE). An operation that requires audit
-fails closed if the audit write fails.
+audit_logs is append-only (no UPDATE/DELETE). An operation requiring audit fails closed if the
+audit write fails.
 """
-from fastapi import FastAPI
 
-from libs.shared.errors import add_exception_handlers
-from libs.shared.telemetry import setup_telemetry
-app = FastAPI(title="admin-ops-service", version="1.0.0")
-setup_telemetry(app, service_name="admin-ops-service")
-add_exception_handlers(app)
+from libs.shared.app_factory import create_app
+
+app = create_app("admin-ops-service")
 
 # TODO: add routers for /admin/tenant/* and /admin/ops/*

@@ -10,9 +10,12 @@ dependencies = [
     "sqlalchemy[asyncio]>=2",
     "alembic>=1.13",
     "asyncpg>=0.29",
+    "psycopg2-binary>=2.9",
     "redis[hiredis]>=5",
     "aiokafka>=0.11",
+    "confluent-kafka[avro,schemaregistry]>=2.4",
     "fastavro>=1.9",
+    "svix>=1.20",
     "temporalio>=1.7",
     "stripe>=10",
     "PyJWT>=2.8",
@@ -37,6 +40,7 @@ dev = [
     "black>=24",
     "mypy>=1.10",
     "types-redis>=4",
+    "fakeredis>=2.20",
 ]
 
 [build-system]
@@ -48,17 +52,25 @@ packages = ["services", "libs"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["identity_pb2.py", "identity_pb2_grpc.py", "migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.black]
 line-length = 100
+extend-exclude = "identity_pb2.py|identity_pb2_grpc.py|migrations/versions"
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+exclude = ["identity_pb2.py", "identity_pb2_grpc.py", "migrations/", "tests/", "conftest.py"]
+
+# Generated protobuf modules use descriptor magic mypy cannot see; treat them as untyped.
+[[tool.mypy.overrides]]
+module = ["identity_pb2", "identity_pb2_grpc"]
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,15 +1,9 @@
-"""Backend-for-frontend service.
-
-Screen-shaped read aggregation. No domain ownership; no data written here.
-The only caller of /bff/* is mytheus-ui.
+"""bff — backend-for-frontend: screen-shaped read aggregation. No domain ownership; the only
+caller of /bff/* is mytheus-ui.
 """
-from fastapi import FastAPI
 
-from libs.shared.errors import add_exception_handlers
-from libs.shared.telemetry import setup_telemetry
+from libs.shared.app_factory import create_app
 
-app = FastAPI(title="bff", version="1.0.0")
-setup_telemetry(app, service_name="bff")
-add_exception_handlers(app)
+app = create_app("bff")
 
-# TODO: add screen-shaped read routers here as features are implemented
+# TODO: add screen-shaped read routers as features are implemented

@@ -1,0 +1,31 @@
+"""Shared FastAPI app factory.
+
+Every HTTP service is created via create_app so the Idempotency-Key middleware, the RFC 7807
+error handlers, OpenTelemetry, and a /healthz probe are wired identically everywhere.
+"""
+
+from __future__ import annotations
+
+import os
+
+from fastapi import FastAPI
+from redis.asyncio import from_url
+
+from libs.shared.errors import add_exception_handlers
+from libs.shared.idempotency import IdempotencyMiddleware
+from libs.shared.telemetry import setup_telemetry
+
+
+def create_app(service_name: str) -> FastAPI:
+    app = FastAPI(title=service_name, version="1.0.0")
+
+    redis = from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False)
+    app.add_middleware(IdempotencyMiddleware, redis=redis)  # replay mutating POST/PUT/PATCH
+    add_exception_handlers(app)
+    setup_telemetry(app, service_name=service_name)  # no-op unless OTEL endpoint set
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok", "service": service_name}
+
+    return app

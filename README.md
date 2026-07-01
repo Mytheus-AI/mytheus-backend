@@ -32,7 +32,7 @@ Architecture source of truth: the canon docs in the `mytheus-docs` repo. The mos
 - **Language / runtime:** Python 3.11+
 - **Web framework:** FastAPI; Pydantic v2 for all request/response models
 - **ORM / migrations:** SQLAlchemy + Alembic
-- **Database:** Supabase Postgres (Row-Level Security, `org_id` tenant key; Apache AGE `nexus_knowledge` co-located but owned by the AI tier)
+- **Database:** PostgreSQL (docker-compose for dev; self-hosted on the VPS for prod, or a managed pooled Postgres). Row-Level Security, `org_id` tenant key; Apache AGE `nexus_knowledge` co-located but owned by the AI tier
 - **Cache / pub-sub:** Redis / Upstash (namespaced `nexus:{org_id}:…`)
 - **Event bus:** Redpanda (Kafka API) via `aiokafka`; Avro + Schema Registry, BACKWARD compat
 - **Durable workflows:** Temporal (Temporal Python SDK), Temporal Cloud task queues
@@ -95,10 +95,11 @@ uv run alembic upgrade head   # apply migrations
 
 ```bash
 uv run uvicorn services.core_api.main:app --reload --port 8000
-# or run the aggregate app that mounts every service module locally:
-uv run uvicorn app.main:app --reload
+# each service is its own FastAPI app (services.<svc>.main:app); run the ones you need
 # Temporal workers:
 uv run python -m services.workflow_service.worker
+# Transactional-outbox relay (worker process):
+uv run python -m services.relay.main
 ```
 
 **Test**
@@ -111,7 +112,7 @@ uv run pytest                 # see Testing below
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Supabase Postgres connection string (pooled). RLS `app.current_org` is set per transaction. |
+| `DATABASE_URL` | PostgreSQL connection string (pooled). RLS `app.current_org` is set per transaction. |
 | `REDIS_URL` | Redis / Upstash URL for namespaced cache, dedupe, rate-limit, presence. |
 | `REDPANDA_BROKERS` | Comma-separated Redpanda (Kafka API) bootstrap brokers. |
 | `SCHEMA_REGISTRY_URL` | Avro Schema Registry endpoint. |

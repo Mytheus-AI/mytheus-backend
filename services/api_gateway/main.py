@@ -1,22 +1,10 @@
-"""API Gateway — single public ingress.
-
-Responsibilities: TLS termination, WAF, per-tenant rate limiting, JWT pre-validation,
-org_id extraction, routing. Stateless — no data ownership.
-
-In the modular monolith (Railway/Render), traffic flows through this thin
-FastAPI layer before reaching downstream services. In production (Kubernetes),
-this is replaced or fronted by Envoy/Nginx managed in mytheus-platform.
-
-The gateway FAILS CLOSED: if org_id cannot be resolved from the JWT, no
-request reaches a tenant-scoped store.
+"""api-gateway — single public ingress: TLS, WAF, per-tenant rate limit, Clerk JWT pre-validate,
+org_id extraction, routing. Stateless, no data ownership. FAILS CLOSED: if org_id cannot be
+resolved from the JWT, no request reaches a tenant-scoped store.
 """
-from fastapi import FastAPI
 
-from libs.shared.errors import add_exception_handlers
-from libs.shared.telemetry import setup_telemetry
+from libs.shared.app_factory import create_app
 
-app = FastAPI(title="api-gateway", version="1.0.0")
-setup_telemetry(app, service_name="api-gateway")
-add_exception_handlers(app)
+app = create_app("api-gateway")
 
-# TODO: add JWT pre-validation middleware, rate limiting, reverse-proxy routing
+# TODO: add JWT pre-validation middleware, rate limiting, reverse-proxy routing (Plan 1-2)

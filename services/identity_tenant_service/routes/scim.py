@@ -1,13 +1,19 @@
 """SCIM 2.0 provisioning endpoints (stubbed).
 
 Enabled for Enterprise tenants (features.scim_provisioning = true in tenant_settings).
-Supabase SSO/SAML is configured per-tenant in the Supabase Dashboard (Auth → SSO).
-SCIM writes flow through the same user sync path as DB webhooks.
+SSO/SAML/SCIM are Clerk-fronted (Clerk Enterprise connections); SCIM writes flow through the same
+Clerk user-sync path as the /clerk/webhook handler. Full SCIM lands in a later band.
 """
-from typing import Any
-from fastapi import APIRouter
 
-router = APIRouter(tags=["scim"])
+from typing import Any
+
+from fastapi import APIRouter, Depends
+
+from libs.shared.auth import verify_token
+
+# SCIM is authenticated (IdP bearer token). Guard at the router level so every current and future
+# route inherits auth — a route here can never silently ship unauthenticated.
+router = APIRouter(tags=["scim"], dependencies=[Depends(verify_token)])
 
 
 @router.get("/Users")

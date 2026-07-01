@@ -1,4 +1,5 @@
 """OpenTelemetry setup. Call setup_telemetry(app) once at service startup."""
+
 from __future__ import annotations
 
 import os
@@ -17,9 +18,7 @@ def setup_telemetry(app: FastAPI, *, service_name: str) -> None:
     if not endpoint:
         return
 
-    provider = TracerProvider(
-        resource=Resource.create({SERVICE_NAME: service_name})
-    )
+    provider = TracerProvider(resource=Resource.create({SERVICE_NAME: service_name}))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
     FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)

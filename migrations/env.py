@@ -3,24 +3,27 @@
 All SQLAlchemy models from every service must be imported here so
 Alembic's autogenerate can detect table additions/removals.
 """
+
 from __future__ import annotations
 
 import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool, engine_from_config
+from sqlalchemy import engine_from_config, pool
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Import all models so metadata is populated.
-# TODO: add model imports here as services add SQLAlchemy models, e.g.:
-# from services.core_api.models import Base as CoreBase
-# from services.identity_tenant_service.models import Base as IdentityBase
+# Import every service's models so autogenerate sees all tables.
+# (later bands append their service model imports here)
+import libs.shared.infra_models  # noqa: F401,E402  (outbox, inbox)
+import services.core_api.models  # noqa: F401,E402
+import services.identity_tenant_service.models  # noqa: F401,E402
+from libs.shared.db import Base  # noqa: E402
 
-target_metadata = None  # replace with Base.metadata once models exist
+target_metadata = Base.metadata
 
 _DATABASE_URL = os.environ["DATABASE_URL"].replace("+asyncpg", "")  # sync URL for Alembic
 

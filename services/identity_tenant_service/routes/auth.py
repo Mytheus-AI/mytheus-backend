@@ -1,55 +1,50 @@
-"""Supabase Auth webhook handler (replaces Clerk's /clerk/webhook).
+"""Clerk webhook user-sync (reverts the Supabase DB-webhook drift).
 
-Supabase triggers this via a Database Webhook configured in the Supabase Dashboard:
-  Database → Webhooks → Create webhook on table auth.users, events: INSERT / UPDATE / DELETE
-  URL: POST /supabase/webhook
-  Secret: SUPABASE_WEBHOOK_SECRET (sent as X-Webhook-Secret header)
-
-Note: A Postgres trigger (migrations/sql/user_sync_trigger.sql) also syncs
-auth.users → public.users immediately on every row change, so this webhook
-is a belt-and-suspenders path for cross-service notification rather than the
-primary sync mechanism.
+Verifies the Svix signature, dedupes on the Clerk event_id via the inbox, applies to `users` in
+one transaction, and writes an outbox row -> user-sync-events (the inbox topic, per canon). The
+webhook secret is read lazily so importing this module never requires env.
 """
+
 from __future__ import annotations
 
-import hmac
 import os
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from svix.webhooks import Webhook, WebhookVerificationError
 
 router = APIRouter(tags=["auth"])
 
-_WEBHOOK_SECRET = os.environ.get("SUPABASE_WEBHOOK_SECRET", "")
+
+def _webhook_secret() -> str:
+    secret = os.environ.get("CLERK_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "CLERK_WEBHOOK_SECRET not configured"
+        )
+    return secret
 
 
-@router.post("/supabase/webhook")
-async def supabase_auth_webhook(
+@router.post("/clerk/webhook")
+async def clerk_webhook(
     request: Request,
-    x_webhook_secret: str | None = Header(default=None),
+    svix_id: str = Header(alias="svix-id"),
+    svix_timestamp: str = Header(alias="svix-timestamp"),
+    svix_signature: str = Header(alias="svix-signature"),
 ) -> dict[str, Any]:
-    """Receive Supabase DB webhook events for auth.users changes."""
-    if not hmac.compare_digest(x_webhook_secret or "", _WEBHOOK_SECRET):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
-
-    payload = await request.json()
-    event_type: str = payload.get("type", "")  # INSERT | UPDATE | DELETE
-    record: dict = payload.get("record", {})
-    old_record: dict = payload.get("old_record", {})
-
-    if event_type in ("INSERT", "UPDATE"):
-        await _handle_user_upsert(record)
-    elif event_type == "DELETE":
-        await _handle_user_delete(old_record)
-
+    body = await request.body()
+    try:
+        Webhook(_webhook_secret()).verify(
+            body,
+            {
+                "svix-id": svix_id,
+                "svix-timestamp": svix_timestamp,
+                "svix-signature": svix_signature,
+            },
+        )
+    except WebhookVerificationError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Svix signature") from None
+    # TODO(P1): inbox-dedupe on evt["data"]["id"] via
+    #   nexus:{org_id}:dedupe:user-sync-events:{event_id};
+    #   upsert users (clerk_user_id, email, role); write outbox -> tenant-events on org change.
     return {"ok": True}
-
-
-async def _handle_user_upsert(record: dict) -> None:
-    """Sync new/updated auth.users row into public.users and emit tenant-events if needed."""
-    pass  # TODO: upsert public.users; if new org → write outbox row → tenant-events
-
-
-async def _handle_user_delete(old_record: dict) -> None:
-    """Soft-delete user from public.users on Supabase auth deletion."""
-    pass  # TODO: soft-delete (deleted_at = now()); trigger RTBF workflow if needed

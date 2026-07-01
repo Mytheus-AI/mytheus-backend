@@ -4,7 +4,10 @@ All API errors use this shape. The `code` field is a stable machine-readable
 enum — never change it once published. The `detail` field is human-readable.
 Cross-tenant access returns 404 (existence is tenant-confidential), not 403.
 """
+
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -28,7 +31,7 @@ class ProblemDetail(Exception):
 def add_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProblemDetail)
     async def problem_handler(request: Request, exc: ProblemDetail) -> JSONResponse:
-        body: dict = {
+        body: dict[str, Any] = {
             "type": f"https://api.mytheus.ai/errors/{exc.code}",
             "title": exc.code.replace("_", " ").title(),
             "status": exc.status,

@@ -1,14 +1,11 @@
-"""Meeting service — LiveKit transport adapter.
+"""meeting-service — LiveKit transport adapter: room-token mint, webhooks, server-side audio hook.
 
-Owns: meeting_rooms, nexus-recordings object bucket.
-SDK abstracted behind a transport adapter so the provider is swappable.
+Owns: meeting_rooms, nexus-recordings object bucket. The SDK is behind a transport adapter so
+the provider is swappable.
 """
-from fastapi import FastAPI
 
-from libs.shared.errors import add_exception_handlers
-from libs.shared.telemetry import setup_telemetry
-app = FastAPI(title="meeting-service", version="1.0.0")
-setup_telemetry(app, service_name="meeting-service")
-add_exception_handlers(app)
+from libs.shared.app_factory import create_app
+
+app = create_app("meeting-service")
 
 # TODO: add routers for /api/meetings/:id/token and /livekit/webhook

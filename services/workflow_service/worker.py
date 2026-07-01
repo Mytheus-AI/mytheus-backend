@@ -4,16 +4,17 @@ Run with: uv run python -m services.workflow_service.worker
 
 Workers are stateless — Temporal owns workflow state. Scale on task-queue depth.
 """
+
 import asyncio
 import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
-from services.workflow_service.workflows.rtbf import RTBFWorkflow
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
+from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
+from services.workflow_service.workflows.rtbf import RTBFWorkflow
 
 _TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 _TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")

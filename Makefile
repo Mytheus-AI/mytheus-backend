@@ -1,18 +1,27 @@
-.PHONY: install dev migrate test lint typecheck
+.PHONY: install dev migrate upgrade test test-fast lint typecheck fix proto \
+        run-relay run-identity-grpc ci
+
+ALEMBIC = uv run alembic -c migrations/alembic.ini
 
 install:
 	uv sync
 
 dev:
 	docker compose up -d
-	uv run alembic upgrade head
+	$(ALEMBIC) upgrade head
 
 migrate:
-	uv run alembic revision --autogenerate -m "$(msg)"
-	uv run alembic upgrade head
+	$(ALEMBIC) revision --autogenerate -m "$(msg)"
+	$(ALEMBIC) upgrade head
+
+upgrade:
+	$(ALEMBIC) upgrade head
 
 test:
 	uv run pytest
+
+# lint + typecheck + test (the standing gate; alias used across repos)
+ci: lint typecheck test
 
 test-fast:
 	uv run pytest -m "not slow"
@@ -47,6 +56,14 @@ run-billing:
 
 run-workers:
 	uv run python -m services.workflow_service.worker
+
+# Transactional-outbox relay (worker process in the same deployable)
+run-relay:
+	uv run python -m services.relay.main
+
+# identity-tenant-service gRPC server (GetUserContext)
+run-identity-grpc:
+	uv run python -m services.identity_tenant_service.grpc_server
 
 # Generate gRPC stubs from proto/
 proto:

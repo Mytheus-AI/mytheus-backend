@@ -1,15 +1,11 @@
-"""Notification service — unified delivery fabric.
+"""notification-service — unified delivery fabric (in-app / email / Slack).
 
-Async worker: consumes notifications + agent-results topics.
-REST API: read/dismiss notifications (the durable read side of the realtime alert stream).
-Sole consumer authorized to fan notifications to external channels (email, Slack DM).
+Async worker consumes notifications + agent-results; REST API is the durable read/dismiss side.
+Sole consumer authorized to fan notifications to external channels.
 """
-from fastapi import FastAPI
 
-from libs.shared.errors import add_exception_handlers
-from libs.shared.telemetry import setup_telemetry
-app = FastAPI(title="notification-service", version="1.0.0")
-setup_telemetry(app, service_name="notification-service")
-add_exception_handlers(app)
+from libs.shared.app_factory import create_app
+
+app = create_app("notification-service")
 
 # TODO: add router for /notifications (read/dismiss REST surface)
