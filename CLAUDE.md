@@ -200,6 +200,13 @@ Required env vars (see `.env.example` for the full list): `DATABASE_URL` (pooled
 - CI must pass: ruff + black + mypy + pytest (testcontainers) + Spectral lint + `oasdiff` breaking-change gate against `main`.
 - Every endpoint declares its auth requirement in the OpenAPI spec (no declared auth = failed review). A breaking REST change needs a major-version bump (`/api/v2`); a breaking topic or table change needs an ADR (and a canon edit) first.
 
-## MUST FOLLOW RULE
+## MUST FOLLOW RULE - progress documentation has a single home
 
--after building/implementing/fixing or after any session or after any particular feature implementation or anything you do always write about it comprehensively in the PREVIOUS.md file and explain it properly so that any person and their coding agents will understand it thoroughly and properly after my session.also mention why it has built like that or why that particular decision was taken.also do not overcomplicate any thing.. make the optimal/professional simple approch working code first and only make it more complicated if required.
+After building, implementing, or fixing anything - after any session, any feature, any band step - write it up in ONE place: `mytheus-docs/work-done-till-now/`. Not in this repo.
+
+- One file per plan band, covering every repo that band touches: `work-done-till-now/01-plan-0-scaffold-and-contracts.md`, then `02-plan-1-2-...`, and so on. Add to the current band's file; start a new file only when a new band starts.
+- Write it comprehensively enough that another person, or their coding agent, can pick the work up cold: what was built, what was verified and by which exact command, and **why** each decision was taken. Record every deviation from the plan together with its rationale. A deviation with no recorded reason is a bug, not a decision.
+- Read `mytheus-docs/work-done-till-now/README.md` first. It holds the required structure and the writing conventions.
+- Do NOT create or extend a per-repo progress log. `PREVIOUS.md` in this repo is historical: leave it in place, do not add to it, and fold anything new into the band file.
+- That folder **records**; it never **defines**. A new or changed name, number, or decision still goes canon-first (`_canon/`), then an ADR, then the reader docs. Cite them from the band file.
+- Do not overcomplicate. Build the optimal, professional, simple working version first, and add complexity only when something concrete requires it.
