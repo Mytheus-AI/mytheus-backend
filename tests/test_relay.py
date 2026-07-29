@@ -15,11 +15,14 @@ from libs.shared.relay import relay_once
 
 
 class _FakeProducer:
-    def __init__(self, undelivered: int = 0):
+    def __init__(self, undelivered: int = 0, poison_subject: str | None = None):
         self.produced: list = []
         self._undelivered = undelivered
+        self._poison_subject = poison_subject
 
     def serialize(self, subject, value):
+        if self._poison_subject and subject == self._poison_subject:
+            raise ValueError(f"cannot serialize against {subject}")
         return json.dumps(value).encode()
 
     def produce(self, *, topic, key, value):
@@ -27,6 +30,9 @@ class _FakeProducer:
 
     def flush(self):
         return self._undelivered
+
+    def topics(self) -> list[str]:
+        return [t for t, _k, _v in self.produced]
 
 
 async def _seed(engine, n: int, topic: str = "meeting-events") -> None:
@@ -72,6 +78,74 @@ async def test_relay_at_least_once(migrated_db):
     assert n == 2 and len(good.produced) == 2
     async with session_factory() as s, s.begin():
         assert await relay_once(s, good) == 0
+
+
+async def test_poison_row_does_not_block_healthy_rows(migrated_db):
+    """Defect D5, first half. One unserializable row must not stall every other tenant.
+
+    Plan 0's relay_once serialized the whole batch before marking any of it, with no
+    per-row handling, so a single bad row raised, the transaction rolled back, the process
+    died, and the supervisor restarted it onto the same row. A permanent head-of-line
+    block across every tenant, because the outbox is shared.
+    """
+    engine = create_async_engine(migrated_db)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM outbox"))
+    await _seed(engine, 2, topic="meeting-events")
+    await _seed(engine, 1, topic="tenant-events")  # this one will fail to serialize
+
+    producer = _FakeProducer(poison_subject="tenant-events-value")
+    async with session_factory() as s, s.begin():
+        published = await relay_once(s, producer)
+
+    assert published == 2, "the two healthy rows must still publish"
+    async with engine.begin() as conn:
+        row = (
+            (
+                await conn.execute(
+                    text("SELECT attempts, published_at FROM outbox WHERE topic='tenant-events'")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["attempts"] == 1, "the failed row must record the attempt (it never did before)"
+    assert row["published_at"] is None, "a retryable failure stays pending"
+
+
+async def test_poison_row_is_dead_lettered_after_max_attempts(migrated_db):
+    """Defect D5, second half. A permanently bad row must leave the queue via the DLQ."""
+    from libs.shared.relay import MAX_ATTEMPTS
+
+    engine = create_async_engine(migrated_db)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM outbox"))
+    await _seed(engine, 1, topic="tenant-events")
+
+    producer = _FakeProducer(poison_subject="tenant-events-value")
+    for _ in range(MAX_ATTEMPTS):
+        async with session_factory() as s, s.begin():
+            await relay_once(s, producer)
+
+    assert "tenant-events.dlq" in producer.topics(), "poison row must be routed to the DLQ"
+    async with engine.begin() as conn:
+        row = (
+            (
+                await conn.execute(
+                    text("SELECT attempts, published_at FROM outbox WHERE topic = 'tenant-events'")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["attempts"] >= MAX_ATTEMPTS
+    assert row["published_at"] is not None, "dead-lettered row must stop being re-selected"
+
+    # And the queue is genuinely drained: another pass finds nothing.
+    async with session_factory() as s, s.begin():
+        assert await relay_once(s, producer) == 0
 
 
 async def test_relay_real_bus_roundtrip(migrated_db):

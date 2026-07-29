@@ -1,7 +1,7 @@
 [project]
 name = "mytheus-backend"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -57,12 +57,19 @@ extend-exclude = ["identity_pb2.py", "identity_pb2_grpc.py", "migrations/version
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+# The generated gRPC stubs land at the repo root and are gitignored, so isort cannot infer
+# they are ours and sorts them as third-party. The stub FILES are excluded from linting
+# above, but every module that IMPORTS them was still failing I001. Declaring them
+# first-party is what makes `make lint` green.
+known-first-party = ["libs", "services", "identity_pb2", "identity_pb2_grpc"]
+
 [tool.black]
 line-length = 100
 extend-exclude = "identity_pb2.py|identity_pb2_grpc.py|migrations/versions"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 exclude = ["identity_pb2.py", "identity_pb2_grpc.py", "migrations/", "tests/", "conftest.py"]

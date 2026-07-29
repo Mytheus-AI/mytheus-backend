@@ -1,7 +1,12 @@
 """Infrastructure tables the shared libs write to: the transactional outbox and the inbox.
 
-These are RLS-scoped tenant tables (they carry org_id). The outbox relay drains them with a
-role that bypasses RLS; request/consumer code writes them inside the tenant transaction.
+These are RLS-scoped tenant tables (they carry org_id). Request and consumer code writes them
+inside the tenant transaction.
+
+The relay drains `outbox` across tenants, but NOT with a BYPASSRLS role: section 3.3 grants
+`mytheus_relay` one permissive `outbox_relay_drain` policy on this table alone. No
+application role may hold BYPASSRLS or rolsuper, and CI asserts it. (An earlier version of
+this docstring described the opposite; it predates the ADR-0002 D3 amendment.)
 """
 
 from __future__ import annotations

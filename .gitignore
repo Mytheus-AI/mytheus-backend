@@ -9,7 +9,12 @@ __pycache__/
 venv/
 env/
 ENV/
-.python-version
+
+# NOTE: .python-version is deliberately NOT ignored. It is the interpreter pin uv reads,
+# and the pin only does its job if every machine and CI runner gets the same one. It is
+# grouped with the venv above by habit, but it is a committed build input, not local state.
+# The exact patch matters: plain "3.12" resolves to 3.12.5, which black refuses to run its
+# AST safety check against, so `make lint` fails on a minor-only pin.
 
 # Packaging / build
 build/

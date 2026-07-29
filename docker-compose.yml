@@ -5,10 +5,17 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: mytheus
+    # Published on 5433, not 5432, so this stack never collides with another local
+    # Postgres. tests/conftest.py targets this port; .env.example matches it.
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # supabase/postgres ships `postgres` pre-created, so it never applies
+      # POSTGRES_PASSWORD to that role and TCP auth fails. This is the image's own
+      # post-bootstrap hook for exactly this. Never mount over docker-entrypoint-initdb.d:
+      # that shadows the image's bootstrap and the container dies. See the file's header.
+      - ./docker/postgres-dev-password.sql:/etc/postgresql.schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -17,8 +24,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Published on 6380 for the same reason as Postgres above.
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -65,8 +73,9 @@ services:
     image: temporalio/ui:2.26
     environment:
       TEMPORAL_ADDRESS: temporal:7233
+    # 8088, not 8080: `make run-gateway` binds 8080 on the host.
     ports:
-      - "8080:8080"
+      - "8088:8080"
     depends_on:
       - temporal
 

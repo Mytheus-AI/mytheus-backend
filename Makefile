@@ -20,8 +20,10 @@ upgrade:
 test:
 	uv run pytest
 
-# lint + typecheck + test (the standing gate; alias used across repos)
-ci: lint typecheck test
+# lint + typecheck + test (the standing gate; alias used across repos).
+# `proto` runs first because identity_pb2*.py are gitignored ("regenerate in CI"): without
+# it, pytest fails at COLLECTION on a clean clone and the gate never reaches a real test.
+ci: proto lint typecheck test
 
 test-fast:
 	uv run pytest -m "not slow"
