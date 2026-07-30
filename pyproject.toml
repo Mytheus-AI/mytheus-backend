@@ -41,6 +41,13 @@ dev = [
     "mypy>=1.10",
     "types-redis>=4",
     "fakeredis>=2.20",
+    # Dependency scanning (plan section 3.11 step 2). Runs in CI without `|| true`: a known
+    # vulnerable dependency should fail the PR, which is the only reason to run a scanner.
+    "pip-audit>=2.7",
+    # Transitive, floored rather than suppressed. 82.0.1 carries PYSEC-2026-3447, fixed in
+    # 83.0.0; the first pip-audit run flagged it. A floor here keeps the finding fixed
+    # instead of allowlisted, which is the difference between a scanner and a formality.
+    "setuptools>=83.0.0",
 ]
 
 [build-system]

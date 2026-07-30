@@ -1,0 +1,34 @@
+# gitleaks configuration. Plan 1-2 section 3.11 step 1.
+#
+# A committed secret is permanently leaked: rewriting history does not un-publish it, and the
+# credential must be rotated everywhere it is used. This gate is cheap and the failure it
+# prevents is not recoverable, which is why it runs on every PR rather than periodically.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders and fixtures that are deliberately not secrets"
+
+paths = [
+  # Templates carry CHANGE_ME placeholders by design. The real files are gitignored.
+  '''.*\.example$''',
+  '''^\.gitleaks\.toml$''',
+  # Dev-only Postgres bootstrap: the password is literally `postgres` on a container that
+  # binds to localhost and holds no real data.
+  '''^docker/postgres-dev-password\.sql$''',
+]
+
+regexes = [
+  # The dev role passwords. These exist in .env.example, docker-compose.yml and
+  # tests/conftest.py, are identical to the role name, and are only ever valid against a
+  # local throwaway container. Production passwords come from the secrets manager and never
+  # appear in this repo, so allowlisting these does not weaken the gate.
+  '''mytheus_(app|relay|admin):mytheus_(app|relay|admin)''',
+  '''postgres:postgres@''',
+  # Test fixtures: RSA keys are generated in-process per test, and the Svix secret below is a
+  # syntactically valid but functionally meaningless constant.
+  '''whsec_A{32}''',
+  '''sk_test_\.\.\.''',
+  '''pk_test_\.\.\.''',
+]

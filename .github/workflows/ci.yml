@@ -1,0 +1,173 @@
+name: ci
+
+# mytheus-backend's copy of the canonical template in mytheus-platform/.github/workflows/ci.yml,
+# with the database wired up. Plan 1-2 section 3.11.
+#
+# The whole point of this file is the `test` job below. Two CI assertions in
+# tests/test_roles_and_policies.py are the compensating controls that make defect D1
+# unrepeatable and make removing the `organizations` policy safe. Until this workflow existed
+# they ran only when somebody remembered to type `make ci`, which is not a control.
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+env:
+  # Ports match docker-compose.yml and tests/conftest.py: 5433/6380, so a developer and CI
+  # run the identical configuration. Disagreement here is what defect D7 was.
+  #
+  # Both URLs are set, and set to DIFFERENT roles on purpose. The suite seeds cross-tenant
+  # fixtures as the owner and asserts isolation as `mytheus_app`; pointing both at the owner
+  # would make every isolation test pass while proving nothing, because the owner is not
+  # subject to the policies. That is the shape defect D1 took, so CI must run the same split a
+  # developer does.
+  BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/mytheus
+  DATABASE_URL: postgresql+asyncpg://mytheus_app:mytheus_app@localhost:5433/mytheus
+  REDIS_URL: redis://localhost:6380
+  REDPANDA_BROKERS: localhost:9092
+  SCHEMA_REGISTRY_URL: http://localhost:8081
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run black --check .
+      - run: uv run mypy .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mytheus
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      # The gRPC stubs are gitignored ("regenerate in CI"), so without this pytest fails at
+      # COLLECTION on a clean checkout and the gate never reaches a real test.
+      - run: make proto
+      - name: pytest (database tests MUST run, not skip)
+        # MYTHEUS_REQUIRE_DB=1 turns "Postgres unreachable" from a skip into a hard failure.
+        # Without it a broken service container produces a green build that has proved
+        # nothing, which is precisely how defect D7 survived.
+        env:
+          MYTHEUS_REQUIRE_DB: "1"
+        run: uv run pytest -q
+      - name: assert the isolation tests actually executed
+        # Belt and braces on the guard above. If someone marks these xfail, renames the file,
+        # or the collection silently changes, this fails loudly. These four are the ones that
+        # prove tenant isolation for the role the application really connects as.
+        env:
+          MYTHEUS_REQUIRE_DB: "1"
+        run: |
+          uv run pytest -q --no-header \
+            tests/test_roles_and_policies.py::test_no_application_role_is_superuser_or_bypasses_rls \
+            tests/test_roles_and_policies.py::test_every_org_id_table_has_a_tenant_isolation_policy \
+            tests/test_roles_and_policies.py::test_no_application_role_can_reach_a_partition_directly \
+            tests/test_rls.py::test_outbox_fails_closed_with_no_guc \
+            | tee /tmp/isolation.txt
+          grep -qE "4 passed" /tmp/isolation.txt || {
+            echo "::error::the tenant-isolation assertions did not all run and pass"; exit 1; }
+
+  migrations:
+    # Reversibility, proven on every PR rather than asserted in a document. Also catches a
+    # migration that only applies to an already-populated developer database.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mytheus
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - name: upgrade, downgrade one, upgrade again
+        run: |
+          uv run alembic -c migrations/alembic.ini upgrade head
+          uv run alembic -c migrations/alembic.ini downgrade -1
+          uv run alembic -c migrations/alembic.ini upgrade head
+      - name: bootstrap_roles refuses a role that bypasses RLS
+        env:
+          MYTHEUS_APP_PASSWORD: ci_app
+          MYTHEUS_RELAY_PASSWORD: ci_relay
+          MYTHEUS_ADMIN_PASSWORD: ci_admin
+        run: |
+          uv run python -m scripts.bootstrap_roles
+          # Grant BYPASSRLS deliberately and assert the script catches it. A guard nobody has
+          # seen fail is a guard nobody knows works.
+          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d mytheus \
+            -c "ALTER ROLE mytheus_app BYPASSRLS;"
+          if uv run python -m scripts.bootstrap_roles; then
+            echo "::error::bootstrap_roles accepted a role holding BYPASSRLS"; exit 1
+          fi
+          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d mytheus \
+            -c "ALTER ROLE mytheus_app NOBYPASSRLS;"
+
+  authz-check:
+    # Every FastAPI route must declare an auth dependency or be explicitly public
+    # (11-security-architecture.md section 3.2). A route with neither fails the PR.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run python scripts/check_authz.py
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      # Not `|| true`. A known-vulnerable dependency should fail the PR, which is the entire
+      # point of running the scan; pip-audit exits 1 on any finding.
+      #
+      # --skip-editable skips this repo itself, which is installed editable and has no PyPI
+      # entry to audit. Not combined with --strict: --strict also fails on skips, so the two
+      # together fail on the local package every single run and the gate gets disabled.
+      - run: uv run pip-audit --skip-editable
+
+  docker:
+    # Build the deployable image so a broken Dockerfile fails the PR, not the deploy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t "mytheus-backend:${GITHUB_SHA}" .

@@ -7,12 +7,19 @@ A route PASSES if any of:
   * its router/app was created with a `dependencies=[Depends(...)/Security(...)]` guard, OR
   * the route decorator itself carries `dependencies=[Depends(...)/Security(...)]`, OR
   * a parameter default is `Depends(...)` / `Security(...)` (an auth/authorization dependency), OR
+  * a parameter is annotated `Annotated[T, Depends(...)/Security(...)]`, OR
   * its path matches the PUBLIC allowlist (health probes, signature-verified webhooks, oauth
     callbacks, openapi/docs), OR
   * the route carries a `# authz: public` comment marker on/above the decorator.
 
 Otherwise the PR fails. This is a presence check, not a proof: it exists so a new endpoint cannot
 silently ship with no declared auth (11-security-architecture.md §3.2). Exit 1 on any violation.
+
+The `Annotated[...]` form is not a nicety. It is the style FastAPI documents and the style every
+route in this repo uses, and the original version of this script only inspected parameter
+DEFAULTS. Every correctly-secured route therefore failed the gate, which is worse than a gate
+that does not exist: the quickest way to get a green build is to add `# authz: public` to a route
+that is nothing of the kind, and then the marker means nothing anywhere.
 """
 
 from __future__ import annotations
@@ -81,9 +88,27 @@ def route_decorator(dec: ast.expr) -> tuple[str, str] | None:
     return None
 
 
+def _annotation_has_auth(annotation: ast.expr | None) -> bool:
+    """True for `Annotated[T, Depends(...)]` / `Annotated[T, Security(...)]`.
+
+    Walks the whole annotation rather than only its top-level slice, so a nested or aliased
+    form still counts. A false negative here is the dangerous direction: it fails a secured
+    route and teaches the author to reach for the public marker.
+    """
+    if annotation is None:
+        return False
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Call) and _call_name(node) in AUTH_CALLABLES:
+            return True
+    return False
+
+
 def has_auth_dependency(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     defaults = list(fn.args.defaults) + [d for d in fn.args.kw_defaults if d is not None]
-    return any(isinstance(d, ast.Call) and _call_name(d) in AUTH_CALLABLES for d in defaults)
+    if any(isinstance(d, ast.Call) and _call_name(d) in AUTH_CALLABLES for d in defaults):
+        return True
+    args = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+    return any(_annotation_has_auth(a.annotation) for a in args)
 
 
 def is_public_path(path: str) -> bool:
