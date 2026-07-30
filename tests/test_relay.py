@@ -35,21 +35,32 @@ class _FakeProducer:
         return [t for t, _k, _v in self.produced]
 
 
+async def _seed_org(conn, org_id: uuid.UUID) -> None:
+    """Outbox rows need a real tenant root since defect D6 was fixed: `org_id` now carries a
+    foreign key to `organizations`, so an orphan row is no longer insertable."""
+    await conn.execute(
+        text("INSERT INTO organizations (id, name, slug) VALUES (:id, 'Org', :slug)"),
+        {"id": str(org_id), "slug": f"relay-{org_id}"},
+    )
+
+
 async def _seed(engine, n: int, topic: str = "meeting-events") -> None:
     async with engine.begin() as conn:
         for _ in range(n):
+            org_id = uuid.uuid4()
+            await _seed_org(conn, org_id)
             await conn.execute(
                 text(
                     "INSERT INTO outbox (org_id, topic, partition_key, idempotency_key, "
                     "schema_subject, payload) VALUES (:o, :t, :pk, :ik, :s, CAST(:p AS jsonb))"
                 ),
                 {
-                    "o": str(uuid.uuid4()),
+                    "o": str(org_id),
                     "t": topic,
-                    "pk": str(uuid.uuid4()),
+                    "pk": str(org_id),
                     "ik": str(uuid.uuid4()),
                     "s": f"{topic}-value",
-                    "p": json.dumps({"header": {"org_id": str(uuid.uuid4())}, "x": 1}),
+                    "p": json.dumps({"header": {"org_id": str(org_id)}, "x": 1}),
                 },
             )
 
@@ -193,6 +204,7 @@ async def test_relay_real_bus_roundtrip(migrated_db):
         idempotency_key=f"meeting:{uuid.uuid4()}",
     )
     async with engine.begin() as conn:
+        await _seed_org(conn, uuid.UUID(org))
         await conn.execute(
             text(
                 "INSERT INTO outbox (org_id, topic, partition_key, idempotency_key, "

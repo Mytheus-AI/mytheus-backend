@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from libs.shared import inbox as inbox_lib
 from libs.shared import outbox as outbox_lib
 from libs.shared.events import EventEnvelope
+from tests.conftest import seed_org
 
 
 async def test_outbox_enqueue_full_value_and_idempotent(migrated_db):
     engine = create_async_engine(migrated_db)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     org = str(uuid.uuid4())
+    await seed_org(engine, org, slug_prefix="outbox")
     ik = f"decision:{uuid.uuid4()}:confirmed"
     env = EventEnvelope(
         topic="decisions",
@@ -68,6 +70,7 @@ async def test_inbox_composite_pk_dedupe(migrated_db):
     engine = create_async_engine(migrated_db)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     org, ik, cg = str(uuid.uuid4()), str(uuid.uuid4()), "knowledge-graph-service"
+    await seed_org(engine, org, slug_prefix="inbox")
 
     async with session_factory() as s:
         async with s.begin():

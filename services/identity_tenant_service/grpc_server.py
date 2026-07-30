@@ -25,10 +25,17 @@ import identity_pb2
 import identity_pb2_grpc
 from libs.shared.tenancy import set_rls
 
-# Placeholder tier, returned ONLY for a user that was actually found. `rbac_grants` does not
-# exist yet; section 3.4 creates it, makes this handler read the real tier, and deletes this
-# constant. It must never be the answer to a failure - see GetUserContext.
-_DEFAULT_TIER = "member"
+# The user row and the authorization tier in one round trip. A LEFT JOIN, not an inner one:
+# a user with no grant is a real state (invited, not yet authorized) and must resolve to "no
+# tier" rather than to "no such user", which would be indistinguishable from a cross-tenant
+# probe. `rbac_grants` is RLS-policied like every other tenant table, so this join cannot
+# reach across tenants even if `users` somehow did.
+_SELECT_USER_CONTEXT = text(
+    "SELECT u.id, u.org_id, u.email, u.role, u.skills, u.bio, u.avatar_url, g.tier "
+    "FROM users u "
+    "LEFT JOIN rbac_grants g ON g.user_id = u.id AND g.org_id = u.org_id "
+    "WHERE u.id = :uid AND u.deleted_at IS NULL"
+)
 
 
 class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignore[misc]
@@ -69,15 +76,7 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
                 async with session.begin():
                     await set_rls(session, org_id)
                     row = (
-                        (
-                            await session.execute(
-                                text(
-                                    "SELECT id, org_id, email, role, skills, bio, avatar_url "
-                                    "FROM users WHERE id = :uid"
-                                ),
-                                {"uid": str(uid)},
-                            )
-                        )
+                        (await session.execute(_SELECT_USER_CONTEXT, {"uid": str(uid)}))
                         .mappings()
                         .first()
                     )
@@ -108,11 +107,16 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
             user_id=str(row["id"]),
             org_id=str(row["org_id"]),
             email=row["email"] or "",
+            # DOMAIN role. Not a permission. A caller that branches on this for authorization
+            # is reading the wrong field; `rbac_tier` is the one that decides.
             role=row["role"] or "",
             skills=list(row["skills"] or []),
             bio=row["bio"] or "",
             avatar_url=row["avatar_url"] or "",
-            rbac_tier=_DEFAULT_TIER,
+            # Empty when the user holds no grant, which callers must read as "no permissions"
+            # rather than defaulting. Plan 0 returned a hardcoded "member" here for want of a
+            # table to read; that is a grant this service was never told to make.
+            rbac_tier=row["tier"] or "",
         )
 
 
