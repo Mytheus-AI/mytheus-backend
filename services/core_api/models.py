@@ -1,15 +1,24 @@
-"""core-api models — P2 stubs this band (extended in Plan 1-2).
+"""core-api models: the meeting domain. core-api owns it.
 
-Minimal, canon-named Meeting + MeetingParticipant so foreign keys, dashboards, and the later
-meeting/transcription bands have a real target. core-api owns the meeting domain.
+Gap 13: Plan 0 left these as two-column shells. `meetings` had no schedule at all, which
+makes a "meeting" a row with a title and nothing that places it in time, and every consumer
+of `meeting-events` needs the schedule.
+
+`meetings` is deliberately NOT range-partitioned in this band, contrary to the reader docs.
+Canon calls it a "range-partition candidate at scale" and canon wins, but the decisive reason
+is structural: PostgreSQL requires a unique constraint on a partitioned table to include
+every partition-key column, so partitioning by `scheduled_start` makes `UNIQUE (org_id, id)`
+impossible, and with it the composite foreign keys that make a cross-tenant dangling
+reference unrepresentable. Exit trigger recorded in `mytheus-docs/design/erd.md`.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Text, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CheckConstraint, ForeignKey, Text, text
+from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from libs.shared.db import Base, TenantMixin, TimestampMixin
@@ -17,18 +26,41 @@ from libs.shared.db import Base, TenantMixin, TimestampMixin
 
 class Meeting(Base, TenantMixin, TimestampMixin):
     __tablename__ = "meetings"
+
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'scheduled'"))
+    scheduled_start: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    scheduled_end: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # The LiveKit room name. Nullable because a room is not minted until the meeting starts,
+    # which is the real-time band: the same reason `MeetingEvent.livekit_room` had to become
+    # a nullable Avro union (mytheus-events 64f4c2d). A non-nullable column here would have
+    # made every scheduled-but-not-started meeting unrepresentable.
+    livekit_room: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
+        CheckConstraint(
+            "scheduled_end IS NULL OR scheduled_start IS NULL OR scheduled_end > scheduled_start",
+            name="schedule_ordered",
+        ),
+    )
 
 
 class MeetingParticipant(Base, TenantMixin):
     __tablename__ = "meeting_participants"
+
     meeting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("meetings.id"), primary_key=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
     )
+    role_in_meeting: Mapped[str | None] = mapped_column(Text, nullable=True)  # host, attendee

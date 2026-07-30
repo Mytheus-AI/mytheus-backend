@@ -1,4 +1,4 @@
-.PHONY: install dev migrate upgrade test test-fast lint typecheck fix proto \
+.PHONY: install dev roles migrate upgrade test test-fast lint typecheck fix proto \
         run-relay run-identity-grpc ci
 
 ALEMBIC = uv run alembic -c migrations/alembic.ini
@@ -9,6 +9,13 @@ install:
 dev:
 	docker compose up -d
 	$(ALEMBIC) upgrade head
+	$(MAKE) roles
+
+# Give the three least-privilege roles a login password. The migration creates them without
+# one on purpose (a password in a migration is a password in git history), so the stack is
+# not usable until this has run once.
+roles:
+	uv run python -m scripts.bootstrap_roles
 
 migrate:
 	$(ALEMBIC) revision --autogenerate -m "$(msg)"

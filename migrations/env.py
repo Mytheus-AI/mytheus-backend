@@ -19,13 +19,19 @@ if config.config_file_name is not None:
 # Import every service's models so autogenerate sees all tables.
 # (later bands append their service model imports here)
 import libs.shared.infra_models  # noqa: F401,E402  (outbox, inbox)
+import services.admin_ops_service.models  # noqa: F401,E402  (audit_logs)
 import services.core_api.models  # noqa: F401,E402
 import services.identity_tenant_service.models  # noqa: F401,E402
 from libs.shared.db import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
-_DATABASE_URL = os.environ["DATABASE_URL"].replace("+asyncpg", "")  # sync URL for Alembic
+# Migrations run as the SCHEMA OWNER, not as the application role. `mytheus_app` deliberately
+# holds no DDL privilege and cannot create roles, so pointing this at DATABASE_URL would fail
+# on the first CREATE TABLE. The fallback keeps a plain `DATABASE_URL=...` dev setup working.
+_DATABASE_URL = (os.environ.get("BOOTSTRAP_DATABASE_URL") or os.environ["DATABASE_URL"]).replace(
+    "+asyncpg", ""
+)  # sync URL for Alembic
 
 
 def run_migrations_offline() -> None:
