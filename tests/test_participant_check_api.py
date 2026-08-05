@@ -179,31 +179,84 @@ def test_unknown_clerk_user_id_gets_403_not_500(client, tenant_a):
     assert resp.json()["code"] == "NOT_A_PARTICIPANT"
 
 
-def test_org_b_user_is_never_reported_a_participant_of_an_org_a_meeting(client, tenant_a, tenant_b):
-    """Team lead's mid-task concern, verified directly: `realtime-gateway` scopes tenancy via
-    an `X-Org-Id` header it sets from its own verified JWT, but that header is not the safety
-    boundary here - this route never reads it (it isn't declared as a parameter at all; see
-    `check_participant`'s docstring). Tenancy for BOTH the meeting-existence check and this
-    participant lookup comes from `tenant_session`, which resolves `org_id` from the caller's
-    own verified bearer token via the same `tenant_context` chain every other route in this
-    service uses.
-
-    Concretely: org A's meeting, but the path names org B's REAL clerk_user_id (a genuine,
-    existing user - not the "doesn't exist anywhere" case the previous test covers). RLS on
-    `users` scopes the lookup to `app.current_org` (org A, from tenant_a's own verified
-    token), so org B's user row is invisible to that query - not merely "not a participant",
-    genuinely not found - and the JOIN in `check_participant` returns nothing regardless of
-    whether org B's user happens to be a participant of some OTHER meeting. If this route
-    instead resolved participants by `meeting_id` alone (ignoring tenancy), org B's user could
-    be reported as a participant of org A's meeting and `realtime-gateway` would let them into
-    the room - exactly the breach this test rules out.
+def test_an_unrelated_orgs_real_user_is_not_spuriously_reported_a_participant(
+    client, tenant_a, tenant_b
+):
+    """A narrower, honest claim than this test used to make (correction recorded in the
+    task-5 report and `mytheus-docs/work-done-till-now`): org A's real meeting, but the path
+    names org B's REAL, existing `clerk_user_id`, who is a participant of nothing anywhere ->
+    403. This shows the lookup does not spuriously cross-match an unrelated real user; it does
+    NOT by itself prove RLS is what is doing the work, because no `meeting_participants` row
+    exists for org B's user at all - the JOIN would return nothing with or without RLS. The
+    test that actually exercises RLS on the cross-tenant boundary is
+    `test_cross_tenant_meeting_gets_404_not_403` above (a real org-B meeting WITH a real
+    org-B participant, queried as org A, must 404 via `_fetch_meeting`'s RLS-scoped existence
+    check before the participant JOIN ever runs). The test directly below,
+    `test_the_participant_join_result_depends_on_users_rls_not_just_on_row_existence`, isolates
+    the JOIN layer specifically, by planting a row that a non-RLS-scoped version of this same
+    query WOULD find.
     """
     meeting_id = seed_meeting(tenant_a.org_id)
     add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
-    # tenant_b is a real org with a real user, participant of nothing in tenant_a.
+    # tenant_b is a real org with a real user, participant of nothing anywhere.
 
     sign_in(tenant_a)
     resp = client.get(f"/api/v1/meetings/{meeting_id}/participants/{tenant_b.clerk_user}")
 
     assert resp.status_code == 403, "org B's real clerk_user_id must not be found under org A"
+    assert resp.json()["code"] == "NOT_A_PARTICIPANT"
+
+
+def test_the_participant_join_result_depends_on_users_rls_not_just_on_row_existence(
+    client, tenant_a, tenant_b
+):
+    """The rigorous version of the test above, per the team lead's option 2: proves
+    `check_participant`'s `meeting_participants JOIN users` result is actually gated by RLS on
+    `users`, not merely by the absence of a matching row.
+
+    Plants, AS THE SCHEMA OWNER (bypassing RLS - this exact row is unrepresentable through the
+    API, since the ordinary insert path sets `org_id` from the caller's own verified token),
+    a `meeting_participants` row wiring org B's real user directly to org A's real meeting,
+    with `org_id = org A` so the row itself passes `meeting_participants`' OWN RLS check when
+    later queried as org A. That isolates the claim precisely: if `users`' RLS did not scope
+    the JOIN, org A's `check_participant` call would find this row and wrongly report org B's
+    user as a participant of its meeting.
+
+    Step 1 proves the row is real and the raw, unscoped query WOULD match it (a bootstrap
+    connection bypasses RLS entirely - same technique `tests/test_roles_and_policies.py` uses
+    to seed cross-tenant fixtures no application role could write). Step 2 runs the actual
+    endpoint, as the real application role, as org A - and must still get 403, because `users`'
+    RLS hides org B's user row from the JOIN even though `meeting_participants`' own row is
+    visible.
+    """
+    meeting_id = seed_meeting(tenant_a.org_id)
+
+    # As the schema owner: the exact row that would make org B's user look like a participant
+    # of org A's meeting if this endpoint's queries were not RLS-scoped. org_id matches the
+    # meeting's real tenant (org A), so this row passes meeting_participants' OWN RLS check
+    # under app.current_org = org A - isolating that users' RLS is what has to save us.
+    _sql(
+        "INSERT INTO meeting_participants (meeting_id, user_id, org_id) "
+        "VALUES (%(m)s, %(u)s, %(o)s)",
+        {"m": str(meeting_id), "u": str(tenant_b.user_id), "o": str(tenant_a.org_id)},
+    )
+
+    # Step 1: the planted row is real, and the same JOIN check_participant runs - over an
+    # RLS-bypassing connection - genuinely matches it. If this assertion ever fails, the test
+    # below would be proving nothing (there'd be no false positive to prevent).
+    unscoped = _sql(
+        "SELECT mp.user_id FROM meeting_participants mp "
+        "JOIN users u ON u.id = mp.user_id "
+        "WHERE mp.meeting_id = %(m)s AND u.clerk_user_id = %(cuid)s",
+        {"m": str(meeting_id), "cuid": tenant_b.clerk_user},
+    )
+    assert len(unscoped) == 1, "the planted row must be visible to an RLS-bypassing connection"
+
+    # Step 2: the real endpoint, as the real application role, as org A. users' RLS must hide
+    # org B's user row from the JOIN despite the meeting_participants row itself being
+    # org-A-visible.
+    sign_in(tenant_a)
+    resp = client.get(f"/api/v1/meetings/{meeting_id}/participants/{tenant_b.clerk_user}")
+
+    assert resp.status_code == 403, "users' RLS must prevent this false positive"
     assert resp.json()["code"] == "NOT_A_PARTICIPANT"
