@@ -19,6 +19,7 @@ Acceptance checks covered here (Task 3 brief):
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -154,6 +155,7 @@ def tenant_b():
 def _fresh_fake_calls():
     """Each test starts with an empty call log, without paying for a fresh FastAPI app."""
     FAKE.calls.clear()
+    FAKE.room_metadata.clear()
     FAKE.verify_webhook_result = None
     FAKE.verify_webhook_error = None
 
@@ -173,14 +175,25 @@ def test_seeded_participant_receives_token_room_and_livekit_url(client, tenant_a
     assert body["token"].startswith("fake.")
     assert "livekit_url" in body
 
-    assert len(FAKE.calls) == 1
-    call = FAKE.calls[0]
-    assert call.method == "mint_join_token"
-    assert call.kwargs["org_id"] == tenant_a.org_id
-    assert call.kwargs["meeting_id"] == meeting_id
-    assert call.kwargs["user_id"] == tenant_a.user_id
-    assert call.kwargs["role_in_meeting"] == "host"
-    assert call.kwargs["ttl_seconds"] == 600
+    # `ensure_meeting_room` calls `transport.ensure_room` (Task 4 follow-up) before the route
+    # calls `transport.mint_join_token` - both land on `FAKE.calls`, in that order.
+    assert len(FAKE.calls) == 2
+    room_call, mint_call = FAKE.calls
+    assert room_call.method == "ensure_room"
+    assert room_call.kwargs["org_id"] == tenant_a.org_id
+    assert room_call.kwargs["room"] == f"meeting-{meeting_id}"
+
+    assert mint_call.method == "mint_join_token"
+    assert mint_call.kwargs["org_id"] == tenant_a.org_id
+    assert mint_call.kwargs["meeting_id"] == meeting_id
+    assert mint_call.kwargs["user_id"] == tenant_a.user_id
+    assert mint_call.kwargs["role_in_meeting"] == "host"
+    assert mint_call.kwargs["ttl_seconds"] == 600
+
+    # The room's LiveKit metadata carries the INTERNAL org_id, not a Clerk id.
+    assert FAKE.room_metadata[f"meeting-{meeting_id}"] == json.dumps(
+        {"org_id": str(tenant_a.org_id)}
+    )
 
     # The upsert actually landed a row, not just a response body.
     rows = _sql(

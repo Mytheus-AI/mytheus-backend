@@ -5,15 +5,16 @@ Exercises the testable core directly against a real Postgres (`app.current_org` 
 re-assertion, the `meeting_rooms` writes, the inbox dedupe) and `fakeredis`, matching
 `tests/test_presence_events_consumer.py`'s convention.
 
-Covers: `meeting.created` pre-creates the `meeting_rooms` row; `meeting.ended` marks it ended;
-redelivery of either is a no-op (acceptance check 5); a `livekit_room: null` payload - exactly
-what the schema's nullable field permits and the stale generated client didn't (the Task 4
-brief's PREREQUISITE) - does not break the consumer; a poison message (missing header, a
-non-UUID `org_id`/`meeting_id`, an unrecognized `event_type`) is never applied; and a poison
-message routed through `process_decoded_message` lands in `meeting-events.dlq` without
-blocking a subsequent healthy message (acceptance check 6), the same way
-`tests/test_relay.py::test_poison_row_is_dead_lettered_after_max_attempts` proves it for the
-produce side.
+Covers: `meeting.created` pre-creates the `meeting_rooms` row (and, since the room-metadata
+follow-up, calls `transport.ensure_room` so a real LiveKit deployment could resolve this room's
+tenant later); `meeting.ended` marks it ended; redelivery of either is a no-op (acceptance
+check 5); a `livekit_room: null` payload - exactly what the schema's nullable field permits and
+the stale generated client didn't (the Task 4 brief's PREREQUISITE) - does not break the
+consumer; a poison message (missing header, a non-UUID `org_id`/`meeting_id`, an unrecognized
+`event_type`) is never applied; and a poison message routed through `process_decoded_message`
+lands in `meeting-events.dlq` without blocking a subsequent healthy message (acceptance check
+6), the same way `tests/test_relay.py::test_poison_row_is_dead_lettered_after_max_attempts`
+proves it for the produce side.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from services.meeting_service.consumer import (
     process_decoded_message,
     route_to_dlq,
 )
+from services.meeting_service.transport import FakeTransport
 from tests.conftest import APP_URL, seed_org
 
 
@@ -109,6 +111,7 @@ async def test_meeting_created_pre_creates_the_meeting_rooms_row(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     key = str(uuid.uuid4())
     value = _envelope(
         str(org_id), key, meeting_id=str(meeting_id), event_type="created", livekit_room=None
@@ -116,13 +119,22 @@ async def test_meeting_created_pre_creates_the_meeting_rooms_row(migrated_db):
 
     try:
         async with app_engine.connect() as conn, conn.begin():
-            applied = await handle_meeting_event(conn, redis, value)
+            applied = await handle_meeting_event(conn, redis, value, transport)
         assert applied is True
 
         row = await _meeting_room(app_engine, org_id, meeting_id)
         assert row is not None
         assert row["livekit_room"] == f"meeting-{meeting_id}"
         assert row["status"] == "pending"
+
+        # Room-metadata follow-up: `created` calls `transport.ensure_room` with the INTERNAL
+        # org_id, so a real webhook for this room could resolve its tenant later.
+        room_calls = [c for c in transport.calls if c.method == "ensure_room"]
+        assert len(room_calls) == 1
+        assert room_calls[0].kwargs == {"org_id": org_id, "room": f"meeting-{meeting_id}"}
+        assert transport.room_metadata[f"meeting-{meeting_id}"] == json.dumps(
+            {"org_id": str(org_id)}
+        )
     finally:
         await app_engine.dispose()
         await su.dispose()
@@ -137,6 +149,7 @@ async def test_meeting_ended_marks_status_ended(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
 
     try:
         # Pre-create via a "created" event first, as the real lifecycle would.
@@ -151,6 +164,7 @@ async def test_meeting_ended_marks_status_ended(migrated_db):
                     event_type="created",
                     livekit_room=f"meeting-{meeting_id}",
                 ),
+                transport,
             )
 
         async with app_engine.connect() as conn, conn.begin():
@@ -164,6 +178,7 @@ async def test_meeting_ended_marks_status_ended(migrated_db):
                     event_type="ended",
                     livekit_room=None,
                 ),
+                transport,
             )
         assert applied is True
 
@@ -183,6 +198,7 @@ async def test_meeting_ended_with_no_prior_room_is_a_harmless_no_op(migrated_db)
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     meeting_id = uuid.uuid4()
 
     try:
@@ -193,6 +209,7 @@ async def test_meeting_ended_with_no_prior_room_is_a_harmless_no_op(migrated_db)
                 _envelope(
                     str(org_id), str(uuid.uuid4()), meeting_id=str(meeting_id), event_type="ended"
                 ),
+                transport,
             )
         assert applied is True  # the event was applied (dedupe recorded); no row to change
         assert await _meeting_room(app_engine, org_id, meeting_id) is None
@@ -210,14 +227,15 @@ async def test_redelivery_of_created_is_a_dedupe_no_op(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     key = str(uuid.uuid4())
     value = _envelope(str(org_id), key, meeting_id=str(meeting_id), event_type="created")
 
     try:
         async with app_engine.connect() as conn, conn.begin():
-            first = await handle_meeting_event(conn, redis, value)
+            first = await handle_meeting_event(conn, redis, value, transport)
         async with app_engine.connect() as conn, conn.begin():
-            second = await handle_meeting_event(conn, redis, value)
+            second = await handle_meeting_event(conn, redis, value, transport)
         assert first is True
         assert second is False, "a redelivered idempotency_key must be a no-op"
 
@@ -239,6 +257,10 @@ async def test_redelivery_of_created_is_a_dedupe_no_op(migrated_db):
                 .first()
             )
         assert rows["n"] == 1, "redelivery must not create a second row"
+
+        # The dedupe no-op must not call `transport.ensure_room` a second time either.
+        room_calls = [c for c in transport.calls if c.method == "ensure_room"]
+        assert len(room_calls) == 1
     finally:
         await app_engine.dispose()
         await su.dispose()
@@ -251,15 +273,16 @@ async def test_redelivery_of_ended_is_a_dedupe_no_op(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     meeting_id = uuid.uuid4()
     key = str(uuid.uuid4())
     value = _envelope(str(org_id), key, meeting_id=str(meeting_id), event_type="ended")
 
     try:
         async with app_engine.connect() as conn, conn.begin():
-            first = await handle_meeting_event(conn, redis, value)
+            first = await handle_meeting_event(conn, redis, value, transport)
         async with app_engine.connect() as conn, conn.begin():
-            second = await handle_meeting_event(conn, redis, value)
+            second = await handle_meeting_event(conn, redis, value, transport)
         assert first is True
         assert second is False
     finally:
@@ -283,6 +306,7 @@ async def test_null_livekit_room_does_not_break_the_consumer(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     value = _envelope(
         str(org_id),
         str(uuid.uuid4()),
@@ -293,7 +317,7 @@ async def test_null_livekit_room_does_not_break_the_consumer(migrated_db):
 
     try:
         async with app_engine.connect() as conn, conn.begin():
-            applied = await handle_meeting_event(conn, redis, value)
+            applied = await handle_meeting_event(conn, redis, value, transport)
         assert applied is True
     finally:
         await app_engine.dispose()
@@ -307,6 +331,7 @@ async def test_meeting_updated_is_a_recognized_no_op(migrated_db):
 
     redis = fakeredis.aioredis.FakeRedis()
     app_engine = create_async_engine(APP_URL)
+    transport = FakeTransport()
     meeting_id = uuid.uuid4()
 
     try:
@@ -317,9 +342,11 @@ async def test_meeting_updated_is_a_recognized_no_op(migrated_db):
                 _envelope(
                     str(org_id), str(uuid.uuid4()), meeting_id=str(meeting_id), event_type="updated"
                 ),
+                transport,
             )
         assert applied is True
         assert await _meeting_room(app_engine, org_id, meeting_id) is None
+        assert transport.calls == [], "an 'updated' no-op must not touch the transport either"
     finally:
         await app_engine.dispose()
         await su.dispose()
@@ -330,40 +357,44 @@ async def test_meeting_updated_is_a_recognized_no_op(migrated_db):
 
 async def test_a_missing_header_field_is_a_poison_message():
     redis = fakeredis.aioredis.FakeRedis()
+    transport = FakeTransport()
     value = {"header": {"org_id": None, "idempotency_key": None}, "meeting_id": str(uuid.uuid4())}
 
     with pytest.raises(PoisonMessage):
-        await handle_meeting_event(None, redis, value)
+        await handle_meeting_event(None, redis, value, transport)
 
 
 async def test_a_non_uuid_org_id_header_is_a_poison_message():
     redis = fakeredis.aioredis.FakeRedis()
+    transport = FakeTransport()
     value = _envelope(
         "org_notAUuid", str(uuid.uuid4()), meeting_id=str(uuid.uuid4()), event_type="created"
     )
 
     with pytest.raises(PoisonMessage):
-        await handle_meeting_event(None, redis, value)
+        await handle_meeting_event(None, redis, value, transport)
 
 
 async def test_a_non_uuid_meeting_id_is_a_poison_message():
     redis = fakeredis.aioredis.FakeRedis()
+    transport = FakeTransport()
     value = _envelope(
         str(uuid.uuid4()), str(uuid.uuid4()), meeting_id="not-a-uuid", event_type="created"
     )
 
     with pytest.raises(PoisonMessage):
-        await handle_meeting_event(None, redis, value)
+        await handle_meeting_event(None, redis, value, transport)
 
 
 async def test_an_unrecognized_event_type_is_a_poison_message():
     redis = fakeredis.aioredis.FakeRedis()
+    transport = FakeTransport()
     value = _envelope(
         str(uuid.uuid4()), str(uuid.uuid4()), meeting_id=str(uuid.uuid4()), event_type="deleted"
     )
 
     with pytest.raises(PoisonMessage):
-        await handle_meeting_event(None, redis, value)
+        await handle_meeting_event(None, redis, value, transport)
 
 
 # --- acceptance check 6: poison -> DLQ, does not block the partition --------------------------
@@ -399,6 +430,7 @@ async def test_a_poison_message_lands_in_the_dlq_and_does_not_block_the_partitio
     app_engine = create_async_engine(APP_URL)
     session_factory = async_sessionmaker(app_engine, expire_on_commit=False)
     producer = _FakeDlqProducer()
+    transport = FakeTransport()
 
     poison_value = _envelope(
         "not-a-uuid-org", str(uuid.uuid4()), meeting_id=str(uuid.uuid4()), event_type="created"
@@ -416,6 +448,7 @@ async def test_a_poison_message_lands_in_the_dlq_and_does_not_block_the_partitio
             session_factory=session_factory,
             redis=redis,
             dlq_producer=producer,
+            transport=transport,
         )
         assert "meeting-events.dlq" in producer.topics()
 
@@ -427,6 +460,7 @@ async def test_a_poison_message_lands_in_the_dlq_and_does_not_block_the_partitio
             session_factory=session_factory,
             redis=redis,
             dlq_producer=producer,
+            transport=transport,
         )
         row = await _meeting_room(app_engine, org_id, good_meeting_id)
         assert row is not None, "the message after the poison one must still be applied"

@@ -32,12 +32,15 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 from starlette.testclient import TestClient
 
 from libs.shared import auth as auth_mod
 from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
 from services.meeting_service import routes, webhook
+from services.meeting_service.rooms import ensure_meeting_room
 from services.meeting_service.transport import FakeTransport
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
@@ -158,6 +161,7 @@ def meeting_room_row(org_id: uuid.UUID, meeting_id: uuid.UUID) -> dict[str, Any]
 @pytest.fixture(autouse=True)
 def _fresh_fake():
     FAKE.calls.clear()
+    FAKE.room_metadata.clear()
     FAKE.verify_webhook_result = None
     FAKE.verify_webhook_error = None
 
@@ -193,6 +197,51 @@ def test_signed_egress_ended_persists_recording_ref_and_emits_one_outbox_row(cli
     assert payload["event_type"] == "recording_ready"
     assert payload["room"] == room
     assert payload["header"]["org_id"] == str(org_id)
+
+
+# --- room-metadata follow-up: the real round trip, not two independent assumptions ------------
+
+
+async def test_room_established_via_ensure_room_then_webhook_resolves_the_correct_tenant(client):
+    """Closes the gap flagged after the first landing of this task: establish a room for REAL
+    through `rooms.ensure_meeting_room` (which calls `transport.ensure_room`, not a hand-seeded
+    row), then build the webhook event's `room.metadata` from EXACTLY what `FakeTransport.
+    ensure_room` recorded - not a value this test re-derives independently. That makes this a
+    genuine round trip: if `ensure_room` ever wrote the wrong org_id (e.g. a Clerk id instead of
+    the internal uuid), this test would still pass unless it reads the SAME dict `ensure_room`
+    wrote, which is exactly what it does.
+    """
+    org_id = seed_org()
+    meeting_id = uuid.uuid4()
+    _sql(
+        "INSERT INTO meetings (id, org_id, title) VALUES (%(id)s, %(org)s, 'M')",
+        {"id": str(meeting_id), "org": str(org_id)},
+    )
+
+    engine = create_async_engine(APP_URL)
+    try:
+        async with engine.connect() as conn, conn.begin():
+            await conn.execute(
+                text("SELECT set_config('app.current_org', :o, true)"), {"o": str(org_id)}
+            )
+            room = await ensure_meeting_room(conn, org_id, meeting_id, FAKE)
+    finally:
+        await engine.dispose()
+
+    assert room in FAKE.room_metadata, "ensure_meeting_room must have called transport.ensure_room"
+
+    evt = _evt(
+        "egress_ended",
+        room=_room(room, None, metadata=FAKE.room_metadata[room]),
+        egress_info=_egress_info("EG_roundtrip"),
+    )
+    FAKE.verify_webhook_result = evt
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    row = meeting_room_row(org_id, meeting_id)
+    assert row["recording_ref"] == f"{org_id}/{meeting_id}/EG_roundtrip"
 
 
 # --- acceptance check 2: redelivery is a no-op -------------------------------------------------

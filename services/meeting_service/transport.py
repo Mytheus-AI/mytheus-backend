@@ -31,6 +31,8 @@ from livekit import api  # the ONLY import of the LiveKit SDK in the codebase
 
 
 class MeetingTransport(Protocol):
+    async def ensure_room(self, *, org_id: UUID, room: str) -> None: ...
+
     async def mint_join_token(
         self,
         *,
@@ -61,6 +63,33 @@ class LiveKitTransport:
 
     def __init__(self, url: str, key: str, secret: str):
         self._url, self._key, self._secret = url, key, secret
+
+    async def ensure_room(self, *, org_id: UUID, room: str) -> None:
+        """Make the LiveKit room's OWN metadata carry `{"org_id": ...}` (the INTERNAL uuid,
+        never the Clerk org id - a related bug elsewhere in this band came from exactly that
+        confusion, and `webhook.py`'s `_resolve_org_id` parses whatever is written here).
+
+        This is distinct from `mint_join_token`'s `.with_metadata(...)` call, which sets
+        metadata on the PARTICIPANT's access-token grant, not on the room. Room metadata is
+        what a LiveKit webhook event's `evt.room.metadata` actually carries (confirmed against
+        the installed `livekit-api` package's `WebhookEvent`/`Room` protobuf field lists), so
+        it is the only place that can make `services.meeting_service.webhook._resolve_org_id`
+        resolve a tenant for a REAL LiveKit deployment.
+
+        Two calls, not one, because `CreateRoom` is idempotent but does not update the
+        metadata of a room that already exists (e.g. one LiveKit auto-created on an earlier
+        join before this ever ran), while `UpdateRoomMetadata` requires an existing room. The
+        pair is correct regardless of which of those states the room was already in.
+        """
+        metadata = json.dumps({"org_id": str(org_id)})
+        lkapi = api.LiveKitAPI(self._url, self._key, self._secret)
+        try:
+            await lkapi.room.create_room(api.CreateRoomRequest(name=room, metadata=metadata))
+            await lkapi.room.update_room_metadata(
+                api.UpdateRoomMetadataRequest(room=room, metadata=metadata)
+            )
+        finally:
+            await lkapi.aclose()
 
     async def mint_join_token(
         self,
@@ -122,6 +151,15 @@ class FakeTransport:
     calls: list[_RecordedCall] = field(default_factory=list)
     verify_webhook_result: object = None
     verify_webhook_error: Exception | None = None
+    # Room name -> the JSON string `ensure_room` would have written as LiveKit room metadata.
+    # Lets a test drive the real round trip: establish a room via `ensure_room`, then build a
+    # webhook event whose `room.metadata` is `room_metadata[room]`, exactly what a real LiveKit
+    # webhook would carry back once `ensure_room` has actually run against it.
+    room_metadata: dict[str, str] = field(default_factory=dict)
+
+    async def ensure_room(self, *, org_id: UUID, room: str) -> None:
+        self.calls.append(_RecordedCall("ensure_room", {"org_id": org_id, "room": room}))
+        self.room_metadata[room] = json.dumps({"org_id": str(org_id)})
 
     async def mint_join_token(
         self,

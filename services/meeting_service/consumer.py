@@ -28,6 +28,13 @@ information this service has no use for, null or not.
 Owns: `meeting_rooms` writes for `meeting.created` (pre-create the row) and `meeting.ended`
 (mark it ended). `meeting.updated` is a recognized no-op today - no `meeting_rooms` column
 tracks anything an "updated" meeting event would change yet.
+
+ROOM METADATA FOLLOW-UP (closed). `meeting.created` is one of the two places (with the
+token-mint route) a `meeting_rooms` row is first established, so it is also one of the two
+places `services.meeting_service.transport.MeetingTransport.ensure_room` must run to make
+`services.meeting_service.webhook._resolve_org_id` resolvable against a real LiveKit
+deployment. `run_consumer()` selects a transport via `select_transport()`, same as the
+token-mint route's `get_transport` dependency.
 """
 
 from __future__ import annotations
@@ -45,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.inbox import is_duplicate, record_consumed
 from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import ensure_meeting_room, mark_room_ended
+from services.meeting_service.transport import MeetingTransport, select_transport
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +98,17 @@ def route_to_dlq(
 
 
 async def handle_meeting_event(
-    session: AsyncSession, redis: Redis[bytes], value: dict[str, Any]
+    session: AsyncSession, redis: Redis[bytes], value: dict[str, Any], transport: MeetingTransport
 ) -> bool:
     """Apply one already-Avro-decoded `meeting-events` message.
 
     Returns True if it was newly applied, False if it was a dedupe no-op. Raises
     `PoisonMessage` if the header or body cannot be safely applied - see the module docstring.
+
+    `transport` is required, not optional: `event_type == "created"` is one of the two places
+    (with the token-mint route) a `meeting_rooms` row gets established, and
+    `rooms.ensure_meeting_room` uses it to tell LiveKit the room's tenant via
+    `transport.ensure_room` - see that function's docstring for why.
     """
     header = value.get("header") or {}
     raw_org_id = header.get("org_id")
@@ -130,7 +143,7 @@ async def handle_meeting_event(
     # See PREREQUISITE FIX above: `value.get("livekit_room")` is never read. `event_type` and
     # `meeting_id` are the only fields this handler needs, and both are validated above.
     if event_type == "created":
-        await ensure_meeting_room(session, org_id, meeting_id)
+        await ensure_meeting_room(session, org_id, meeting_id, transport)
     elif event_type == "ended":
         await mark_room_ended(session, org_id, meeting_id)
     else:  # "updated"
@@ -150,6 +163,7 @@ async def process_decoded_message(
     session_factory: Any,
     redis: Redis[bytes],
     dlq_producer: DlqProducer,
+    transport: MeetingTransport,
 ) -> None:
     """One already-Avro-decoded message through to application, or to the DLQ.
 
@@ -159,7 +173,7 @@ async def process_decoded_message(
     """
     try:
         async with session_factory() as session, session.begin():
-            await handle_meeting_event(session, redis, value)
+            await handle_meeting_event(session, redis, value, transport)
     except PoisonMessage as exc:
         logger.error("meeting-events: poison message routed to DLQ: %s", exc)
         route_to_dlq(dlq_producer, topic=TOPIC, key=key, raw_value=raw_value, error=exc)
@@ -196,6 +210,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     )
     deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
     session_factory = get_sessionmaker()
+    transport = select_transport()
 
     try:
         while True:
@@ -215,6 +230,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 session_factory=session_factory,
                 redis=redis,
                 dlq_producer=dlq_producer,
+                transport=transport,
             )
             consumer.commit(message=msg)
     finally:

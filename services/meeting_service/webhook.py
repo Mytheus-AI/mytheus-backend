@@ -23,15 +23,14 @@ in this codebase, `identity_tenant_service.routes.auth.clerk_webhook`, for the s
    with the inbox record.** A crash between them cannot double-apply on LiveKit's at-least-once
    redelivery, and nothing is ever published to Redpanda directly from this request.
 
-KNOWN GAP for whoever wires real room creation (not fixed here - out of this task's stated
-scope, steps 5-7 only). `_resolve_org_id` reads `evt.room.metadata`, but nothing in this
-codebase yet calls LiveKit's `CreateRoom`/`UpdateRoomMetadata` with `{"org_id": ...}`:
-`LiveKitTransport.mint_join_token` (Task 3) only sets metadata on the participant's ACCESS
-TOKEN grant, not on the room itself, and a room LiveKit auto-creates on first join carries no
-metadata at all. Until something sets room metadata at creation time, every REAL webhook will
-fail closed here with "room metadata is absent" - which is the CORRECT behavior for an unset
-value, not a bug in this resolver, but it means the whole webhook path is inert against a real
-LiveKit deployment until that gap closes. Flagged in the task report.
+ROOM METADATA (closed follow-up). `_resolve_org_id` reads `evt.room.metadata`, which is now
+actually populated: `services.meeting_service.rooms.ensure_meeting_room` calls
+`MeetingTransport.ensure_room(org_id=..., room=...)` at both places a `meeting_rooms` row is
+established (the token-mint route, and the `meeting-events` consumer's `meeting.created`
+handler) to write `{"org_id": "<internal uuid>"}` as the room's OWN metadata - a genuinely
+different thing from `mint_join_token`'s participant-grant metadata, which is what this path
+originally, and mistakenly, had nothing setting. Still fails CLOSED on every negative case
+below; that never weakens.
 """
 
 from __future__ import annotations

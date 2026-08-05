@@ -155,7 +155,7 @@ async def mint_token(
     if participant["consent_required"] and participant["consented_at"] is None:
         raise _consent_required()
 
-    room = await ensure_meeting_room(session, ctx.org_id, meeting_id)
+    room = await ensure_meeting_room(session, ctx.org_id, meeting_id, transport)
 
     token = await transport.mint_join_token(
         org_id=ctx.org_id,
