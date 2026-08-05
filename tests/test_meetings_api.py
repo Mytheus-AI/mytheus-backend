@@ -335,3 +335,36 @@ def test_two_updates_both_reach_the_outbox(client, tenant_a):
         {"pat": f"meeting:{created['id']}:updated:%"},
     )
     assert len(rows) == 2
+
+
+def test_status_ended_emits_event_type_ended_not_updated(client, tenant_a):
+    """Task 5, Plan 3-4 section 3.3 step 4 ("verify [meeting-events] emits
+    created/updated/ended"): before this task every PATCH emitted `event_type: "updated"`
+    unconditionally, even one that set `status` to `"ended"`, so a consumer had no way to tell
+    a meeting had actually ended without separately fetching and diffing the resource.
+    `MeetingEventType` (mytheus-events schemas/meeting-events/v1.avsc) has always carried all
+    three symbols; this asserts the producer now actually uses the third one.
+    """
+    created = client.post("/api/v1/meetings", json={"title": "Standup"}).json()
+
+    resp = client.patch(f"/api/v1/meetings/{created['id']}", json={"status": "ended"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ended"
+
+    rows = _sql(
+        "SELECT payload FROM outbox WHERE topic = 'meeting-events' "
+        "AND idempotency_key LIKE %(pat)s",
+        {"pat": f"meeting:{created['id']}:ended:%"},
+    )
+    assert len(rows) == 1, "the ended transition must use the 'ended' idempotency-key shape"
+    assert rows[0]["payload"]["event_type"] == "ended"
+
+    # An ordinary field update on the same meeting still emits "updated", not "ended".
+    client.patch(f"/api/v1/meetings/{created['id']}", json={"title": "renamed post-hoc"})
+    updated_rows = _sql(
+        "SELECT payload FROM outbox WHERE topic = 'meeting-events' "
+        "AND idempotency_key LIKE %(pat)s",
+        {"pat": f"meeting:{created['id']}:updated:%"},
+    )
+    assert len(updated_rows) == 1
+    assert updated_rows[0]["payload"]["event_type"] == "updated"
