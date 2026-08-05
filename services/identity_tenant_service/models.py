@@ -190,6 +190,13 @@ class TenantSettings(Base, TimestampMixin):
     # Envelope-encrypted at rest under a per-tenant KMS data key in a later band. Nullable
     # because SSO/SAML is deferred; the column lands now so enabling it is not a migration.
     sso_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # ADR-0018: defaulted false so no tenant's meeting-join behavior changes as a result of
+    # this column landing. Flipping it to true for a tenant is a legal/compliance decision
+    # (which jurisdictions require affirmative recording consent), not an engineering default.
+    # Gates the 428 check on `POST /api/meetings/:id/token` in meeting-service.
+    consent_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
 
 class DataResidency(Base):

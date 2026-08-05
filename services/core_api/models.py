@@ -64,3 +64,10 @@ class MeetingParticipant(Base, TenantMixin):
         UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
     )
     role_in_meeting: Mapped[str | None] = mapped_column(Text, nullable=True)  # host, attendee
+    # ADR-0018 / Plan 3-4 section 8 DECISION-REQUIRED #2, resolved: recording/transcription
+    # consent acknowledgment, gated by `tenant_settings.consent_required` (default false, so
+    # both columns are inert until a tenant's flag is explicitly set). `consented_at` is the
+    # acknowledgment timestamp; `consent_version` records which consent text was acknowledged,
+    # so a later text change does not silently count as consent to the new wording.
+    consented_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(Text, nullable=True)

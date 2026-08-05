@@ -5,7 +5,9 @@ the provider is swappable.
 """
 
 from libs.shared.app_factory import create_app
+from services.meeting_service.routes import router as token_router
 
 app = create_app("meeting-service")
+app.include_router(token_router)  # POST /api/meetings/:id/token
 
-# TODO: add routers for /api/meetings/:id/token and /livekit/webhook
+# TODO: add the /livekit/webhook router (Task 4)

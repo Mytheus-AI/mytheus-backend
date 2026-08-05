@@ -53,6 +53,9 @@ class ErrorCode(StrEnum):
     INTERNAL = "INTERNAL"
     DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+    # meeting-service token-mint (Plan 3-4 section 3.1 step 4 / ADR-0018).
+    NOT_A_PARTICIPANT = "NOT_A_PARTICIPANT"  # 403: caller is not a participant of this meeting
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"  # 428: tenant requires recording/transcription consent
 
 
 # Fallback mapping for bare HTTPExceptions raised by application code and by FastAPI itself.
@@ -64,6 +67,7 @@ _STATUS_TO_CODE: dict[int, ErrorCode] = {
     404: ErrorCode.NOT_FOUND,
     409: ErrorCode.VERSION_CONFLICT,
     422: ErrorCode.VALIDATION_FAILED,
+    428: ErrorCode.CONSENT_REQUIRED,
     429: ErrorCode.RATE_LIMITED,
     500: ErrorCode.INTERNAL,
     501: ErrorCode.NOT_IMPLEMENTED,
