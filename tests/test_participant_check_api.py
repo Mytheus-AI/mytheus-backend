@@ -177,3 +177,33 @@ def test_unknown_clerk_user_id_gets_403_not_500(client, tenant_a):
 
     assert resp.status_code == 403
     assert resp.json()["code"] == "NOT_A_PARTICIPANT"
+
+
+def test_org_b_user_is_never_reported_a_participant_of_an_org_a_meeting(client, tenant_a, tenant_b):
+    """Team lead's mid-task concern, verified directly: `realtime-gateway` scopes tenancy via
+    an `X-Org-Id` header it sets from its own verified JWT, but that header is not the safety
+    boundary here - this route never reads it (it isn't declared as a parameter at all; see
+    `check_participant`'s docstring). Tenancy for BOTH the meeting-existence check and this
+    participant lookup comes from `tenant_session`, which resolves `org_id` from the caller's
+    own verified bearer token via the same `tenant_context` chain every other route in this
+    service uses.
+
+    Concretely: org A's meeting, but the path names org B's REAL clerk_user_id (a genuine,
+    existing user - not the "doesn't exist anywhere" case the previous test covers). RLS on
+    `users` scopes the lookup to `app.current_org` (org A, from tenant_a's own verified
+    token), so org B's user row is invisible to that query - not merely "not a participant",
+    genuinely not found - and the JOIN in `check_participant` returns nothing regardless of
+    whether org B's user happens to be a participant of some OTHER meeting. If this route
+    instead resolved participants by `meeting_id` alone (ignoring tenancy), org B's user could
+    be reported as a participant of org A's meeting and `realtime-gateway` would let them into
+    the room - exactly the breach this test rules out.
+    """
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+    # tenant_b is a real org with a real user, participant of nothing in tenant_a.
+
+    sign_in(tenant_a)
+    resp = client.get(f"/api/v1/meetings/{meeting_id}/participants/{tenant_b.clerk_user}")
+
+    assert resp.status_code == 403, "org B's real clerk_user_id must not be found under org A"
+    assert resp.json()["code"] == "NOT_A_PARTICIPANT"

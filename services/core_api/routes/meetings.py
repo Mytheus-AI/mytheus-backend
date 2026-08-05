@@ -309,6 +309,21 @@ async def check_participant(
     HERE, the same way `libs.shared.authz.tenant_context` resolves the caller's own principal
     via `clerk_user_id`, is what lets this route accept the identifier the gateway actually
     has rather than one it has no way to produce.
+
+    **Tenancy source, spelled out because `realtime-gateway` also sends an `X-Org-Id` header
+    on this call:** that header is NOT read here - it isn't even declared as a parameter. The
+    ONLY source of `org_id` for this route is `tenant_session` -> `tenant_context` ->
+    `verify_token`, i.e. the caller's OWN re-verified bearer token, exactly like every other
+    route in this file. Both the meeting-existence check below and the `meeting_participants
+    JOIN users` query are RLS-scoped by that resolved `org_id` with no hand-written predicate,
+    so a request naming an org-B `clerk_user_id` while `app.current_org` is org A finds
+    nothing - org B's `users` row is invisible under RLS - rather than "found, but not a
+    participant of THIS meeting" from a lookup that forgot to scope by tenant. See
+    `tests/test_participant_check_api.py::test_org_b_user_is_never_reported_a_participant_of_
+    an_org_a_meeting` for the direct proof. `X-Org-Id` is transport-layer context the gateway
+    sets from its own verified JWT for its own bookkeeping; it is never the authorization
+    boundary on this side of the call, matching `CLAUDE.md`'s "the service tier RE-VERIFIES
+    the JWT (the gateway is a DDoS shield, not a trust delegation)".
     """
     await _fetch_meeting(session, meeting_id)  # 404 before anything else; RLS-scoped
 
