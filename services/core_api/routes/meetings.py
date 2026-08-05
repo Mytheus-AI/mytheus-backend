@@ -31,6 +31,7 @@ from libs.shared.authz import (
     RequestContext,
     not_found,
     require_tier,
+    tenant_context,
     tenant_session,
 )
 from libs.shared.errors import ErrorCode, ProblemDetail
@@ -42,6 +43,7 @@ from services.core_api.schemas import (
     MeetingPage,
     MeetingUpdate,
     Participant,
+    ParticipantCheck,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["meetings"])
@@ -283,13 +285,14 @@ async def get_meeting(
 @router.get(
     "/meetings/{meeting_id}/participants/{clerk_user_id}",
     status_code=status.HTTP_200_OK,
-    response_model=Participant,
+    response_model=ParticipantCheck,
 )
 async def check_participant(
     meeting_id: uuid.UUID,
     clerk_user_id: str,
+    ctx: Annotated[RequestContext, Depends(tenant_context)],
     session: Annotated[AsyncSession, Depends(tenant_session)],
-) -> Participant:
+) -> ParticipantCheck:
     """Deny-by-default participant check. `realtime-gateway` (Task 6) calls this on every
     Socket.io `join` to decide FORBIDDEN vs allow before joining the room.
 
@@ -319,11 +322,26 @@ async def check_participant(
     so a request naming an org-B `clerk_user_id` while `app.current_org` is org A finds
     nothing - org B's `users` row is invisible under RLS - rather than "found, but not a
     participant of THIS meeting" from a lookup that forgot to scope by tenant. See
-    `tests/test_participant_check_api.py::test_org_b_user_is_never_reported_a_participant_of_
-    an_org_a_meeting` for the direct proof. `X-Org-Id` is transport-layer context the gateway
-    sets from its own verified JWT for its own bookkeeping; it is never the authorization
-    boundary on this side of the call, matching `CLAUDE.md`'s "the service tier RE-VERIFIES
-    the JWT (the gateway is a DDoS shield, not a trust delegation)".
+    `tests/test_participant_check_api.py::test_the_participant_join_result_depends_on_users_
+    rls_not_just_on_row_existence` for the direct proof (the JOIN layer, isolated). `X-Org-Id`
+    is transport-layer context the gateway sets from its own verified JWT for its own
+    bookkeeping; it is never the authorization boundary on this side of the call, matching
+    `CLAUDE.md`'s "the service tier RE-VERIFIES the JWT (the gateway is a DDoS shield, not a
+    trust delegation)".
+
+    **`org_id` in the response (`ParticipantCheck`, not `Participant` - see that schema's
+    docstring for why a separate model):** `realtime-gateway`'s fixed `presence-events`
+    producer needs our internal `org_id` and has no database to resolve its own JWT's opaque
+    Clerk org id into one; this route already resolves it (as `ctx.org_id`, above) for its own
+    RLS scoping, so returning it is serializing an already-computed value, not a new query or
+    lookup. Safe to return to THIS caller specifically because `ctx.org_id` is, by
+    construction, always the caller's own tenant - it comes from re-verifying THEIR OWN bearer
+    token, never from a lookup on the target meeting or user - and every 200 response is
+    additionally consistent with that value: `_fetch_meeting`'s and this query's RLS scoping
+    guarantee that the meeting and the resolved participant/user rows all carry
+    `org_id = ctx.org_id`, or the route would already have 404'd/403'd before reaching here.
+    There is no code path that reaches `return ParticipantCheck(...)` with an `org_id` that is
+    not the caller's own.
     """
     await _fetch_meeting(session, meeting_id)  # 404 before anything else; RLS-scoped
 
@@ -343,7 +361,9 @@ async def check_participant(
     )
     if row is None:
         raise _not_a_participant()
-    return Participant(user_id=row["user_id"], role_in_meeting=row["role_in_meeting"])
+    return ParticipantCheck(
+        user_id=row["user_id"], role_in_meeting=row["role_in_meeting"], org_id=ctx.org_id
+    )
 
 
 @router.patch("/meetings/{meeting_id}", response_model=Meeting)

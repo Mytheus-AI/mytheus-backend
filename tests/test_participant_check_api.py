@@ -138,7 +138,35 @@ def test_participant_gets_200_with_the_resource(client, tenant_a):
     resp = client.get(f"/api/v1/meetings/{meeting_id}/participants/{tenant_a.clerk_user}")
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["user_id"] == str(tenant_a.user_id)
+    body = resp.json()
+    assert body["user_id"] == str(tenant_a.user_id)
+    assert body["org_id"] == str(tenant_a.org_id)
+
+
+def test_returned_org_id_is_always_the_callers_own_tenant(client, tenant_a, tenant_b):
+    """mytheus-realtime's fixed presence-events producer (Task 6 follow-up) needs this field:
+    it has no database and cannot resolve its own JWT's opaque Clerk org id into our internal
+    UUID any other way. Safe to add because `org_id` in the response is `ctx.org_id` - derived
+    solely from re-verifying the CALLER's own bearer token (never a lookup on the meeting or
+    the target user) - so it can only ever be the org that owns this HTTP request.
+
+    Proven twice here: once as org A asking about its own meeting, once as org B asking about
+    ITS OWN (different) meeting on the SAME running client - the returned `org_id` tracks
+    whichever tenant is actually calling, never a fixed or leaked value from the other case.
+    """
+    meeting_a = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_a, tenant_a.org_id, tenant_a.user_id)
+    resp_a = client.get(f"/api/v1/meetings/{meeting_a}/participants/{tenant_a.clerk_user}")
+    assert resp_a.status_code == 200, resp_a.text
+    assert resp_a.json()["org_id"] == str(tenant_a.org_id)
+
+    sign_in(tenant_b)
+    meeting_b = seed_meeting(tenant_b.org_id)
+    add_participant(meeting_b, tenant_b.org_id, tenant_b.user_id)
+    resp_b = client.get(f"/api/v1/meetings/{meeting_b}/participants/{tenant_b.clerk_user}")
+    assert resp_b.status_code == 200, resp_b.text
+    assert resp_b.json()["org_id"] == str(tenant_b.org_id)
+    assert resp_b.json()["org_id"] != resp_a.json()["org_id"]
 
 
 def test_non_participant_gets_403(client, tenant_a):

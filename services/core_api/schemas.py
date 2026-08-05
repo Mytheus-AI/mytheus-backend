@@ -61,6 +61,29 @@ class Participant(BaseModel):
     role_in_meeting: str | None = None
 
 
+class ParticipantCheck(BaseModel):
+    """`GET /meetings/:id/participants/:clerk_user_id`'s response shape.
+
+    Deliberately NOT `Participant` with an extra field: `Participant` is also embedded in
+    `Meeting.participants` (see `routes.meetings._load_participants`/`create_meeting`), and
+    every one of those call sites constructs it with no `org_id` in hand at all (it isn't
+    resolved per-participant, and the meeting itself already implies the tenant). Adding a
+    required `org_id` to `Participant` would break those constructions; adding an optional
+    one would put a meaningless `"org_id": null` on every entry of every meeting's
+    participants array. This is a distinct resource with its own shape instead.
+
+    `org_id` here is `ctx.org_id` - the CALLER's own tenant, resolved from their own verified
+    bearer token, never a lookup on the target resource. `realtime-gateway`'s presence-events
+    fix (mytheus-realtime Task 6 follow-up) needs it because the gateway has no database and
+    cannot resolve its own JWT's opaque Clerk org id into our internal UUID any other way; this
+    endpoint already computes it for its own RLS scoping, so returning it is not a new query.
+    """
+
+    user_id: uuid.UUID
+    role_in_meeting: str | None = None
+    org_id: uuid.UUID
+
+
 class Meeting(BaseModel):
     id: uuid.UUID
     title: str | None
