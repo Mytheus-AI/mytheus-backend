@@ -7,24 +7,45 @@ This module intentionally has NO opinion on `org_id` provenance or RLS: every ca
 already called `libs.shared.tenancy.set_rls` (or otherwise established `app.current_org`) on the
 session it passes in. That is a route/consumer/handler concern, not a storage-helper concern.
 
-`ensure_meeting_room` requires a `MeetingTransport` (not merely accepts one) so that the ONE
-place a `meeting_rooms` row is established is also the ONE place LiveKit is told that room's
-tenant (`transport.ensure_room`, Task 4 follow-up). This module never imports the LiveKit SDK
-itself - only the `MeetingTransport` Protocol type - so it stays outside ADR-0003 Decision 2's
-import boundary (`tests/test_livekit_import_boundary.py`), matching how `routes.py` and
-`webhook.py` also only ever reach LiveKit through that Protocol.
+Fix round 1 (Task 4 report follow-up): this module does NOT call `MeetingTransport.ensure_room`
+itself, and does not take a `transport` argument at all - it did, briefly, and that was the
+bug. `ensure_meeting_room` is called from inside an open write transaction at both its call
+sites (the token-mint route's `tenant_session`, the `meeting-events` consumer's per-message
+`session.begin()`), and a real LiveKit HTTP call belongs OUTSIDE that window: two real network
+round trips inside the token-mint route's transaction undercut the `_BIND_STATEMENT_TIMEOUT`
+SLO protection next to it (nothing bounds non-Postgres work), and an uncaught LiveKit failure
+inside the `meeting-events` consumer's synchronous path crashed the whole consumer and blocked
+the partition for every tenant - reached through a different exception type than the DLQ path
+was built to catch.
+
+The fix: `ensure_meeting_room` does ONLY the DB upsert and reports whether a LiveKit sync is
+still outstanding (`RoomUpsertResult.needs_livekit_sync`, backed by the new
+`meeting_rooms.livekit_metadata_synced_at` column - NULL means "never synced"). Callers run
+`transport.ensure_room` AFTER their DB transaction has committed and the connection has been
+returned to the pool (a FastAPI `BackgroundTasks` callback for the route, a detached
+`asyncio.create_task` for the consumer - see `routes.py` and `consumer.py`), and only when
+`needs_livekit_sync` is true, so a synced room costs nothing on every later mint. A failed
+sync attempt is caught and logged where it happens, never raised back into a request or the
+consumer's poll loop: the row stays unsynced and self-heals the next time this meeting's
+`ensure_meeting_room` runs (another mint, or `meeting.ended` triggering nothing new here but
+the route being hit again by a reconnect) - see `mark_room_metadata_synced`.
 """
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from libs.shared.tenancy import set_rls
 from services.meeting_service.transport import MeetingTransport
+
+logger = logging.getLogger(__name__)
 
 
 def room_name_for(meeting_id: UUID) -> str:
@@ -32,23 +53,23 @@ def room_name_for(meeting_id: UUID) -> str:
     return f"meeting-{meeting_id}"
 
 
+@dataclass(frozen=True)
+class RoomUpsertResult:
+    room: str
+    needs_livekit_sync: bool
+
+
 async def ensure_meeting_room(
-    session: AsyncSession, org_id: UUID, meeting_id: UUID, transport: MeetingTransport
-) -> str:
-    """Upsert the `meeting_rooms` row this meeting's LiveKit room materializes into, AND tell
-    LiveKit the room's tenant via `transport.ensure_room`.
+    session: AsyncSession, org_id: UUID, meeting_id: UUID
+) -> RoomUpsertResult:
+    """Upsert the `meeting_rooms` row this meeting's LiveKit room materializes into.
 
-    The room name is deterministic rather than randomly generated per call, so a concurrent
-    double-call racing this INSERT is a harmless conflict on the same value either way.
-    `ON CONFLICT ... DO UPDATE SET updated_at = now()` deliberately does not touch
-    `livekit_room` in the SET clause: once a room exists its name is fixed for the life of the
-    meeting, and this upsert must return the EXISTING name on every call after the first, not
-    silently rename the room out from under a participant who already has a token for it.
-
-    `transport.ensure_room` runs every call, not just the first: it is idempotent (real LiveKit
-    `CreateRoom`/`UpdateRoomMetadata` both are), and calling it unconditionally means a room
-    whose metadata was ever wrong self-heals on the next mint/consume rather than staying wrong
-    for the life of the meeting.
+    DB-only: no LiveKit call happens here (see the module docstring for why). The room name is
+    deterministic rather than randomly generated per call, so a concurrent double-call racing
+    this INSERT is a harmless conflict on the same value either way. `ON CONFLICT ... DO UPDATE
+    SET updated_at = now()` deliberately does not touch `livekit_room` (or
+    `livekit_metadata_synced_at`) in the SET clause: once a room exists its name is fixed for
+    the life of the meeting, and a routine upsert must not reset a sync that already succeeded.
     """
     row = (
         (
@@ -57,7 +78,7 @@ async def ensure_meeting_room(
                     "INSERT INTO meeting_rooms (org_id, meeting_id, livekit_room) "
                     "VALUES (:org, :meeting, :room) "
                     "ON CONFLICT (org_id, meeting_id) DO UPDATE SET updated_at = now() "
-                    "RETURNING livekit_room"
+                    "RETURNING livekit_room, livekit_metadata_synced_at"
                 ),
                 {
                     "org": str(org_id),
@@ -69,9 +90,64 @@ async def ensure_meeting_room(
         .mappings()
         .one()
     )
-    room = str(row["livekit_room"])
-    await transport.ensure_room(org_id=org_id, room=room)
-    return room
+    return RoomUpsertResult(
+        room=str(row["livekit_room"]),
+        needs_livekit_sync=row["livekit_metadata_synced_at"] is None,
+    )
+
+
+async def mark_room_metadata_synced(session: AsyncSession, org_id: UUID, room: str) -> None:
+    """Record that `transport.ensure_room` succeeded for this room. Called from the SAME
+    out-of-band step that called `ensure_room` (after it succeeds), in its own short
+    transaction - never inside the transaction `ensure_meeting_room` ran in, which has already
+    committed and closed by the time this runs.
+    """
+    await session.execute(
+        text(
+            "UPDATE meeting_rooms SET livekit_metadata_synced_at = now() "
+            "WHERE org_id = :org AND livekit_room = :room"
+        ),
+        {"org": str(org_id), "room": room},
+    )
+
+
+async def sync_livekit_metadata(
+    session_factory: async_sessionmaker[AsyncSession],
+    transport: MeetingTransport,
+    *,
+    org_id: UUID,
+    room: str,
+) -> None:
+    """Out-of-band step: call `transport.ensure_room`, and on success mark the row synced in
+    its own short transaction. Both call sites (`routes.py`'s token-mint route, `consumer.py`'s
+    `meeting-events` handler) run this ONLY after their own DB transaction has already
+    committed - a `BackgroundTasks` callback for the route, a detached `asyncio.create_task`
+    for the consumer - so the Postgres connection those held is back in the pool before this
+    ever makes a network call.
+
+    Never raises. A LiveKit failure is logged and swallowed: the row stays unsynced (`
+    livekit_metadata_synced_at` stays NULL), which is exactly the durable "still needs a sync"
+    marker `ensure_meeting_room` already checks, so the NEXT call for this meeting (another
+    mint, a reconnect) retries automatically. That is the whole retry mechanism - no queue, no
+    new role, no cross-tenant background sweep: state lives in Postgres, on the same row,
+    read by the same tenant-scoped session every other write to it already uses.
+    """
+    try:
+        await transport.ensure_room(org_id=org_id, room=room)
+    except Exception:  # noqa: BLE001 - a transient LiveKit failure must never propagate into
+        # the caller's request/response cycle or the meeting-events poll loop; see docstring.
+        logger.warning(
+            "meeting-service: transport.ensure_room failed for org=%s room=%s; will retry on "
+            "the next call for this meeting",
+            org_id,
+            room,
+            exc_info=True,
+        )
+        return
+
+    async with session_factory() as session, session.begin():
+        await set_rls(session, org_id)
+        await mark_room_metadata_synced(session, org_id, room)
 
 
 async def mark_room_ended(session: AsyncSession, org_id: UUID, meeting_id: UUID) -> bool:

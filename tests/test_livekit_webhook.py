@@ -33,14 +33,14 @@ import psycopg2
 import psycopg2.extras
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
 
 from libs.shared import auth as auth_mod
 from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
 from services.meeting_service import routes, webhook
-from services.meeting_service.rooms import ensure_meeting_room
+from services.meeting_service.rooms import ensure_meeting_room, sync_livekit_metadata
 from services.meeting_service.transport import FakeTransport
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
@@ -204,12 +204,13 @@ def test_signed_egress_ended_persists_recording_ref_and_emits_one_outbox_row(cli
 
 async def test_room_established_via_ensure_room_then_webhook_resolves_the_correct_tenant(client):
     """Closes the gap flagged after the first landing of this task: establish a room for REAL
-    through `rooms.ensure_meeting_room` (which calls `transport.ensure_room`, not a hand-seeded
-    row), then build the webhook event's `room.metadata` from EXACTLY what `FakeTransport.
-    ensure_room` recorded - not a value this test re-derives independently. That makes this a
-    genuine round trip: if `ensure_room` ever wrote the wrong org_id (e.g. a Clerk id instead of
-    the internal uuid), this test would still pass unless it reads the SAME dict `ensure_room`
-    wrote, which is exactly what it does.
+    through `rooms.ensure_meeting_room` (a real DB upsert, not a hand-seeded row), run
+    `rooms.sync_livekit_metadata` the same way `routes.py`/`consumer.py` do (out of band, after
+    the upsert's own transaction has closed - fix round 1), then build the webhook event's
+    `room.metadata` from EXACTLY what `FakeTransport.ensure_room` recorded, not a value this
+    test re-derives independently. That makes this a genuine round trip: if `ensure_room` ever
+    wrote the wrong org_id (e.g. a Clerk id instead of the internal uuid), this test would
+    still pass unless it reads the SAME dict `ensure_room` wrote, which is exactly what it does.
     """
     org_id = seed_org()
     meeting_id = uuid.uuid4()
@@ -219,16 +220,23 @@ async def test_room_established_via_ensure_room_then_webhook_resolves_the_correc
     )
 
     engine = create_async_engine(APP_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with engine.connect() as conn, conn.begin():
             await conn.execute(
                 text("SELECT set_config('app.current_org', :o, true)"), {"o": str(org_id)}
             )
-            room = await ensure_meeting_room(conn, org_id, meeting_id, FAKE)
+            result = await ensure_meeting_room(conn, org_id, meeting_id)
+        assert result.needs_livekit_sync is True
+
+        await sync_livekit_metadata(session_factory, FAKE, org_id=org_id, room=result.room)
     finally:
         await engine.dispose()
 
-    assert room in FAKE.room_metadata, "ensure_meeting_room must have called transport.ensure_room"
+    room = result.room
+    assert (
+        room in FAKE.room_metadata
+    ), "sync_livekit_metadata must have called transport.ensure_room"
 
     evt = _evt(
         "egress_ended",

@@ -29,12 +29,34 @@ Owns: `meeting_rooms` writes for `meeting.created` (pre-create the row) and `mee
 (mark it ended). `meeting.updated` is a recognized no-op today - no `meeting_rooms` column
 tracks anything an "updated" meeting event would change yet.
 
-ROOM METADATA FOLLOW-UP (closed). `meeting.created` is one of the two places (with the
-token-mint route) a `meeting_rooms` row is first established, so it is also one of the two
-places `services.meeting_service.transport.MeetingTransport.ensure_room` must run to make
+ROOM METADATA FOLLOW-UP. `meeting.created` is one of the two places (with the token-mint
+route) a `meeting_rooms` row is first established, so it is also one of the two places
+`services.meeting_service.transport.MeetingTransport.ensure_room` must run to make
 `services.meeting_service.webhook._resolve_org_id` resolvable against a real LiveKit
-deployment. `run_consumer()` selects a transport via `select_transport()`, same as the
-token-mint route's `get_transport` dependency.
+deployment.
+
+FIX ROUND 1. The first version of this follow-up called `ensure_room` (a real LiveKit HTTP
+call) SYNCHRONOUSLY from inside `handle_meeting_event`, inside the SAME `session.begin()`
+block `process_decoded_message` wraps it in. That call only catches `PoisonMessage` - an
+ordinary `Exception` from a LiveKit timeout/5xx/network error propagated straight out of
+`process_decoded_message`, out of `run_consumer`'s bare `while True` (which also catches
+nothing), and crashed the consumer. Because the crash happened before
+`consumer.commit(message=msg)`, the same message got redelivered and crashed it again on
+restart: a LiveKit blip could crash-loop the ENTIRE `meeting-events` partition, for every
+tenant, until LiveKit recovered or someone manually skipped the offset - exactly what the
+"poison messages must never block the partition" constraint exists to prevent, reached
+through a different exception type than the DLQ path was built to catch.
+
+Fixed by decoupling: `handle_meeting_event` never touches `transport` and makes no network
+call. When `created` still needs a sync (`RoomUpsertResult.needs_livekit_sync`), it returns
+`(org_id, room)` as `HandledMeetingEvent.pending_room_sync`; `process_decoded_message` fires
+`rooms.sync_livekit_metadata` as a DETACHED `asyncio.Task` only AFTER its own `session.begin()`
+block has already committed and returned. The task's own try/except (inside
+`sync_livekit_metadata`) swallows every LiveKit failure, so nothing it does can propagate back
+into the poll loop, and `consumer.commit(message=msg)` runs immediately regardless of whether
+the sync succeeds. `run_consumer()` selects a transport via `select_transport()`, same as the
+token-mint route's `get_transport` dependency, and passes it to `process_decoded_message`
+(never to `handle_meeting_event`).
 """
 
 from __future__ import annotations
@@ -44,6 +66,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from redis.asyncio import Redis
@@ -51,7 +74,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
 from libs.shared.tenancy import set_rls
-from services.meeting_service.rooms import ensure_meeting_room, mark_room_ended
+from services.meeting_service.rooms import (
+    ensure_meeting_room,
+    mark_room_ended,
+    sync_livekit_metadata,
+)
 from services.meeting_service.transport import MeetingTransport, select_transport
 
 logger = logging.getLogger(__name__)
@@ -60,6 +87,12 @@ TOPIC = "meeting-events"
 CONSUMER_GROUP = "meeting-service"
 
 _RECOGNIZED_EVENT_TYPES = {"created", "updated", "ended"}
+
+# Fire-and-forget `sync_livekit_metadata` tasks. A reference MUST be kept somewhere for the
+# lifetime of the task - asyncio only holds a weak reference internally, so an unreferenced
+# task can be garbage-collected mid-execution (a documented, easy-to-miss gotcha). Discarded
+# via `add_done_callback` once each task finishes, so this never grows unbounded.
+_background_sync_tasks: set[asyncio.Task[None]] = set()
 
 
 class PoisonMessage(Exception):
@@ -97,18 +130,24 @@ def route_to_dlq(
     producer.flush(10)
 
 
+@dataclass(frozen=True)
+class HandledMeetingEvent:
+    applied: bool
+    # (org_id, room) if this apply established a room that still needs a LiveKit metadata
+    # sync; None otherwise (a dedupe no-op, "ended", "updated", or a room that was already
+    # synced). `process_decoded_message` fires the sync AFTER this function's transaction has
+    # committed - see the module docstring's FIX ROUND 1 note for why it cannot happen here.
+    pending_room_sync: tuple[uuid.UUID, str] | None = None
+
+
 async def handle_meeting_event(
-    session: AsyncSession, redis: Redis[bytes], value: dict[str, Any], transport: MeetingTransport
-) -> bool:
-    """Apply one already-Avro-decoded `meeting-events` message.
+    session: AsyncSession, redis: Redis[bytes], value: dict[str, Any]
+) -> HandledMeetingEvent:
+    """Apply one already-Avro-decoded `meeting-events` message. DB and Redis only - no LiveKit
+    call happens in this function, ever (see the module docstring's FIX ROUND 1 note).
 
-    Returns True if it was newly applied, False if it was a dedupe no-op. Raises
-    `PoisonMessage` if the header or body cannot be safely applied - see the module docstring.
-
-    `transport` is required, not optional: `event_type == "created"` is one of the two places
-    (with the token-mint route) a `meeting_rooms` row gets established, and
-    `rooms.ensure_meeting_room` uses it to tell LiveKit the room's tenant via
-    `transport.ensure_room` - see that function's docstring for why.
+    Raises `PoisonMessage` if the header or body cannot be safely applied - see the module
+    docstring.
     """
     header = value.get("header") or {}
     raw_org_id = header.get("org_id")
@@ -136,14 +175,17 @@ async def handle_meeting_event(
         raise PoisonMessage(f"meeting-events event_type is not recognized ({event_type!r})")
 
     if await is_duplicate(redis, str(org_id), TOPIC, idempotency_key):
-        return False
+        return HandledMeetingEvent(applied=False)
 
     await set_rls(session, org_id)
 
     # See PREREQUISITE FIX above: `value.get("livekit_room")` is never read. `event_type` and
     # `meeting_id` are the only fields this handler needs, and both are validated above.
+    pending_room_sync: tuple[uuid.UUID, str] | None = None
     if event_type == "created":
-        await ensure_meeting_room(session, org_id, meeting_id, transport)
+        result = await ensure_meeting_room(session, org_id, meeting_id)
+        if result.needs_livekit_sync:
+            pending_room_sync = (org_id, result.room)
     elif event_type == "ended":
         await mark_room_ended(session, org_id, meeting_id)
     else:  # "updated"
@@ -152,7 +194,20 @@ async def handle_meeting_event(
         )
 
     await record_consumed(session, CONSUMER_GROUP, str(org_id), idempotency_key)
-    return True
+    return HandledMeetingEvent(applied=True, pending_room_sync=pending_room_sync)
+
+
+def _fire_and_forget_sync(
+    session_factory: Any, transport: MeetingTransport, *, org_id: uuid.UUID, room: str
+) -> None:
+    """Schedule `rooms.sync_livekit_metadata` without awaiting it, keeping a reference so the
+    task cannot be garbage-collected mid-execution. `sync_livekit_metadata` catches every
+    exception itself, so nothing raised here can ever reach `run_consumer`'s poll loop."""
+    task = asyncio.create_task(
+        sync_livekit_metadata(session_factory, transport, org_id=org_id, room=room)
+    )
+    _background_sync_tasks.add(task)
+    task.add_done_callback(_background_sync_tasks.discard)
 
 
 async def process_decoded_message(
@@ -173,10 +228,19 @@ async def process_decoded_message(
     """
     try:
         async with session_factory() as session, session.begin():
-            await handle_meeting_event(session, redis, value, transport)
+            result = await handle_meeting_event(session, redis, value)
     except PoisonMessage as exc:
         logger.error("meeting-events: poison message routed to DLQ: %s", exc)
         route_to_dlq(dlq_producer, topic=TOPIC, key=key, raw_value=raw_value, error=exc)
+        return
+
+    if result.pending_room_sync is not None:
+        # By this point `session.begin()` above has already committed and the connection is
+        # back in the pool - firing this now, not awaiting it, is what keeps a LiveKit blip
+        # from ever reaching this function's caller (`run_consumer`'s `consumer.commit`, right
+        # after this returns, is never delayed or skipped by a slow or failing LiveKit call).
+        org_id, room = result.pending_room_sync
+        _fire_and_forget_sync(session_factory, transport, org_id=org_id, room=room)
 
 
 async def run_consumer() -> None:  # pragma: no cover - thin harness, see module docstring

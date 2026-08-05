@@ -10,6 +10,7 @@ anything here.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from services.meeting_service.transport import FakeTransport
@@ -80,3 +81,17 @@ async def test_fake_transport_verify_webhook_raises_configured_error():
         raised = True
 
     assert raised, "a configured verify_webhook_error must propagate"
+
+
+async def test_fake_transport_ensure_room_records_the_internal_org_id_as_room_metadata():
+    """Room-metadata follow-up: `ensure_room` must write the INTERNAL org_id (never a Clerk
+    id - a related bug elsewhere in this band came from exactly that confusion), in the same
+    JSON shape a real LiveKit webhook's `evt.room.metadata` would carry it back."""
+    fake = FakeTransport()
+    org_id = uuid.uuid4()
+
+    await fake.ensure_room(org_id=org_id, room="meeting-abc")
+
+    assert fake.calls[-1].method == "ensure_room"
+    assert fake.calls[-1].kwargs == {"org_id": org_id, "room": "meeting-abc"}
+    assert fake.room_metadata["meeting-abc"] == json.dumps({"org_id": str(org_id)})

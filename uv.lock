@@ -1648,6 +1648,7 @@ name = "mytheus-backend"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "aiokafka" },
     { name = "alembic" },
     { name = "asyncpg" },
@@ -1693,6 +1694,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.1" },
     { name = "aiokafka", specifier = ">=0.11" },
     { name = "alembic", specifier = ">=1.13" },
     { name = "asyncpg", specifier = ">=0.29" },

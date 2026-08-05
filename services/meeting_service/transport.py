@@ -27,7 +27,14 @@ from datetime import timedelta
 from typing import Protocol
 from uuid import UUID
 
+import aiohttp
 from livekit import api  # the ONLY import of the LiveKit SDK in the codebase
+
+# Fix round 1: LiveKitAPI's own default is 60s PER CALL (120s worst case across the two
+# ensure_room calls). ensure_room now only ever runs out-of-band (see its docstring), but a
+# short explicit bound still matters: it is what makes a LiveKit outage fail fast instead of
+# tying up a background task for up to two minutes per attempt.
+_ENSURE_ROOM_TIMEOUT_SECONDS = 5.0
 
 
 class MeetingTransport(Protocol):
@@ -80,9 +87,20 @@ class LiveKitTransport:
         metadata of a room that already exists (e.g. one LiveKit auto-created on an earlier
         join before this ever ran), while `UpdateRoomMetadata` requires an existing room. The
         pair is correct regardless of which of those states the room was already in.
+
+        Fix round 1 finding: `LiveKitAPI`'s default `aiohttp.ClientTimeout` is 60 seconds PER
+        CALL. This method is only ever invoked out-of-band now (`services.meeting_service.
+        rooms`'s callers schedule it via a background task, never inside an open Postgres
+        transaction or a request the caller is waiting on - see the fix-round report), so a
+        slow LiveKit no longer risks a connection-pool or SLO incident the way it did before.
+        An explicit, much shorter timeout is still set regardless, so a LiveKit outage fails
+        fast (this attempt gives up in seconds, not up to two minutes across both calls) and
+        the retry-on-next-mint self-heal (`meeting_rooms.livekit_metadata_synced_at IS NULL`)
+        gets its next chance sooner rather than later.
         """
         metadata = json.dumps({"org_id": str(org_id)})
-        lkapi = api.LiveKitAPI(self._url, self._key, self._secret)
+        timeout = aiohttp.ClientTimeout(total=_ENSURE_ROOM_TIMEOUT_SECONDS)
+        lkapi = api.LiveKitAPI(self._url, self._key, self._secret, timeout=timeout)
         try:
             await lkapi.room.create_room(api.CreateRoomRequest(name=room, metadata=metadata))
             await lkapi.room.update_room_metadata(

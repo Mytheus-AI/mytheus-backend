@@ -24,13 +24,18 @@ in this codebase, `identity_tenant_service.routes.auth.clerk_webhook`, for the s
    redelivery, and nothing is ever published to Redpanda directly from this request.
 
 ROOM METADATA (closed follow-up). `_resolve_org_id` reads `evt.room.metadata`, which is now
-actually populated: `services.meeting_service.rooms.ensure_meeting_room` calls
-`MeetingTransport.ensure_room(org_id=..., room=...)` at both places a `meeting_rooms` row is
-established (the token-mint route, and the `meeting-events` consumer's `meeting.created`
-handler) to write `{"org_id": "<internal uuid>"}` as the room's OWN metadata - a genuinely
-different thing from `mint_join_token`'s participant-grant metadata, which is what this path
-originally, and mistakenly, had nothing setting. Still fails CLOSED on every negative case
-below; that never weakens.
+actually populated: both call sites that establish a `meeting_rooms` row (the token-mint
+route, the `meeting-events` consumer's `meeting.created` handler) schedule
+`MeetingTransport.ensure_room(org_id=..., room=...)` out of band via
+`services.meeting_service.rooms.sync_livekit_metadata`, writing `{"org_id": "<internal
+uuid>"}` as the room's OWN metadata - a genuinely different thing from `mint_join_token`'s
+participant-grant metadata, which is what this path originally, and mistakenly, had nothing
+setting. Still fails CLOSED on every negative case below; that never weakens.
+
+FIX ROUND 1: existence/status validation now goes through `libs.shared.org_resolver.
+resolve_org_by_id`, the sanctioned second reader that module's docstring names, instead of a
+second hand-written `SELECT ... FROM organizations` living here. Same predicate, same table,
+one fewer independently-maintained query that could drift from it.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.inbox import is_duplicate, record_consumed
+from libs.shared.org_resolver import resolve_org_by_id
 from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 from services.meeting_service.routes import get_transport
@@ -100,8 +106,9 @@ def _participant_sid(evt: object) -> str | None:
 
 async def _resolve_org_id(session: AsyncSession, evt: object) -> uuid.UUID:
     """Room-metadata tenant resolution. Fails CLOSED on every negative case - see module
-    docstring step 2. Reads `organizations` directly (that table carries no RLS policy; see
-    `libs.shared.org_resolver`'s docstring for why), so this runs before `app.current_org` is
+    docstring step 2. Existence/active validation goes through `libs.shared.org_resolver.
+    resolve_org_by_id`, the sanctioned second reader of `organizations` (that table carries no
+    RLS policy; see that module's docstring for why), so this runs before `app.current_org` is
     ever set - no tenant is established until this returns.
     """
     room = getattr(evt, "room", None)
@@ -119,20 +126,12 @@ async def _resolve_org_id(session: AsyncSession, evt: object) -> uuid.UUID:
         raise _org_unresolvable("room metadata carries no org_id field")
 
     try:
-        org_id = uuid.UUID(str(raw_org_id))
+        candidate_org_id = uuid.UUID(str(raw_org_id))
     except ValueError as exc:
         raise _org_unresolvable("room metadata org_id is not a UUID") from exc
 
-    row = (
-        await session.execute(
-            text(
-                "SELECT 1 FROM organizations "
-                "WHERE id = :id AND status = 'active' AND deleted_at IS NULL"
-            ),
-            {"id": str(org_id)},
-        )
-    ).first()
-    if row is None:
+    org_id = await resolve_org_by_id(session, candidate_org_id)
+    if org_id is None:
         raise _org_unresolvable("room metadata names an unknown or inactive org")
 
     return org_id
@@ -213,7 +212,7 @@ async def _apply_participant_event(
             await session.execute(
                 text(
                     "SELECT meeting_id FROM meeting_rooms "
-                    "WHERE org_id = :org AND livekit_room = :room"
+                    "WHERE org_id = :org AND livekit_room = :room FOR UPDATE"
                 ),
                 {"org": str(org_id), "room": room},
             )

@@ -28,6 +28,28 @@ matching `core_api.routes.meetings`'s pattern:
   so the join below is a LEFT JOIN with `COALESCE(..., false)`: a missing row must mean "not
   required", not "500", or every meeting in a tenant that has not yet had a settings row
   created would be permanently unjoinable.
+
+FIX ROUND 1 - why this route manages its own session instead of `Depends(tenant_session)`.
+The room-metadata follow-up first tried `background_tasks.add_task(transport.ensure_room, ...)`
+on top of the existing `Depends(tenant_session)` shape, reasoning that `BackgroundTasks` runs
+after the request's dependencies close their session. That reasoning was backwards: verified
+empirically (a minimal FastAPI app with a `yield`-dependency and a background task) that
+Starlette runs background tasks BEFORE a `yield`-dependency's post-`yield` cleanup, not after
+- so `tenant_session`'s transaction, and the row lock `ensure_meeting_room`'s upsert had just
+taken, was STILL OPEN while the background task tried to UPDATE that same row. Two requests
+for the same meeting close together self-deadlocked: the second mint's upsert waited on the
+first mint's still-open transaction, which would not commit until ITS background task (which
+was itself blocked on the second mint's lock wait) finished - neither could ever proceed.
+Confirmed by reproducing the hang with `tests/test_meeting_token_route.py::
+test_repeated_mint_reuses_the_same_room` (two mints for one meeting, back to back).
+
+The fix: this route depends on `tenant_context` only (auth/tenant resolution; it opens and
+closes its own short session internally and returns no session to the caller), and opens ONE
+explicit, short-lived session of its own for the meeting/participant/consent checks and the
+room upsert - closed and committed BEFORE `background_tasks.add_task` is ever called, so there
+is no yield-dependency left open across the background task's own DB use. `mint_join_token`
+(the LiveKit call the token-mint route always made) needs no session at all, so it runs after,
+outside of any transaction, same as before.
 """
 
 from __future__ import annotations
@@ -36,13 +58,15 @@ import os
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.authz import RequestContext, not_found, tenant_context, tenant_session
+from libs.shared.authz import RequestContext, not_found, tenant_context
+from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.meeting_service.rooms import ensure_meeting_room
+from libs.shared.tenancy import set_rls
+from services.meeting_service.rooms import ensure_meeting_room, sync_livekit_metadata
 from services.meeting_service.schemas import TokenResponse
 from services.meeting_service.transport import MeetingTransport, select_transport
 
@@ -134,36 +158,59 @@ async def _fetch_participant(
 async def mint_token(
     meeting_id: uuid.UUID,
     ctx: Annotated[RequestContext, Depends(tenant_context)],
-    session: Annotated[AsyncSession, Depends(tenant_session)],
     transport: Annotated[MeetingTransport, Depends(get_transport)],
+    background_tasks: BackgroundTasks,
 ) -> TokenResponse:
-    await session.execute(_BIND_STATEMENT_TIMEOUT)
+    sessionmaker = get_sessionmaker()
 
-    # Existence (tenant-scoped) before participation: see the module docstring.
-    await _fetch_meeting_or_404(session, meeting_id)
+    # One explicit, short-lived session/transaction for every DB read and write this route
+    # needs - closed and committed before `background_tasks.add_task` is ever reached. See the
+    # module docstring's FIX ROUND 1 note for why this is no longer `Depends(tenant_session)`.
+    async with sessionmaker() as session, session.begin():
+        await session.execute(_BIND_STATEMENT_TIMEOUT)
+        await set_rls(session, ctx.org_id)
 
-    if ctx.user_id is None:
-        # A verified Clerk user with no local `users` mirror row cannot be a participant of
-        # anything (the FK requires a real `users.id`). Same denial, same code, as the
-        # ordinary non-participant case below — there is nothing more specific to say.
-        raise _not_a_participant()
+        # Existence (tenant-scoped) before participation: see the module docstring.
+        await _fetch_meeting_or_404(session, meeting_id)
 
-    participant = await _fetch_participant(session, meeting_id, ctx.user_id)
-    if participant is None:
-        raise _not_a_participant()
+        if ctx.user_id is None:
+            # A verified Clerk user with no local `users` mirror row cannot be a participant
+            # of anything (the FK requires a real `users.id`). Same denial, same code, as the
+            # ordinary non-participant case below — there is nothing more specific to say.
+            raise _not_a_participant()
 
-    if participant["consent_required"] and participant["consented_at"] is None:
-        raise _consent_required()
+        participant = await _fetch_participant(session, meeting_id, ctx.user_id)
+        if participant is None:
+            raise _not_a_participant()
 
-    room = await ensure_meeting_room(session, ctx.org_id, meeting_id, transport)
+        if participant["consent_required"] and participant["consented_at"] is None:
+            raise _consent_required()
+
+        result = await ensure_meeting_room(session, ctx.org_id, meeting_id)
+    # session/transaction closed and committed here - the connection is back in the pool
+    # before anything below this line runs.
+
+    # `transport.ensure_room` is a real LiveKit HTTP call; it must never run while a Postgres
+    # transaction from this request is open (see module docstring). Skipped once
+    # `needs_livekit_sync` is false: a synced room never pays this cost again on a later mint.
+    if result.needs_livekit_sync:
+        background_tasks.add_task(
+            sync_livekit_metadata,
+            sessionmaker,
+            transport,
+            org_id=ctx.org_id,
+            room=result.room,
+        )
 
     token = await transport.mint_join_token(
         org_id=ctx.org_id,
         meeting_id=meeting_id,
         user_id=ctx.user_id,
-        room=room,
+        room=result.room,
         role_in_meeting=participant["role_in_meeting"] or _DEFAULT_ROLE,
         ttl_seconds=_TTL_SECONDS,
     )
 
-    return TokenResponse(token=token, room=room, livekit_url=os.environ.get("LIVEKIT_URL", ""))
+    return TokenResponse(
+        token=token, room=result.room, livekit_url=os.environ.get("LIVEKIT_URL", "")
+    )

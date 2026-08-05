@@ -175,20 +175,25 @@ def test_seeded_participant_receives_token_room_and_livekit_url(client, tenant_a
     assert body["token"].startswith("fake.")
     assert "livekit_url" in body
 
-    # `ensure_meeting_room` calls `transport.ensure_room` (Task 4 follow-up) before the route
-    # calls `transport.mint_join_token` - both land on `FAKE.calls`, in that order.
+    # Fix round 1: `transport.ensure_room` no longer runs inline inside the route (it made two
+    # real LiveKit HTTP calls that, before the fix, ran inside this request's open Postgres
+    # transaction). It is scheduled via `BackgroundTasks`, which Starlette runs AFTER the
+    # response is sent and every dependency (including the DB session) has already closed -
+    # so on `FAKE.calls` it now lands AFTER `mint_join_token`, not before. `TestClient` awaits
+    # the background task as part of the same ASGI call, so it has already run by the time
+    # this `client.post(...)` returns - no sleep/poll needed to observe it.
     assert len(FAKE.calls) == 2
-    room_call, mint_call = FAKE.calls
-    assert room_call.method == "ensure_room"
-    assert room_call.kwargs["org_id"] == tenant_a.org_id
-    assert room_call.kwargs["room"] == f"meeting-{meeting_id}"
-
+    mint_call, room_call = FAKE.calls
     assert mint_call.method == "mint_join_token"
     assert mint_call.kwargs["org_id"] == tenant_a.org_id
     assert mint_call.kwargs["meeting_id"] == meeting_id
     assert mint_call.kwargs["user_id"] == tenant_a.user_id
     assert mint_call.kwargs["role_in_meeting"] == "host"
     assert mint_call.kwargs["ttl_seconds"] == 600
+
+    assert room_call.method == "ensure_room"
+    assert room_call.kwargs["org_id"] == tenant_a.org_id
+    assert room_call.kwargs["room"] == f"meeting-{meeting_id}"
 
     # The room's LiveKit metadata carries the INTERNAL org_id, not a Clerk id.
     assert FAKE.room_metadata[f"meeting-{meeting_id}"] == json.dumps(
@@ -216,7 +221,8 @@ def test_role_defaults_to_attendee_when_unset(client, tenant_a):
     resp = client.post(f"/api/meetings/{meeting_id}/token")
 
     assert resp.status_code == 200, resp.text
-    assert FAKE.calls[-1].kwargs["role_in_meeting"] == "attendee"
+    mint_calls = [c for c in FAKE.calls if c.method == "mint_join_token"]
+    assert mint_calls[-1].kwargs["role_in_meeting"] == "attendee"
 
 
 def test_repeated_mint_reuses_the_same_room(client, tenant_a):
@@ -232,6 +238,13 @@ def test_repeated_mint_reuses_the_same_room(client, tenant_a):
         "SELECT count(*) AS n FROM meeting_rooms WHERE meeting_id = %(m)s", {"m": str(meeting_id)}
     )
     assert rows[0]["n"] == 1, "the upsert must not create a second row"
+
+    # Fix round 1, "consider whether they need to happen on every mint at all": once a room
+    # has synced successfully, a later mint for the SAME meeting must not call
+    # `transport.ensure_room` again - `livekit_metadata_synced_at` makes the second mint a
+    # pure DB upsert with no LiveKit round trip at all.
+    ensure_room_calls = [c for c in FAKE.calls if c.method == "ensure_room"]
+    assert len(ensure_room_calls) == 1, "a synced room must not be re-synced on a later mint"
 
 
 # --- acceptance check 2: non-participant -------------------------------------------------------
