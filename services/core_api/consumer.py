@@ -10,26 +10,29 @@ takes an already-decoded message and is exercised directly in tests against a re
 fakeredis, with no live broker or Schema Registry required. `run_consumer()` is the thin,
 mostly-untested wiring around it.
 
-KNOWN CONTRACT GAP - read before assuming a real message from `realtime-gateway` will apply.
-`PresenceEvent`'s envelope header, and this topic's `user_id` payload field, are documented as
-UUID-typed (`mytheus-events/schemas/presence-events/v1.avsc`,
-`_canon/03-event-taxonomy.md`'s envelope table: "org_id ... Tenant root; RLS/cell scoping
-anchor"). Every other producer in this system resolves the Clerk-native id to the internal
-`organizations.id`/`users.id` UUID before it ever reaches an envelope header (see
-`libs.shared.org_resolver.resolve_org_id`, and `routes.meetings.create_meeting`'s
-`org_id=str(ctx.org_id)`). `realtime-gateway`'s `presenceEventsProducer.ts` (Task 6) does not:
-it passes the raw JWT `org_id`/`sub` claims straight through
-(`services/realtime-gateway/src/server.ts`'s `nsp.on("connection", ({orgId, userId}) => ...)`
-originates from `libs/auth.ts`'s `payload.org_id` / `payload.sub`, which are Clerk's opaque
-strings, not our UUIDs).
+Contract with `realtime-gateway`'s producer: CLOSED, both sides. `PresenceEvent`'s envelope
+header, and this topic's `user_id` payload field, are documented as UUID-typed
+(`mytheus-events/schemas/presence-events/v1.avsc`, `_canon/03-event-taxonomy.md`'s envelope
+table: "org_id ... Tenant root; RLS/cell scoping anchor"), and `realtime-gateway`'s
+`presenceEventsProducer.ts` now honours that: it resolves `internalOrgId`/`internalUserId` via
+this service's own `GET /api/v1/meetings/:id/participants/:clerkUserId` (reading
+`ParticipantCheck.org_id`, added in `ca9a8db`, and `Participant.user_id`, which Task 6 had
+already been discarding until it started reading it) before ever producing, and additionally
+validates `isUuid(orgId) && isUuid(userId)` immediately before `send()`. Verified end to end by
+Task 6 against a real `core-api` process, real Postgres, real RS256 verification. A Clerk-native
+id can no longer reach this topic.
 
-`handle_presence_event` re-asserts `org_id` from the header exactly per the "add an event
-consumer" recipe in this repo's `CLAUDE.md` - `uuid.UUID(header["org_id"])` - which means,
-until that producer bug is fixed upstream, every real message from the current
-`realtime-gateway` fails that parse and is routed to `presence-events.dlq` as a poison message
-rather than silently accepted under a tenant scope that does not name a real tenant. That is
-the CORRECT fail-closed behavior for a header that cannot be trusted, not a bug in this
-consumer - flagged in full in the task-5 report for the team lead to route back to Task 6.
+History, for context only - NOT a current condition: for a window during this band, the
+producer passed the raw JWT `org_id`/`sub` claims straight through unresolved, which would have
+made every real message fail the parse below and land in `presence-events.dlq`. That window is
+closed; nothing here is presently poison-messaging on this account.
+
+`handle_presence_event`'s strict `uuid.UUID(header["org_id"])` parse and DLQ-on-failure below
+are NOT a workaround for the now-closed gap and must not be relaxed as if they were. They are
+the standing "add an event consumer" recipe from this repo's `CLAUDE.md` (re-assert `org_id`
+from the header before any write), and now serve as defence against a FUTURE regression on the
+producer side - this or another producer sending a malformed header again - not as a permanent
+crutch for a bug that no longer exists.
 """
 
 from __future__ import annotations
@@ -65,8 +68,9 @@ async def handle_presence_event(
     """Apply one already-Avro-decoded `presence-events` message.
 
     Returns True if it was newly recorded, False if it was a dedupe no-op. Raises
-    `PoisonMessage` if the header does not carry a resolvable tenant - see the module
-    docstring's KNOWN CONTRACT GAP.
+    `PoisonMessage` if the header does not carry a resolvable tenant - expected not to happen
+    against `realtime-gateway`'s current producer (see the module docstring), but kept as the
+    standing defence the "add an event consumer" recipe calls for regardless.
     """
     header = value.get("header") or {}
     raw_org_id = header.get("org_id")
@@ -80,8 +84,8 @@ async def handle_presence_event(
         org_id = uuid.UUID(str(raw_org_id))
     except ValueError as exc:
         raise PoisonMessage(
-            f"presence-events header.org_id is not a UUID ({raw_org_id!r}); see this "
-            "module's KNOWN CONTRACT GAP"
+            f"presence-events header.org_id is not a UUID ({raw_org_id!r}); the producer "
+            "contract requires a resolved internal UUID here - see the module docstring"
         ) from exc
 
     if await is_duplicate(redis, str(org_id), TOPIC, idempotency_key):

@@ -7,9 +7,10 @@ the inbox dedupe) and `fakeredis` (the Redis-side dedupe check), matching this r
 testing convention (`tests/test_idempotency.py` uses the same fakeredis pattern).
 
 Covers: a fresh message is recorded once; a redelivered message (same idempotency_key) is a
-no-op; and the KNOWN CONTRACT GAP documented in `consumer.py` - a header `org_id` that is not
-a real UUID (exactly what `realtime-gateway`'s current producer sends, per the task-5 report)
-is routed to `PoisonMessage` rather than silently accepted under an unresolvable tenant scope.
+no-op; and, as a standing regression guard rather than a reproduction of any current bug (the
+contract with `realtime-gateway`'s producer is closed - see `consumer.py`'s module docstring),
+a header `org_id` that is not a real UUID is routed to `PoisonMessage` rather than silently
+accepted under an unresolvable tenant scope.
 """
 
 from __future__ import annotations
@@ -108,10 +109,12 @@ async def test_a_redelivered_message_is_a_dedupe_no_op(migrated_db):
 
 
 async def test_a_non_uuid_org_id_header_is_a_poison_message():
-    """The KNOWN CONTRACT GAP: realtime-gateway's current producer puts the raw Clerk org
-    claim (a string like "org_abc123", never a UUID) into header.org_id. This must fail
-    closed as a poison message, not silently `SET app.current_org` to a value that names no
-    real tenant."""
+    """Regression guard, not a reproduction of live behavior: `realtime-gateway`'s producer
+    now resolves and validates a real internal UUID before ever sending (see `consumer.py`'s
+    module docstring). This proves that IF a header ever again carried something Clerk-native-
+    shaped (a string like "org_abc123", never a UUID) - this producer regressing, or a future
+    one making the same mistake - the consumer still fails closed as a poison message rather
+    than silently `SET app.current_org` to a value that names no real tenant."""
     redis = fakeredis.aioredis.FakeRedis()
     value = _envelope(
         "org_2abcNotAUuid",
