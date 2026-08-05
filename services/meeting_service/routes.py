@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, not_found, tenant_context, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.meeting_service.rooms import ensure_meeting_room
 from services.meeting_service.schemas import TokenResponse
 from services.meeting_service.transport import MeetingTransport, select_transport
 
@@ -125,41 +126,6 @@ async def _fetch_participant(
     return dict(row) if row is not None else None
 
 
-async def _ensure_meeting_room(
-    session: AsyncSession, org_id: uuid.UUID, meeting_id: uuid.UUID
-) -> str:
-    """Upsert the `meeting_rooms` row this meeting's LiveKit room materializes into.
-
-    The room name is deterministic (`meeting-{meeting_id}`) rather than randomly generated
-    per call, so a concurrent double-mint racing this INSERT is a harmless conflict on the
-    same value either way. `ON CONFLICT ... DO UPDATE SET updated_at = now()` deliberately
-    does not touch `livekit_room` in the SET clause: once a room exists its name is fixed for
-    the life of the meeting, and this upsert must return the EXISTING name on every call
-    after the first, not silently rename the room out from under a participant who already
-    has a token for it.
-    """
-    row = (
-        (
-            await session.execute(
-                text(
-                    "INSERT INTO meeting_rooms (org_id, meeting_id, livekit_room) "
-                    "VALUES (:org, :meeting, :room) "
-                    "ON CONFLICT (org_id, meeting_id) DO UPDATE SET updated_at = now() "
-                    "RETURNING livekit_room"
-                ),
-                {
-                    "org": str(org_id),
-                    "meeting": str(meeting_id),
-                    "room": f"meeting-{meeting_id}",
-                },
-            )
-        )
-        .mappings()
-        .one()
-    )
-    return str(row["livekit_room"])
-
-
 @router.post(
     "/api/meetings/{meeting_id}/token",
     status_code=status.HTTP_200_OK,
@@ -189,7 +155,7 @@ async def mint_token(
     if participant["consent_required"] and participant["consented_at"] is None:
         raise _consent_required()
 
-    room = await _ensure_meeting_room(session, ctx.org_id, meeting_id)
+    room = await ensure_meeting_room(session, ctx.org_id, meeting_id)
 
     token = await transport.mint_join_token(
         org_id=ctx.org_id,
