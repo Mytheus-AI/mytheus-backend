@@ -112,3 +112,47 @@ class Department(BaseModel):
     name: str
     parent_id: uuid.UUID | None
     created_at: datetime
+
+
+class ChatMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: uuid.UUID
+    content: Annotated[str, Field(min_length=1, max_length=10_000)]
+    # Accepted for wire compatibility with `realtime-gateway`'s relay (Task 6), which posts
+    # its own resolved `userId` here - but that value is the Clerk `sub` claim, not our
+    # internal `users.id`, and is DELIBERATELY IGNORED: the persisted row's `user_id` always
+    # comes from the verified bearer token's own resolved identity (`ctx.user_id`), exactly
+    # like `org_id` and `meetings.created_by` are never taken from a request body. Typed as a
+    # plain string (not `uuid.UUID`) precisely because it is not one on the wire; giving it a
+    # UUID type would 422 every gateway-relayed message. See the task-5 report's "contract
+    # verification" section.
+    user_id: str | None = None
+
+
+class ChatMessage(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    user_id: uuid.UUID
+    content: str
+    created_at: datetime
+
+
+SpeakerAssignment = Literal["manual", "suggested"]
+
+
+class SpeakerAssign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: uuid.UUID
+
+
+class MeetingSpeaker(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    speaker_id: str
+    user_id: uuid.UUID | None
+    confidence: float | None
+    assignment: SpeakerAssignment
+    created_at: datetime
+    updated_at: datetime

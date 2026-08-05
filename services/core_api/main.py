@@ -10,10 +10,12 @@ and a speculative producer here would put unconfirmed edges into the knowledge g
 """
 
 from libs.shared.app_factory import create_app
-from services.core_api.routes import meetings, org_hierarchy
+from services.core_api.routes import chat, meetings, org_hierarchy, speakers
 
 app = create_app("core-api")
 app.include_router(meetings.router)
 app.include_router(org_hierarchy.router)
+app.include_router(chat.router)
+app.include_router(speakers.router)
 
-# TODO: /decisions /actions /worklogs /chat /suggestions land with their own bands.
+# TODO: /decisions /actions /worklogs /suggestions land with their own bands.
