@@ -172,7 +172,8 @@ async def test_new_lookup_indexes_exist(migrated_db):
                         text(
                             "SELECT indexname FROM pg_indexes WHERE tablename IN "
                             "('departments', 'team_members') "
-                            "AND indexname IN ('ix_departments_parent_id', 'ix_team_members_user_id')"
+                            "AND indexname IN "
+                            "('ix_departments_parent_id', 'ix_team_members_user_id')"
                         )
                     )
                 )
