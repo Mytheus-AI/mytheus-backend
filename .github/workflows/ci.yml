@@ -167,7 +167,39 @@ jobs:
 
   docker:
     # Build the deployable image so a broken Dockerfile fails the PR, not the deploy.
+    #
+    # On main the same build is PUSHED to GHCR, and that published image is what the VPS
+    # deploys. Before this, compose.prod.yml built the backend from a sibling checkout
+    # (`context: ../../mytheus-backend`), so the running image existed only on the box that
+    # built it: unreproducible, and impossible for any deploy tool to pull.
+    #
+    # No PAT is involved. The built-in GITHUB_TOKEN pushes to GHCR given `packages: write`
+    # below, so publishing needs no human-held credential and nothing to rotate.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t "mytheus-backend:${GITHUB_SHA}" .
+      - uses: docker/setup-buildx-action@v3
+      - name: log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # PRs build but never push. A PR can come from a fork, and pushing an unreviewed
+          # image to the `main` tag the VPS pulls would be a supply-chain hole.
+          push: ${{ github.event_name == 'push' }}
+          # Two tags on purpose: the SHA tag is the immutable artifact to pin or roll back
+          # to, `main` is the moving pointer a deploy follows.
+          tags: |
+            ghcr.io/reprise-ai/mytheus-backend:${{ github.sha }}
+            ghcr.io/reprise-ai/mytheus-backend:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
