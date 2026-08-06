@@ -1669,6 +1669,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "pyyaml" },
     { name = "redis", extra = ["hiredis"] },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1689,6 +1690,7 @@ dev = [
     { name = "ruff" },
     { name = "setuptools" },
     { name = "testcontainers", extra = ["redis"] },
+    { name = "types-pyyaml" },
     { name = "types-redis" },
 ]
 
@@ -1715,6 +1717,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings", specifier = ">=2" },
     { name = "pyjwt", specifier = ">=2.8" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "redis", extras = ["hiredis"], specifier = ">=5" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2" },
@@ -1735,6 +1738,7 @@ dev = [
     { name = "ruff", specifier = ">=0.4" },
     { name = "setuptools", specifier = ">=83.0.0" },
     { name = "testcontainers", extras = ["postgres", "redis", "kafka"], specifier = ">=4" },
+    { name = "types-pyyaml", specifier = ">=6" },
     { name = "types-redis", specifier = ">=4" },
 ]
 
@@ -2835,6 +2839,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/8d/e8/c01bdf0d7c3659428c091fbd693177093639565bcbc86bc20098e6d37cc6/types_python_dateutil-2.9.0.20260518.tar.gz", hash = "sha256:51f02dc03b61c7f6a07df45797d4dfe8a1aa47f0b7db9ad89f6fd3a1a70e1b51", size = 17082, upload-time = "2026-05-18T06:05:24.508Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/36/22/169273273ca34e9ab0ae2f387ba72ed7e09faaaf834da01d6b89c2bea71a/types_python_dateutil-2.9.0.20260518-py3-none-any.whl", hash = "sha256:d6a9c5bd0de61460c8fdef8ab2b400f956a1a1075cce08d4e2b4434e478c50b8", size = 18431, upload-time = "2026-05-18T06:05:23.641Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260724"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/6f/a28f44bcd56bebed42b028a2894c79853e2f5e6b5279e633cb3f287a05e7/types_pyyaml-6.0.12.20260724.tar.gz", hash = "sha256:3c1ce1bb73cd5ec02e90390c2b1f00e810d241d8825fd73ff359696839271b6b", size = 17893, upload-time = "2026-07-24T04:58:43.453Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/42/0337fefc615e20ee55d1c8f71b774a9b2b734a04669139c20753b27a2a3a/types_pyyaml-6.0.12.20260724-py3-none-any.whl", hash = "sha256:d57db930a4b2efbc57cf430ec8882765d246929432fa253092f383902329a453", size = 20312, upload-time = "2026-07-24T04:58:42.486Z" },
 ]
 
 [[package]]

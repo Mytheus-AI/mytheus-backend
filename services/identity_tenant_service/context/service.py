@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.cache import get_redis, redis_key
+from services.identity_tenant_service.taxonomy.loader import topics_for as _topics_for
 
 logger = logging.getLogger(__name__)
 
@@ -71,27 +72,16 @@ _RECENT_MEETINGS_LIMIT = 10
 
 # --- role -> topics -----------------------------------------------------------------------
 #
-# PLACEHOLDER pending Plan 5-6 section 3.2 (`identity-tenant-service/taxonomy/role_topics.v1.
-# yaml` + `taxonomy.loader.topics_for`, a git-versioned, Pydantic-validated, endpoint-exposed
-# taxonomy). That task had not landed as of this one (see the task-3 report's open items: it
-# was dispatched concurrently with, not before, this task, despite the plan's own step 1
-# ordering "load_user ... topics_for(u.role) # from 3.2 taxonomy"). This inline dict is a
-# minimal, deliberately non-canonical fallback so `get_user_context` has a real `topics` field
-# today. Replace this whole block with an import of the real `topics_for` the moment 3.2 ships
-# - do not extend this dict as if it were the taxonomy.
-_FALLBACK_ROLE_TOPICS: dict[str, list[str]] = {
-    "engineer": ["architecture", "api-design", "infra", "incidents", "code-review", "performance"],
-    "designer": ["ux", "design-system", "prototypes", "research", "accessibility"],
-    "product_manager": ["roadmap", "pricing", "prioritization", "metrics", "stakeholders"],
-    "sales": ["pipeline", "pricing", "contracts", "renewals", "objections"],
-    "finance": ["budget", "forecast", "billing", "runway"],
-}
-
-
-def _topics_for(role: str | None) -> list[str]:
-    if not role:
-        return ["general"]
-    return _FALLBACK_ROLE_TOPICS.get(role.strip().lower().replace(" ", "_"), ["general"])
+# `_topics_for` (imported above as `taxonomy.loader.topics_for`) resolves against the process's
+# pinned taxonomy version (`ROLE_TOPICS_TAXONOMY_VERSION`, default "v1") - Plan 5-6 section 3.2.
+# This used to be a small inline fallback dict (see git history) because 3.2 had not landed when
+# `get_user_context` was first built; that fallback happened to carry the same five roles' same
+# topic lists as the real `role_topics.v1.yaml`, so no caller-visible topic values changed when
+# it was swapped for the real taxonomy - only the source of truth did.
+#
+# CACHE STALENESS ON A TAXONOMY VERSION BUMP: a version change does not reach an already-cached
+# `user_ctx` entry until its 300s TTL expires. This is accepted, not fixed - the cache key and
+# payload are deliberately unchanged. Full reasoning in `taxonomy/loader.py`'s module docstring.
 
 
 async def get_user_context(

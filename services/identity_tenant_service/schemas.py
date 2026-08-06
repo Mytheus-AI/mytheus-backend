@@ -72,6 +72,16 @@ class MeetingRef(BaseModel):
     scheduled_end: datetime | None
 
 
+class RoleTopicsResponse(BaseModel):
+    """`GET /taxonomy/role-topics` response - the full role->topics map for one pinned
+    taxonomy version (Plan 5-6 section 3.2). Not tenant-scoped: the taxonomy is identical for
+    every org, so unlike every other resource in this service the response carries no `org_id`
+    and reading it needs no `app.current_org` - it is versioned config, not tenant data."""
+
+    version: str
+    roles: dict[str, list[str]]
+
+
 class UserContext(BaseModel):
     """`GET /context/{user_id}` response - the canonical `get_user_context()` shape (Plan 5-6
     section 3.3), cached at `nexus:{org_id}:user_ctx:{user_id}`. Field-identical to the dict

@@ -1,0 +1,16 @@
+# Role -> topics taxonomy, version v1. Plan 5-6 section 3.2.
+#
+# Git-versioned and reviewable in a PR, like any other code change - this is what "version
+# controlled" means for this artifact (see `loader.py`'s module docstring for the full
+# reasoning, including why a version bump is a new FILE, never an edit to this one).
+#
+# Consumed by `loader.topics_for`, which normalizes a `users.role` value (lowercase, spaces to
+# underscores) before looking it up here. Keep role keys already in that normalized form.
+version: "v1"
+roles:
+  engineer:        [architecture, api-design, infra, incidents, code-review, performance]
+  designer:        [ux, design-system, prototypes, research, accessibility]
+  product_manager: [roadmap, pricing, prioritization, metrics, stakeholders]
+  sales:           [pipeline, pricing, contracts, renewals, objections]
+  finance:         [budget, forecast, billing, runway]
+  member:          [general]
