@@ -27,7 +27,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.audit import ACTION_MEETING_CREATED, ACTION_MEETING_UPDATED, audit
-from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
+from libs.shared.authz import (
+    RequestContext,
+    not_found,
+    require_tier,
+    tenant_context,
+    tenant_session,
+)
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
@@ -37,6 +43,7 @@ from services.core_api.schemas import (
     MeetingPage,
     MeetingUpdate,
     Participant,
+    ParticipantCheck,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["meetings"])
@@ -77,6 +84,19 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 
 def _row_to_meeting(row: Any, participants: list[Participant] | None = None) -> Meeting:
     return Meeting(**dict(row), participants=participants or [])
+
+
+def _not_a_participant() -> ProblemDetail:
+    # Mirrors services/meeting_service/routes.py's `_not_a_participant`: same code, same
+    # status, same message, for the same reason - deny-by-default, no local users-mirror row
+    # is indistinguishable from an ordinary non-participant. Not shared across services
+    # because it is three lines and pulling a cross-service import in for it would cost more
+    # than it saves.
+    return ProblemDetail(
+        status.HTTP_403_FORBIDDEN,
+        ErrorCode.NOT_A_PARTICIPANT,
+        "You are not a participant of this meeting",
+    )
 
 
 async def _load_participants(
@@ -262,6 +282,90 @@ async def get_meeting(
     return _row_to_meeting(row, participants.get(meeting_id, []))
 
 
+@router.get(
+    "/meetings/{meeting_id}/participants/{clerk_user_id}",
+    status_code=status.HTTP_200_OK,
+    response_model=ParticipantCheck,
+)
+async def check_participant(
+    meeting_id: uuid.UUID,
+    clerk_user_id: str,
+    ctx: Annotated[RequestContext, Depends(tenant_context)],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> ParticipantCheck:
+    """Deny-by-default participant check. `realtime-gateway` (Task 6) calls this on every
+    Socket.io `join` to decide FORBIDDEN vs allow before joining the room.
+
+    No `require_tier` gate, matching `meeting_service.routes.mint_token`'s precedent rather
+    than the `require_tier("member")` used elsewhere in this file: a genuine participant is
+    not guaranteed to hold an `rbac_grants` row (see that route's "no local mirror row" test
+    case), and gating this specific check on RBAC tier would wrongly deny a real participant
+    who has none - exactly the failure mode the token-mint route was written to avoid.
+    `tenant_session` alone still fails closed on a bad/missing token and on a cross-tenant id
+    (via the existence check below), which is the authz this endpoint actually needs.
+
+    **Contract-verification note (task-5 report, "contract verification" section):** the path
+    parameter is the caller's Clerk-native user id (the JWT `sub` claim), NOT our internal
+    `users.id`. `realtime-gateway` has no database and therefore no way to know our internal
+    UUID - its entire identity model runs on the Clerk claims already in the socket's verified
+    JWT (see `mytheus-realtime`'s `libs/auth.ts`). Resolving that opaque id to `users.id`
+    HERE, the same way `libs.shared.authz.tenant_context` resolves the caller's own principal
+    via `clerk_user_id`, is what lets this route accept the identifier the gateway actually
+    has rather than one it has no way to produce.
+
+    **Tenancy source, spelled out because `realtime-gateway` also sends an `X-Org-Id` header
+    on this call:** that header is NOT read here - it isn't even declared as a parameter. The
+    ONLY source of `org_id` for this route is `tenant_session` -> `tenant_context` ->
+    `verify_token`, i.e. the caller's OWN re-verified bearer token, exactly like every other
+    route in this file. Both the meeting-existence check below and the `meeting_participants
+    JOIN users` query are RLS-scoped by that resolved `org_id` with no hand-written predicate,
+    so a request naming an org-B `clerk_user_id` while `app.current_org` is org A finds
+    nothing - org B's `users` row is invisible under RLS - rather than "found, but not a
+    participant of THIS meeting" from a lookup that forgot to scope by tenant. See
+    `tests/test_participant_check_api.py::test_the_participant_join_result_depends_on_users_
+    rls_not_just_on_row_existence` for the direct proof (the JOIN layer, isolated). `X-Org-Id`
+    is transport-layer context the gateway sets from its own verified JWT for its own
+    bookkeeping; it is never the authorization boundary on this side of the call, matching
+    `CLAUDE.md`'s "the service tier RE-VERIFIES the JWT (the gateway is a DDoS shield, not a
+    trust delegation)".
+
+    **`org_id` in the response (`ParticipantCheck`, not `Participant` - see that schema's
+    docstring for why a separate model):** `realtime-gateway`'s fixed `presence-events`
+    producer needs our internal `org_id` and has no database to resolve its own JWT's opaque
+    Clerk org id into one; this route already resolves it (as `ctx.org_id`, above) for its own
+    RLS scoping, so returning it is serializing an already-computed value, not a new query or
+    lookup. Safe to return to THIS caller specifically because `ctx.org_id` is, by
+    construction, always the caller's own tenant - it comes from re-verifying THEIR OWN bearer
+    token, never from a lookup on the target meeting or user - and every 200 response is
+    additionally consistent with that value: `_fetch_meeting`'s and this query's RLS scoping
+    guarantee that the meeting and the resolved participant/user rows all carry
+    `org_id = ctx.org_id`, or the route would already have 404'd/403'd before reaching here.
+    There is no code path that reaches `return ParticipantCheck(...)` with an `org_id` that is
+    not the caller's own.
+    """
+    await _fetch_meeting(session, meeting_id)  # 404 before anything else; RLS-scoped
+
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT mp.user_id, mp.role_in_meeting FROM meeting_participants mp "
+                    "JOIN users u ON u.id = mp.user_id "
+                    "WHERE mp.meeting_id = :meeting_id AND u.clerk_user_id = :clerk_user_id"
+                ),
+                {"meeting_id": str(meeting_id), "clerk_user_id": clerk_user_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise _not_a_participant()
+    return ParticipantCheck(
+        user_id=row["user_id"], role_in_meeting=row["role_in_meeting"], org_id=ctx.org_id
+    )
+
+
 @router.patch("/meetings/{meeting_id}", response_model=Meeting)
 async def update_meeting(
     meeting_id: uuid.UUID,
@@ -287,21 +391,30 @@ async def update_meeting(
         .one()
     )
 
+    # Plan 3-4 section 3.3 step 4: "verify [the meeting-events producer] emits
+    # created/updated/ended via the outbox". It did not - every update emitted `event_type:
+    # "updated"` unconditionally, even when `status` became `"ended"`, so a consumer could
+    # never distinguish an ordinary field edit from the meeting actually ending without
+    # separately fetching and diffing the resource. `MeetingEventType`
+    # (mytheus-events schemas/meeting-events/v1.avsc) has always had all three symbols; this
+    # was a gap in this route, not a schema gap, and squarely core-api's own file to fix.
+    event_type = "ended" if fields.get("status") == "ended" else "updated"
+
     await enqueue(
         session,
         EventEnvelope(
             topic="meeting-events",
             payload={
                 "meeting_id": str(meeting_id),
-                "event_type": "updated",
+                "event_type": event_type,
                 "livekit_room": row["livekit_room"],
             },
             org_id=str(ctx.org_id),
             producer=PRODUCER,
-            # `updated` is not a single fact the way `created` is, so the key carries the
-            # updated_at timestamp. Keying on the meeting id alone would make the outbox's
-            # unique index swallow every update after the first.
-            idempotency_key=f"meeting:{meeting_id}:updated:{row['updated_at'].isoformat()}",
+            # Neither `updated` nor `ended` is a single fact the way `created` is, so the key
+            # carries the updated_at timestamp. Keying on the meeting id alone would make the
+            # outbox's unique index swallow every update after the first.
+            idempotency_key=f"meeting:{meeting_id}:{event_type}:{row['updated_at'].isoformat()}",
         ),
     )
     await audit(

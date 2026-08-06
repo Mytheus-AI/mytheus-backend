@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from libs.shared.errors import ErrorCode, ProblemDetail
-from libs.shared.org_resolver import resolve_org_id
+from libs.shared.org_resolver import resolve_org_by_id, resolve_org_id
 from tests.conftest import APP_URL
 
 
@@ -107,3 +107,56 @@ async def test_resolution_needs_no_tenant_context(migrated_db):
         ).scalar_one()
         assert current in (None, ""), "precondition: no tenant is set"
         assert await resolve_org_id(session, clerk_org) == org_id
+
+
+# --- resolve_org_by_id: the second sanctioned reader (fix round 1, webhook.py's tenant
+# resolution from room metadata) ----------------------------------------------------------
+
+
+async def test_resolve_org_by_id_resolves_an_active_org(migrated_db):
+    su = create_async_engine(migrated_db)
+    org_id = await _make_org(su, clerk_org_id=f"org_{uuid.uuid4().hex[:16]}")
+    await su.dispose()
+
+    sessions = _app_sessions()
+    async with sessions() as session:
+        assert await resolve_org_by_id(session, org_id) == org_id
+
+
+@pytest.mark.parametrize("case", ["unknown", "suspended", "soft_deleted"])
+async def test_resolve_org_by_id_returns_none_for_every_negative_case(migrated_db, case):
+    """Unlike `resolve_org_id` (a token holder's error), `resolve_org_by_id` never raises - the
+    caller (a webhook, not a JWT holder) decides its own error framing. `None` for every
+    negative case, never a distinguishable value per case, for the same directory-
+    confidentiality reason `resolve_org_id`'s `_denied()` gives one response for all of them.
+    """
+    su = create_async_engine(migrated_db)
+    if case == "unknown":
+        org_id = uuid.uuid4()  # never inserted
+    elif case == "suspended":
+        org_id = await _make_org(
+            su, clerk_org_id=f"org_{uuid.uuid4().hex[:16]}", status="suspended"
+        )
+    else:
+        org_id = await _make_org(su, clerk_org_id=f"org_{uuid.uuid4().hex[:16]}", deleted=True)
+    await su.dispose()
+
+    sessions = _app_sessions()
+    async with sessions() as session:
+        assert await resolve_org_by_id(session, org_id) is None
+
+
+async def test_resolve_org_by_id_needs_no_tenant_context(migrated_db):
+    """Same pre-tenant read property as `resolve_org_id`: must work with `app.current_org`
+    unset, since the webhook has not established a tenant until this returns."""
+    su = create_async_engine(migrated_db)
+    org_id = await _make_org(su, clerk_org_id=f"org_{uuid.uuid4().hex[:16]}")
+    await su.dispose()
+
+    sessions = _app_sessions()
+    async with sessions() as session:
+        current = (
+            await session.execute(text("SELECT current_setting('app.current_org', true)"))
+        ).scalar_one()
+        assert current in (None, ""), "precondition: no tenant is set"
+        assert await resolve_org_by_id(session, org_id) == org_id

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
 import uuid
 
 import pytest
@@ -191,6 +193,51 @@ async def test_relay_real_bus_roundtrip(migrated_db):
 
     engine = create_async_engine(migrated_db)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    # Subscribe and pin every assigned partition's start offset to its CURRENT high watermark
+    # BEFORE the outbox row is even inserted - not merely before producing. `meeting-events` is
+    # a long-lived shared topic (this test has been appending to it, across every run, all
+    # day) - scanning from `earliest` is wrong in any topic with history: with hundreds of
+    # prior messages spread across many partitions, a bounded scan from the beginning can
+    # exhaust its budget before ever reaching the message this run just produced, and a bigger
+    # budget only pushes the same failure out to a bigger topic. Pinning to "whatever is newest
+    # right now, per partition" means this test's correctness never depends on how much history
+    # the topic already has - it holds on an empty topic and on one with a million messages the
+    # same way, because it only ever reads messages produced AFTER this point, never the
+    # backlog. It must happen before the INSERT, not just before this test's own `relay_once`
+    # call: this dev stack also runs a real relay worker (`python -m services.relay.main`)
+    # against the same Postgres and broker, and that worker can drain a newly inserted row
+    # before this test ever gets to it (see the race note below) - if the pin happened after
+    # the INSERT, that worker's produce could land before the pin and be missed entirely.
+    consumer = Consumer(
+        {
+            "bootstrap.servers": brokers,
+            "group.id": f"test-{uuid.uuid4()}",
+            "auto.offset.reset": "latest",  # defensive fallback; the on_assign below is what
+            # actually pins the offset, so this only matters if that somehow does not run
+        }
+    )
+    assigned_partitions: list[int] = []
+
+    def _pin_to_latest(consumer: Consumer, partitions: list) -> None:
+        for p in partitions:
+            _, high_watermark = consumer.get_watermark_offsets(p, timeout=10, cached=False)
+            p.offset = high_watermark
+        consumer.assign(partitions)
+        assigned_partitions.extend(p.partition for p in partitions)
+
+    consumer.subscribe([topic], on_assign=_pin_to_latest)
+
+    # Block until the subscription above has actually run (on_assign fires from inside poll()),
+    # so "pinned to latest" is resolved to real offsets before anything is produced.
+    assign_deadline = time.monotonic() + 15
+    while not assigned_partitions and time.monotonic() < assign_deadline:
+        consumer.poll(0.5)
+    assert assigned_partitions, (
+        f"consumer group never received a partition assignment for {topic!r} within 15s - "
+        "cannot prove the round trip without one"
+    )
+
     org = str(uuid.uuid4())
     env = EventEnvelope(
         topic=topic,
@@ -220,34 +267,72 @@ async def test_relay_real_bus_roundtrip(migrated_db):
             },
         )
 
-    producer = ConfluentRelayProducer(brokers, sr_url)
-    async with session_factory() as s, s.begin():
-        published = await relay_once(s, producer)
-    assert published >= 1
-
-    # Consume the message back and confirm org_id survived the bus.
-    consumer = Consumer(
-        {
-            "bootstrap.servers": brokers,
-            "group.id": f"test-{uuid.uuid4()}",
-            "auto.offset.reset": "earliest",
-        }
-    )
-    consumer.subscribe([topic])
-    deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
-    found = None
     try:
-        for _ in range(50):
+        producer = ConfluentRelayProducer(brokers, sr_url)
+        async with session_factory() as s, s.begin():
+            published = await relay_once(s, producer)
+
+        # `published == 0` here is NOT by itself proof this call failed: a real relay worker
+        # (`python -m services.relay.main`) is part of the shared dev stack this test runs
+        # against, and `relay_once`'s `SELECT ... FOR UPDATE SKIP LOCKED` means whichever of
+        # the two processes reaches the row first drains it - confirmed by direct reproduction
+        # (`published: 0` with the row's `published_at` already non-NULL microseconds later).
+        # What this test actually needs is "the row got published, by *a* relay_once call, not
+        # necessarily this one" - so on a 0 from this call, poll the row directly for a bounded
+        # window before concluding it is stuck.
+        if published == 0:
+            publish_deadline = time.monotonic() + 10
+            row_published = False
+            while time.monotonic() < publish_deadline:
+                async with engine.connect() as conn:
+                    published_at = (
+                        await conn.execute(
+                            text("SELECT published_at FROM outbox WHERE idempotency_key = :ik"),
+                            {"ik": env.idempotency_key},
+                        )
+                    ).scalar_one()
+                if published_at is not None:
+                    row_published = True
+                    break
+                await asyncio.sleep(0.2)
+            assert row_published, (
+                "outbox row was never published, by this call or a concurrent relay worker, "
+                "within 10s"
+            )
+
+        # Consume the message back and confirm org_id survived the bus. Deadline-based, not a
+        # fixed poll count: a fixed count still silently assumes how long delivery/visibility
+        # takes, which is exactly the assumption that broke here once the topic grew - a wall-
+        # clock budget is what "search until it's really not showing up, then say so
+        # accurately" actually means.
+        deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
+        found = None
+        scanned = 0
+        partitions_seen: set[int] = set()
+        search_deadline = time.monotonic() + 30
+        while found is None and time.monotonic() < search_deadline:
             msg = consumer.poll(1.0)
             if msg is None or msg.error():
                 continue
+            scanned += 1
+            partitions_seen.add(msg.partition())
             value = deserializer(msg.value(), SerializationContext(topic, MessageField.VALUE))
             if value["header"]["idempotency_key"] == env.idempotency_key:
                 found = value
-                break
     finally:
         consumer.close()
-    assert found is not None, "relayed message not found on the bus"
+
+    # A message-not-found failure here used to read "relayed message not found on the bus",
+    # which points at the relay - and is exactly why this test's real failure mode (the search
+    # window exhausted, not the message ever being absent) got misread as a broker flake for
+    # hours. Say what this test actually knows.
+    assert found is not None, (
+        f"did not find idempotency_key={env.idempotency_key!r} on {topic!r} within the 30s "
+        f"search window - scanned {scanned} message(s) across {len(partitions_seen)} "
+        f"partition(s) ({sorted(partitions_seen)}) of {len(assigned_partitions)} assigned. "
+        "The search window was exhausted; this does NOT mean the message is absent from the "
+        "topic - relay_once() reported published >= 1 above, so the produce itself succeeded."
+    )
     assert str(found["header"]["org_id"]) == org  # uuid logicalType deserializes to UUID
 
     async with engine.begin() as conn:

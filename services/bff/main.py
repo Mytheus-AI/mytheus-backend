@@ -6,9 +6,9 @@ because a write path through here would make `bff` a second writer for a store i
 """
 
 from libs.shared.app_factory import create_app
-from services.bff import dashboard
+from services.bff import dashboard, org_chart, people
 
 app = create_app("bff")
 app.include_router(dashboard.router)
-
-# TODO: further screen aggregates land with the screens that need them.
+app.include_router(org_chart.router)
+app.include_router(people.router)

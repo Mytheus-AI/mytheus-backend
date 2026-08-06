@@ -61,6 +61,29 @@ class Participant(BaseModel):
     role_in_meeting: str | None = None
 
 
+class ParticipantCheck(BaseModel):
+    """`GET /meetings/:id/participants/:clerk_user_id`'s response shape.
+
+    Deliberately NOT `Participant` with an extra field: `Participant` is also embedded in
+    `Meeting.participants` (see `routes.meetings._load_participants`/`create_meeting`), and
+    every one of those call sites constructs it with no `org_id` in hand at all (it isn't
+    resolved per-participant, and the meeting itself already implies the tenant). Adding a
+    required `org_id` to `Participant` would break those constructions; adding an optional
+    one would put a meaningless `"org_id": null` on every entry of every meeting's
+    participants array. This is a distinct resource with its own shape instead.
+
+    `org_id` here is `ctx.org_id` - the CALLER's own tenant, resolved from their own verified
+    bearer token, never a lookup on the target resource. `realtime-gateway`'s presence-events
+    fix (mytheus-realtime Task 6 follow-up) needs it because the gateway has no database and
+    cannot resolve its own JWT's opaque Clerk org id into our internal UUID any other way; this
+    endpoint already computes it for its own RLS scoping, so returning it is not a new query.
+    """
+
+    user_id: uuid.UUID
+    role_in_meeting: str | None = None
+    org_id: uuid.UUID
+
+
 class Meeting(BaseModel):
     id: uuid.UUID
     title: str | None
@@ -112,3 +135,47 @@ class Department(BaseModel):
     name: str
     parent_id: uuid.UUID | None
     created_at: datetime
+
+
+class ChatMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: uuid.UUID
+    content: Annotated[str, Field(min_length=1, max_length=10_000)]
+    # Accepted for wire compatibility with `realtime-gateway`'s relay (Task 6), which posts
+    # its own resolved `userId` here - but that value is the Clerk `sub` claim, not our
+    # internal `users.id`, and is DELIBERATELY IGNORED: the persisted row's `user_id` always
+    # comes from the verified bearer token's own resolved identity (`ctx.user_id`), exactly
+    # like `org_id` and `meetings.created_by` are never taken from a request body. Typed as a
+    # plain string (not `uuid.UUID`) precisely because it is not one on the wire; giving it a
+    # UUID type would 422 every gateway-relayed message. See the task-5 report's "contract
+    # verification" section.
+    user_id: str | None = None
+
+
+class ChatMessage(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    user_id: uuid.UUID
+    content: str
+    created_at: datetime
+
+
+SpeakerAssignment = Literal["manual", "suggested"]
+
+
+class SpeakerAssign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: uuid.UUID
+
+
+class MeetingSpeaker(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    speaker_id: str
+    user_id: uuid.UUID | None
+    confidence: float | None
+    assignment: SpeakerAssignment
+    created_at: datetime
+    updated_at: datetime
