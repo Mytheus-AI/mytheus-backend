@@ -199,7 +199,7 @@ jobs:
           # Two tags on purpose: the SHA tag is the immutable artifact to pin or roll back
           # to, `main` is the moving pointer a deploy follows.
           tags: |
-            ghcr.io/reprise-ai/mytheus-backend:${{ github.sha }}
-            ghcr.io/reprise-ai/mytheus-backend:main
+            ghcr.io/mytheus-ai/mytheus-backend:${{ github.sha }}
+            ghcr.io/mytheus-ai/mytheus-backend:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
