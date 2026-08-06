@@ -45,3 +45,47 @@ class UserProfile(BaseModel):
     avatar_url: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class TeamRef(BaseModel):
+    """A team membership as it appears inside `UserContext.team`. Not the full `Team`
+    resource `core-api` serves at `GET /api/v1/teams` - just enough to identify and label it."""
+
+    id: uuid.UUID
+    name: str
+    department_id: uuid.UUID | None
+
+
+class DepartmentRef(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class MeetingRef(BaseModel):
+    """A recent meeting as it appears inside `UserContext.recent_meetings` - same
+    "just enough to identify and label it" scope as `TeamRef`."""
+
+    id: uuid.UUID
+    title: str | None
+    status: str
+    scheduled_start: datetime | None
+    scheduled_end: datetime | None
+
+
+class UserContext(BaseModel):
+    """`GET /context/{user_id}` response - the canonical `get_user_context()` shape (Plan 5-6
+    section 3.3), cached at `nexus:{org_id}:user_ctx:{user_id}`. Field-identical to the dict
+    `context.service.get_user_context` returns and to what is stored in the cache, so this
+    model is also what validates a value read back from Redis.
+    """
+
+    user_id: uuid.UUID
+    org_id: uuid.UUID
+    role: str | None
+    skills: list[str]
+    bio: str | None
+    avatar_url: str | None
+    team: list[TeamRef]
+    department: DepartmentRef | None
+    recent_meetings: list[MeetingRef]
+    topics: list[str]

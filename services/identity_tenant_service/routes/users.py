@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_USER_PROFILE_UPDATED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.identity_tenant_service.context.service import invalidate_user_context
 from services.identity_tenant_service.schemas import UserProfile, UserProfileUpdate
 
 router = APIRouter(tags=["users"])
@@ -115,5 +116,12 @@ async def update_user_profile(
         metadata={"fields": sorted(fields)},
         ip=ctx.ip,
     )
+
+    # get_user_context() caches role/skills/bio/avatar_url for this user; any of them changing
+    # makes the cached entry stale. Evicting here (rather than only relying on the 5-minute
+    # TTL) is what "PATCH /users/{id} changing role evicts the key" (Plan 5-6 section 3.3
+    # acceptance check) requires. Best-effort: see invalidate_user_context's docstring for why
+    # a failure here must not fail this write.
+    await invalidate_user_context(ctx.org_id, user_id)
 
     return _row_to_profile(row)
