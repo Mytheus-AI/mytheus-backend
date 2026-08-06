@@ -1,5 +1,5 @@
 .PHONY: install dev roles migrate upgrade test test-fast lint typecheck fix proto \
-        run-relay run-identity-grpc ci
+        run-relay run-identity-grpc ci seed
 
 ALEMBIC = uv run alembic -c migrations/alembic.ini
 
@@ -73,6 +73,11 @@ run-relay:
 # identity-tenant-service gRPC server (GetUserContext)
 run-identity-grpc:
 	uv run python -m services.identity_tenant_service.grpc_server
+
+# Seed 2 orgs x 10 users x 5 meetings (idempotent - safe to re-run). Runs as `mytheus_admin`
+# (ADMIN_DATABASE_URL), the operator seam - never the request-path role.
+seed:
+	uv run python -m services.identity_tenant_service.seed.seed
 
 # Generate gRPC stubs from proto/
 proto:

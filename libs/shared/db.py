@@ -54,6 +54,29 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(), expire_on_commit=False)
 
 
+@lru_cache(maxsize=1)
+def get_admin_engine() -> AsyncEngine:
+    """The operator-seam engine, built lazily from `ADMIN_DATABASE_URL`.
+
+    `mytheus_admin` (Plan 1-2 migration `a1c4e7f20b18`) is elevated in GRANTS only, never in
+    isolation: it still sits behind FORCE ROW LEVEL SECURITY on every tenant-scoped table, so
+    a caller using this engine must still `set_rls(session, org_id)` per org before any
+    tenant-scoped write, exactly like the request path does - the only thing this role skips
+    is the "which tenant may write which row" grant check that RLS itself does not skip.
+
+    `.env.example`'s own comment names the two sanctioned callers: "the tenant seed script and
+    RTBF purges" (`services/identity_tenant_service/seed/seed.py`,
+    `services/workflow_service/workflows/rtbf.py`). Deliberately NOT in the web process env -
+    a request handler must never be able to reach for this engine instead of `get_engine()`.
+    """
+    return create_async_engine(os.environ["ADMIN_DATABASE_URL"], pool_pre_ping=True)
+
+
+@lru_cache(maxsize=1)
+def get_admin_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_admin_engine(), expire_on_commit=False)
+
+
 class TenantMixin:
     """org_id on every tenant-scoped row (the RLS anchor + Kafka partition key).
 
