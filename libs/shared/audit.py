@@ -84,5 +84,6 @@ async def audit(
 ACTION_AUTHZ_DENY = "authz.deny"
 ACTION_ORG_PROVISIONED = "org.provisioned"
 ACTION_USER_SYNCED = "user.synced"
+ACTION_USER_PROFILE_UPDATED = "user.profile_updated"
 ACTION_MEETING_CREATED = "meeting.created"
 ACTION_MEETING_UPDATED = "meeting.updated"
