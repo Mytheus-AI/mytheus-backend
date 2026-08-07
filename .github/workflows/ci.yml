@@ -216,3 +216,53 @@ jobs:
             ghcr.io/mytheus-ai/mytheus-backend:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    # Continuous deployment to the VPS. Runs only after the image is published AND every gate
+    # is green - listing all of them in `needs` is the point: `docker` alone would happily ship
+    # an image whose tenant-isolation assertions had just failed, which is the one thing this
+    # pipeline exists to prevent.
+    needs: [lint, test, migrations, authz-check, security, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    # Shares a concurrency group name with mytheus-platform's deploy workflow only by
+    # convention; GitHub scopes concurrency per repository, so the real serialisation is that
+    # the deploy script itself is a single `docker compose up` against one project.
+    concurrency:
+      group: deploy-vps
+      cancel-in-progress: false
+    steps:
+      - name: configure ssh
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_DEPLOY_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key rather than accept-new, which would trust whatever answers first.
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: deploy
+        # No command argument: the key's forced command in authorized_keys decides what runs
+        # (/usr/local/sbin/mytheus-deploy.sh). This credential cannot open a shell, run another
+        # script, or forward a port, so a leak buys a redeploy of current main and nothing else.
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=30 \
+              root@${{ secrets.VPS_HOST }}
+
+      - name: verify the deployed API serves traffic
+        # The server-side script already waits on the container healthcheck; this exercises the
+        # public path (Cloudflare -> the Caddy holding 443 -> the docker network) so a green
+        # deploy cannot mean "container up, nobody can reach it".
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /tmp/body -m 20 -w '%{http_code}' https://api.mytheus.cloud/healthz || echo 000)
+            if [ "$code" = "200" ]; then echo "healthz OK: $(cat /tmp/body)"; exit 0; fi
+            echo "attempt $i: HTTP $code"; sleep 10
+          done
+          echo "::error::api.mytheus.cloud/healthz did not return 200 after the deploy"
+          exit 1
