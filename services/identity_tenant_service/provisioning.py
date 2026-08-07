@@ -40,12 +40,20 @@ from libs.shared.tenancy import set_rls
 PRODUCER = "identity-tenant-service"
 
 _INSERT_ORG = text(
-    "INSERT INTO organizations (id, name, slug, status, plan_id) "
-    "VALUES (:id, :name, :slug, 'active', NULL) "
+    "INSERT INTO organizations (id, name, slug, status, plan_id, clerk_org_id) "
+    "VALUES (:id, :name, :slug, 'active', NULL, :clerk_org_id) "
     "ON CONFLICT (slug) DO NOTHING "
     "RETURNING id"
 )
 _SELECT_ORG_BY_SLUG = text("SELECT id FROM organizations WHERE slug = :slug")
+# An idempotent re-run may be the first call that knows the Clerk id (the row can be created
+# by the seeder before the tenant exists in Clerk). Only ever fills a NULL: it must not
+# repoint an established tenant at a different Clerk organization, which would hand one
+# tenant's data to another's users.
+_LINK_CLERK_ORG = text(
+    "UPDATE organizations SET clerk_org_id = :clerk_org_id "
+    "WHERE id = :id AND clerk_org_id IS NULL"
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +69,7 @@ async def provision_organization(
     name: str,
     slug: str,
     plan_code: str,
+    clerk_org_id: str | None = None,
 ) -> ProvisionResult:
     """Create the tenant root plus its `tenant-events` `provisioned` outbox row, atomically.
 
@@ -82,9 +91,26 @@ async def provision_organization(
     `organizations.plan_id` (a UUID FK to `billing-metering-service`'s `plans` table, a store
     this repo does not own and cannot resolve from here) - that column is left NULL, matching
     reality: no billing plan has been assigned yet at provisioning time.
+
+    `clerk_org_id` is Clerk's opaque `org_...` identifier, and it is what makes the tenant
+    REACHABLE. `libs/shared/org_resolver.py` resolves every authenticated request by looking
+    the token's claim up through this exact column, so a row written without it can never be
+    resolved: the tenant exists in the database and is unreachable through the API. Until now
+    nothing in the running system wrote this column at all - only test fixtures did - so the
+    provisioning path could not produce a usable tenant. It stays OPTIONAL because the seeder
+    legitimately creates tenants that have no Clerk organization behind them.
+
+    Setting the column is only half of the wiring. The AI tier
+    (`mytheus-intelligence/libs/shared/auth.py`) reads an ALREADY-RESOLVED internal `org_id`
+    from an `internal_org_id` token claim, which Clerk populates from the organization's
+    `public_metadata`. Pushing that value into Clerk is a network call and therefore not part
+    of this transaction: call `sync_internal_org_id_to_clerk` after commit.
     """
     row = (
-        await session.execute(_INSERT_ORG, {"id": str(org_id), "name": name, "slug": slug})
+        await session.execute(
+            _INSERT_ORG,
+            {"id": str(org_id), "name": name, "slug": slug, "clerk_org_id": clerk_org_id},
+        )
     ).first()
     if row is not None:
         created = True
@@ -93,6 +119,14 @@ async def provision_organization(
         created = False
         existing = (await session.execute(_SELECT_ORG_BY_SLUG, {"slug": slug})).first()
         resolved_id = uuid.UUID(str(existing[0])) if existing else org_id
+
+    if not created and clerk_org_id is not None:
+        # The row predates this Clerk organization (the seeder can create a tenant before it
+        # exists in Clerk). Fill the link so the tenant becomes resolvable, but only when the
+        # column is still NULL - see _LINK_CLERK_ORG.
+        await session.execute(
+            _LINK_CLERK_ORG, {"id": str(resolved_id), "clerk_org_id": clerk_org_id}
+        )
 
     if created:
         # Every tenant-scoped write from here on (starting with the outbox row itself) needs
@@ -115,3 +149,23 @@ async def provision_organization(
         )
 
     return ProvisionResult(org_id=resolved_id, created=created)
+
+
+async def sync_internal_org_id_to_clerk(result: ProvisionResult, clerk_org_id: str | None) -> bool:
+    """Publish the resolved internal `org_id` to Clerk, so the AI tier's claim is populated.
+
+    Call AFTER the provisioning transaction has committed. Two reasons, both load-bearing: a
+    network call to a third party must not hold a database transaction open, and publishing an
+    `org_id` that a later rollback erases would leave Clerk pointing at a tenant that does not
+    exist.
+
+    Returns False and logs when it is skipped or fails, rather than raising - see
+    `libs/shared/clerk_admin.py`. Safe to re-run: the underlying write is a merge.
+    """
+    if clerk_org_id is None:
+        # A tenant with no Clerk organization behind it (the seeder makes these). There is
+        # nothing to publish to, and that is not a failure.
+        return False
+    from libs.shared.clerk_admin import set_internal_org_id
+
+    return await set_internal_org_id(clerk_org_id, result.org_id)
