@@ -12,11 +12,13 @@ be wrong the moment there are two replicas.
 """
 
 from libs.shared.app_factory import create_app
+from services.api_gateway import proxy
 from services.api_gateway.edge import edge_auth
 
 app = create_app("api-gateway")
 app.middleware("http")(edge_auth)
 
-# TODO: reverse-proxy forwarding using edge.route_for(). Until the services are deployed
-# separately they share one process, so there is nothing to proxy to yet and a proxy layer
-# would be untestable indirection.
+# Forwarding, mounted last so `/healthz` and the docs routes this process serves itself are
+# matched before the catch-all. The services now run as separate containers, so there is
+# something to proxy to; see `proxy.py` for what the hop preserves and why.
+proxy.install(app)

@@ -153,10 +153,19 @@ ROUTE_MAP: dict[str, str] = {
     "/api/v1/actions": "core-api",
     "/api/v1/chat": "core-api",
     "/api/v1/suggestions": "core-api",
+    # meeting-service was missing from this map entirely, so `/api/meetings/:id/token` - the
+    # only route that mints a LiveKit room token - resolved to no service and the whole
+    # meeting transport was unreachable through the gateway. Note the deliberate near-collision
+    # with core-api's `/api/v1/meetings` (meeting CRUD): the two differ by the version segment,
+    # and longest-prefix matching keeps them apart because neither string prefixes the other.
+    "/api/meetings": "meeting-service",
+    "/livekit/webhook": "meeting-service",
     "/orgs": "identity-tenant-service",
     "/rbac": "identity-tenant-service",
     "/scim/v2": "identity-tenant-service",
     "/context": "identity-tenant-service",
+    "/users": "identity-tenant-service",
+    "/taxonomy": "identity-tenant-service",
     "/clerk/webhook": "identity-tenant-service",
     "/billing": "billing-metering-service",
     "/usage": "billing-metering-service",
