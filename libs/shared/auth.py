@@ -73,6 +73,22 @@ def verify_token(
         raise ProblemDetail(
             503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Identity provider unavailable"
         ) from exc
+    except jwt.InvalidTokenError as exc:
+        # `get_signing_key_from_jwt` PARSES the token to read its `kid` before any key lookup
+        # happens, so a malformed token raises here - a decode error, not a JWKS error - and
+        # this branch is the only thing standing between that and an unhandled 500.
+        #
+        # It was missing, and the consequence was not cosmetic. `Authorization: Bearer x`
+        # produced `DecodeError: Not enough segments`, which escaped as a 500 INTERNAL. Three
+        # things follow from that: attacker-controlled input reaches an unhandled exception
+        # path, every expired or truncated token is indistinguishable from a server fault in
+        # monitoring, and clients that redirect to sign-in on AUTH_REQUIRED/TOKEN_EXPIRED
+        # (mytheus-ui's api client does exactly this) show an error page instead of signing
+        # the user back in.
+        #
+        # Same non-echoing rationale as the decode branch below: the message varies by failure
+        # mode and would hand an attacker an oracle for which check failed.
+        raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Invalid token") from exc
 
     try:
         payload: dict[str, Any] = jwt.decode(

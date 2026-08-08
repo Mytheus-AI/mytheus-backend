@@ -54,6 +54,23 @@ class _DeadJWKS:
         raise PyJWKClientError("Failed to fetch data from the url")
 
 
+class _ParsingJWKS:
+    """Behaves like the REAL PyJWKClient: it PARSES the token to read its `kid` before any key
+    lookup, so a malformed token raises a decode error from inside this call.
+
+    `_FakeJWKS` returns a key without looking at the token at all, which is why no existing
+    test reached the branch where that decode error is handled - and why a malformed token
+    escaped as a 500 in production while the suite stayed green.
+    """
+
+    def __init__(self, pub):
+        self._pub = pub
+
+    def get_signing_key_from_jwt(self, token):
+        pyjwt.decode(token, options={"verify_signature": False})  # raises on garbage
+        return type("K", (), {"key": self._pub})()
+
+
 def _install(monkeypatch, pub):
     monkeypatch.setenv("CLERK_ISSUER", _ISSUER)
     monkeypatch.delenv("CLERK_JWT_ORG_CLAIM", raising=False)
@@ -183,3 +200,57 @@ def test_missing_bearer_is_401(monkeypatch):
 # token involved at all. The version that used to live here also built a bare `FastAPI()`
 # rather than `create_app()`, so it had no RFC 7807 handlers mounted and was asserting on an
 # app shaped differently from every deployed one.
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not-a-real-jwt",  # the exact shape that 500'd: "Not enough segments"
+        "a.b",  # two segments
+        "....",  # empty segments
+        "eyJhbGciOiJSUzI1NiJ9.%%%.zzz",  # undecodable base64 payload
+    ],
+)
+def test_a_malformed_token_is_401_never_500(monkeypatch, bad):
+    """A malformed token is the caller's fault, not a server fault.
+
+    `get_signing_key_from_jwt` parses before it looks anything up, so the decode error is
+    raised there rather than in the `jwt.decode` below it. That call used to be wrapped in a
+    try that caught only PyJWKClientError, so `Authorization: Bearer x` produced an unhandled
+    500. Three consequences: attacker-controlled input reached an unhandled exception path,
+    expired and truncated tokens were indistinguishable from server faults in monitoring, and
+    a client that redirects to sign-in on AUTH_REQUIRED showed an error page instead.
+    """
+    priv, pub = _keypair()
+    monkeypatch.setenv("CLERK_ISSUER", _ISSUER)
+    monkeypatch.setattr(auth_mod, "_jwks_client", lambda: _ParsingJWKS(pub))
+
+    with pytest.raises(ProblemDetail) as exc:
+        auth_mod.verify_token(_creds(bad))
+    assert exc.value.status == 401
+    assert exc.value.code is ErrorCode.AUTH_REQUIRED
+    assert "Not enough segments" not in str(exc.value.detail), "must not echo the parser error"
+
+
+def test_a_dependency_outage_is_still_503_not_401(monkeypatch):
+    """The new branch must not swallow the JWKS-outage case: an unreachable identity provider
+    is not the caller presenting a bad token."""
+    _, pub = _keypair()
+    monkeypatch.setenv("CLERK_ISSUER", _ISSUER)
+    monkeypatch.setattr(auth_mod, "_jwks_client", lambda: _DeadJWKS())
+
+    with pytest.raises(ProblemDetail) as exc:
+        auth_mod.verify_token(_creds("a.b.c"))
+    assert exc.value.status == 503
+    assert exc.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
+
+
+def test_a_valid_token_still_verifies_through_the_parsing_client(monkeypatch):
+    """Guards the fix against being a blanket except that hides real failures."""
+    priv, pub = _keypair()
+    monkeypatch.setenv("CLERK_ISSUER", _ISSUER)
+    monkeypatch.delenv("CLERK_JWT_ORG_CLAIM", raising=False)
+    monkeypatch.setattr(auth_mod, "_jwks_client", lambda: _ParsingJWKS(pub))
+
+    claims = auth_mod.verify_token(_creds(_sign(priv)))
+    assert auth_mod.clerk_org_id_from(claims) == _CLERK_ORG
