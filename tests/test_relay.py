@@ -175,7 +175,7 @@ async def test_relay_real_bus_roundtrip(migrated_db):
     except Exception:
         pytest.skip("schema registry unreachable")
 
-    from confluent_kafka import Consumer
+    from confluent_kafka import OFFSET_BEGINNING, Consumer, TopicPartition
     from confluent_kafka.admin import AdminClient, NewTopic
     from confluent_kafka.schema_registry import SchemaRegistryClient
     from confluent_kafka.schema_registry.avro import AvroDeserializer
@@ -183,64 +183,61 @@ async def test_relay_real_bus_roundtrip(migrated_db):
 
     from services.relay.main import ConfluentRelayProducer
 
-    topic = "meeting-events"
+    # A PRIVATE, single-partition topic per run, instead of the shared `meeting-events`.
+    #
+    # This is the fix for the flake that dogged this test across three bands (green in
+    # isolation, red in a full suite). Every previous attempt tuned the SEARCH - pin to the
+    # high watermark, widen the budget - while leaving the test reading a long-lived topic that
+    # this suite, a live `python -m services.relay.main` worker, and any other agent on the
+    # shared dev stack all append to concurrently. That left the outcome dependent on how much
+    # unrelated traffic happened to arrive during the window, which is exactly why load (a full
+    # suite) flipped it red and quiet (one test) kept it green. No timeout can fix that; it is a
+    # question of what the test is reading, not how long it waits.
+    #
+    # A private topic makes the round trip deterministic: exactly ONE message can ever exist on
+    # it, so it is found on the first poll that returns anything. It also removes the whole
+    # class of neighbouring problems at once - no backlog to scan past, no foreign message to
+    # deserialize, no interference from the concurrent relay worker's other rows.
+    #
+    # Fidelity is preserved, because the destination topic and the Avro subject are independent
+    # in the code under test: `relay_once` passes `r["schema_subject"]` to `serialize()` and
+    # `r["topic"]` to `produce()` separately (libs/shared/relay.py), and
+    # `ConfluentRelayProducer.serialize` derives its SerializationContext from the SUBJECT
+    # (`subject[:-6]`), never from the destination. So the payload is still serialized against
+    # the real, registered `meeting-events-value` schema - which is what this test exists to
+    # prove survives the bus - and only the topic it lands on is private.
+    topic = f"meeting-events-roundtrip-{uuid.uuid4().hex}"
     admin = AdminClient({"bootstrap.servers": brokers})
     for _t, fut in admin.create_topics([NewTopic(topic, 1, 1)]).items():
-        try:
-            fut.result()
-        except Exception:
-            pass  # already exists
+        fut.result()  # a fresh name cannot already exist; a failure here is real, so let it raise
 
     engine = create_async_engine(migrated_db)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    # Subscribe and pin every assigned partition's start offset to its CURRENT high watermark
-    # BEFORE the outbox row is even inserted - not merely before producing. `meeting-events` is
-    # a long-lived shared topic (this test has been appending to it, across every run, all
-    # day) - scanning from `earliest` is wrong in any topic with history: with hundreds of
-    # prior messages spread across many partitions, a bounded scan from the beginning can
-    # exhaust its budget before ever reaching the message this run just produced, and a bigger
-    # budget only pushes the same failure out to a bigger topic. Pinning to "whatever is newest
-    # right now, per partition" means this test's correctness never depends on how much history
-    # the topic already has - it holds on an empty topic and on one with a million messages the
-    # same way, because it only ever reads messages produced AFTER this point, never the
-    # backlog. It must happen before the INSERT, not just before this test's own `relay_once`
-    # call: this dev stack also runs a real relay worker (`python -m services.relay.main`)
-    # against the same Postgres and broker, and that worker can drain a newly inserted row
-    # before this test ever gets to it (see the race note below) - if the pin happened after
-    # the INSERT, that worker's produce could land before the pin and be missed entirely.
+    # `assign`, not `subscribe`: with a known single-partition topic there is nothing to
+    # discover, so this skips consumer-group coordination entirely - no rebalance, no
+    # `on_assign` callback, no waiting to learn which partitions we got, and no chance of a
+    # second rebalance re-pinning the start offset past the message. OFFSET_BEGINNING is
+    # correct here precisely because the topic is private and empty: the one thing it can ever
+    # return is the message this test produced.
     consumer = Consumer(
         {
             "bootstrap.servers": brokers,
-            "group.id": f"test-{uuid.uuid4()}",
-            "auto.offset.reset": "latest",  # defensive fallback; the on_assign below is what
-            # actually pins the offset, so this only matters if that somehow does not run
+            "group.id": f"test-{uuid.uuid4()}",  # required by librdkafka even when assigning
+            "enable.auto.commit": False,
         }
     )
-    assigned_partitions: list[int] = []
-
-    def _pin_to_latest(consumer: Consumer, partitions: list) -> None:
-        for p in partitions:
-            _, high_watermark = consumer.get_watermark_offsets(p, timeout=10, cached=False)
-            p.offset = high_watermark
-        consumer.assign(partitions)
-        assigned_partitions.extend(p.partition for p in partitions)
-
-    consumer.subscribe([topic], on_assign=_pin_to_latest)
-
-    # Block until the subscription above has actually run (on_assign fires from inside poll()),
-    # so "pinned to latest" is resolved to real offsets before anything is produced.
-    assign_deadline = time.monotonic() + 15
-    while not assigned_partitions and time.monotonic() < assign_deadline:
-        consumer.poll(0.5)
-    assert assigned_partitions, (
-        f"consumer group never received a partition assignment for {topic!r} within 15s - "
-        "cannot prove the round trip without one"
-    )
+    consumer.assign([TopicPartition(topic, 0, OFFSET_BEGINNING)])
 
     org = str(uuid.uuid4())
+    # Built against the CANONICAL topic, not the private destination, so `env.schema_subject`
+    # resolves to the real `meeting-events-value` and matches the subject written to the outbox
+    # row below. The private name belongs only in the row's `topic` column (the destination);
+    # putting it here too would silently make `env.schema_subject` a subject that was never
+    # registered - harmless today, since the INSERT names the subject explicitly, but a trap
+    # for whoever next reads this and trusts the property.
     env = EventEnvelope(
-        topic=topic,
+        topic="meeting-events",
         payload={
             "meeting_id": str(uuid.uuid4()),
             "event_type": "created",
@@ -300,38 +297,45 @@ async def test_relay_real_bus_roundtrip(migrated_db):
                 "within 10s"
             )
 
-        # Consume the message back and confirm org_id survived the bus. Deadline-based, not a
-        # fixed poll count: a fixed count still silently assumes how long delivery/visibility
-        # takes, which is exactly the assumption that broke here once the topic grew - a wall-
-        # clock budget is what "search until it's really not showing up, then say so
-        # accurately" actually means.
+        # Consume the message back and confirm org_id survived the bus. The loop remains
+        # deadline-bounded only so a broker that never delivers fails in 30s instead of hanging
+        # forever - it is no longer a "search". Earlier versions of this test had to budget for
+        # scanning past unrelated traffic on the shared topic, and that budget was the thing
+        # that ran out under load; on a private topic the first message that arrives is the
+        # message, so the deadline is now a backstop that a healthy run never approaches.
         deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
         found = None
         scanned = 0
-        partitions_seen: set[int] = set()
         search_deadline = time.monotonic() + 30
         while found is None and time.monotonic() < search_deadline:
             msg = consumer.poll(1.0)
             if msg is None or msg.error():
                 continue
             scanned += 1
-            partitions_seen.add(msg.partition())
             value = deserializer(msg.value(), SerializationContext(topic, MessageField.VALUE))
             if value["header"]["idempotency_key"] == env.idempotency_key:
                 found = value
     finally:
         consumer.close()
+        # Private per-run topic, so delete it rather than leaving one behind on the dev broker
+        # for every run this suite has ever made. Best-effort: a leaked topic is untidy, not a
+        # test failure, and swallowing here keeps a cleanup hiccup from masking the real result.
+        try:
+            for _t, fut in admin.delete_topics([topic]).items():
+                fut.result(timeout=30)
+        except Exception:  # noqa: BLE001 - cleanup must never turn a passing test red
+            pass
 
-    # A message-not-found failure here used to read "relayed message not found on the bus",
-    # which points at the relay - and is exactly why this test's real failure mode (the search
-    # window exhausted, not the message ever being absent) got misread as a broker flake for
-    # hours. Say what this test actually knows.
+    # The 30s budget is now a liveness backstop, not a search window. On a private topic
+    # holding exactly one message there is nothing to scan past, so anything other than an
+    # immediate find means the message genuinely never arrived - which is a real failure worth
+    # reporting, not the "we ran out of time looking" ambiguity this assertion used to have to
+    # hedge about.
     assert found is not None, (
-        f"did not find idempotency_key={env.idempotency_key!r} on {topic!r} within the 30s "
-        f"search window - scanned {scanned} message(s) across {len(partitions_seen)} "
-        f"partition(s) ({sorted(partitions_seen)}) of {len(assigned_partitions)} assigned. "
-        "The search window was exhausted; this does NOT mean the message is absent from the "
-        "topic - relay_once() reported published >= 1 above, so the produce itself succeeded."
+        f"did not find idempotency_key={env.idempotency_key!r} on the private topic {topic!r} "
+        f"within 30s, having scanned {scanned} message(s). The topic is created empty by this "
+        "test and only the relay writes to it, so the message is genuinely absent: the produce "
+        "did not happen, or it went somewhere else."
     )
     assert str(found["header"]["org_id"]) == org  # uuid logicalType deserializes to UUID
 
