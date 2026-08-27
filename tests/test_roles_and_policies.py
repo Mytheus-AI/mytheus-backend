@@ -297,13 +297,21 @@ async def test_relay_role_drains_outbox_across_tenants(migrated_db):
     from idle. The fix is one permissive policy on `outbox` alone, not a BYPASSRLS role, so
     the cross-tenant reach stays visible in `pg_policies`.
     """
+    # Every statement below names the orgs this test created. An unscoped `DELETE FROM
+    # outbox` (to make the count exact) and an unscoped `UPDATE outbox SET published_at`
+    # both used to stand here: against a database anyone else is using, the first discards
+    # their queued events and the second marks them published so the relay never sends them.
+    # Scoping the count to these three orgs makes the assertion exact without touching a row
+    # this test does not own.
+    orgs: list[str] = []
+
     su = create_async_engine(migrated_db)
     async with su.begin() as conn:
-        await conn.execute(text("DELETE FROM outbox"))
         for _ in range(3):
             # Each row belongs to a real tenant root. Since defect D6 was fixed, an outbox
             # row for an org that does not exist is no longer insertable at all.
             org = uuid.uuid4()
+            orgs.append(str(org))
             await conn.execute(
                 text("INSERT INTO organizations (id, name, slug) VALUES (:id, 'Org', :slug)"),
                 {"id": str(org), "slug": f"relay-{org}"},
@@ -322,13 +330,27 @@ async def test_relay_role_drains_outbox_across_tenants(migrated_db):
     try:
         async with relay.connect() as conn, conn.begin():
             n = (
-                await conn.execute(text("SELECT count(*) FROM outbox WHERE published_at IS NULL"))
+                await conn.execute(
+                    text(
+                        "SELECT count(*) FROM outbox "
+                        "WHERE published_at IS NULL AND org_id = ANY(CAST(:orgs AS uuid[]))"
+                    ),
+                    {"orgs": orgs},
+                )
             ).scalar_one()
+        # Three rows, three distinct tenant roots, with no `app.current_org` set. Under the
+        # fail-closed policy alone this is zero, which is the defect the test exists for.
         assert n == 3, "the relay must see every tenant's unpublished rows"
 
         # And it can mark them published, which is the other half of the drain.
         async with relay.connect() as conn, conn.begin():
-            await conn.execute(text("UPDATE outbox SET published_at = now()"))
+            await conn.execute(
+                text(
+                    "UPDATE outbox SET published_at = now() "
+                    "WHERE org_id = ANY(CAST(:orgs AS uuid[]))"
+                ),
+                {"orgs": orgs},
+            )
     finally:
         await relay.dispose()
 

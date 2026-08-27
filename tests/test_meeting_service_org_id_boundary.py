@@ -35,7 +35,11 @@ def _pydantic_model_field_names() -> dict[str, set[str]]:
                 for stmt in node.body
                 if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
             }
-            out[f"{path.relative_to(REPO_ROOT)}::{node.name}"] = fields
+            # `as_posix()`, not `str()`: `Path.__str__` uses the OS separator, so on Windows
+            # the key came out `services\meeting_service\schemas.py::TokenResponse` and the
+            # forward-slash assertion below failed on a model that was in fact found.
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            out[f"{rel}::{node.name}"] = fields
     return out
 
 
