@@ -99,8 +99,21 @@ async def get_transcript(
     session: Annotated[AsyncSession, Depends(tenant_session)],
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     cursor: str | None = None,
+    from_ms: Annotated[int | None, Query(ge=0)] = None,
 ) -> TranscriptPage:
-    """Finals only, in spoken order. No `org_id` parameter: RLS scopes it to the caller."""
+    """Finals only, in spoken order. No `org_id` parameter: RLS scopes it to the caller.
+
+    `from_ms` is the plan's "timestamp jump via `(meeting_id, start_ms)`" (section 3.8 step 2):
+    seek straight to the first final at or after a millisecond offset. It is a server-side seek
+    rather than something the client does after loading everything, because "load the whole
+    meeting and scroll" only holds while a meeting fits in one page. The capacity model says
+    ~360 finals and `MAX_LIMIT` is 500, so today it usually would - but a long meeting is
+    exactly the case where jumping matters most, and that is the case where the client-side
+    shortcut fails. Both forms use the same `(meeting_id, start_ms)` index.
+
+    `cursor` wins if both are given: a cursor is a position in a walk already in progress, and
+    silently restarting that walk somewhere else would repeat or skip rows.
+    """
     await _assert_meeting_visible(session, meeting_id)
 
     params: dict[str, Any] = {"meeting_id": str(meeting_id), "limit": limit + 1}
@@ -114,6 +127,9 @@ async def get_transcript(
         where.append("(start_ms, id) > (:cur_start, :cur_id)")
         params["cur_start"] = start_ms
         params["cur_id"] = str(row_id)
+    elif from_ms is not None:
+        where.append("start_ms >= :from_ms")
+        params["from_ms"] = from_ms
 
     rows = (
         (
