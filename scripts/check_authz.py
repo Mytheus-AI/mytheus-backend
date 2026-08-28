@@ -28,8 +28,12 @@ import ast
 import pathlib
 import sys
 
-PUBLIC_PREFIXES = ("/healthz", "/health", "/openapi", "/docs", "/redoc")
-PUBLIC_CONTAINS = ("/webhook", "/oauth", "/clerk/", "/stripe/", "/livekit/", "/callback")
+# The allowlist lives in libs/shared/public_routes.py, not here, because the OpenAPI emitter
+# needs the same answer: it marks every non-public operation as requiring the bearer scheme.
+# Two copies would eventually disagree, and the failure is silent - a generated client that
+# omits a token on a route that needs one, or sends one to a signature-verified webhook.
+from libs.shared.public_routes import is_public_path  # noqa: E402
+
 ROUTE_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "websocket"}
 AUTH_CALLABLES = {"Depends", "Security"}
 ROUTER_FACTORIES = {"APIRouter", "FastAPI"}
@@ -109,11 +113,6 @@ def has_auth_dependency(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         return True
     args = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
     return any(_annotation_has_auth(a.annotation) for a in args)
-
-
-def is_public_path(path: str) -> bool:
-    prefixed = any(path.startswith(p) for p in PUBLIC_PREFIXES)
-    return prefixed or any(c in path for c in PUBLIC_CONTAINS)
 
 
 def has_public_marker(fn: ast.FunctionDef | ast.AsyncFunctionDef, lines: list[str]) -> bool:

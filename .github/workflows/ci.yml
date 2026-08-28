@@ -154,6 +154,62 @@ jobs:
       - run: uv sync
       - run: uv run python scripts/check_authz.py
 
+  openapi:
+    # Spec governance, in three gates that catch three different things.
+    #
+    # Until now this repo had none of them: the five specs in mytheus-docs/design/openapi were
+    # hand-written in P1 before any route existed, `spectral lint` had never been executed, and
+    # `oasdiff` was never wired. The Plan 1-2 DoD line for this has been PARTIAL since.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # oasdiff needs the merge base to compare against. A shallow clone has no main.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+
+      - name: the committed specs match the code
+        # The drift gate, and the reason a generated client is now safe to build. Changing a
+        # route without running `make openapi` fails here rather than shipping a spec that
+        # quietly stopped being true.
+        run: uv run python -m scripts.emit_openapi --check
+
+      - name: spectral lint
+        # --fail-severity=error so the built-in spectral:oas style warnings (missing
+        # descriptions, tags, servers) are reported without blocking. The 13 house rules that
+        # encode real invariants - org_id never in a path or query, document-level security,
+        # RFC 7807 on every error, cursor pagination - are all `severity: error`.
+        run: |
+          npx --yes @stoplight/spectral-cli@6 lint "design/openapi/*.yaml"             --ruleset design/.spectral.yaml --fail-severity=error
+
+      - name: oasdiff breaking-change gate
+        # Compares this branch's specs against the base branch's. Catches a removed path, a
+        # newly-required request field, a narrowed request enum - changes that compile fine and
+        # break every existing client.
+        #
+        # Skipped on a push to main, where there is no base to diff against: the comparison is
+        # "what this change does to the contract", which only exists for a change.
+        if: github.event_name == 'pull_request'
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          mkdir -p /tmp/oasdiff-base
+          failed=0
+          for spec in design/openapi/*.yaml; do
+            name="$(basename "$spec")"
+            if ! git show "$base:$spec" > "/tmp/oasdiff-base/$name" 2>/dev/null; then
+              echo "::notice::$name is new on this branch; nothing to compare against"
+              continue
+            fi
+            echo "--- $name ---"
+            docker run --rm               -v /tmp/oasdiff-base:/base:ro               -v "$PWD/design/openapi:/head:ro"               tufin/oasdiff:latest breaking "/base/$name" "/head/$name" || failed=1
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::a breaking API change was detected. Bump to /api/v2 with a"
+            echo "::error::deprecation window, or make the change additive."
+            exit 1
+          fi
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -230,7 +286,7 @@ jobs:
     # is green - listing all of them in `needs` is the point: `docker` alone would happily ship
     # an image whose tenant-isolation assertions had just failed, which is the one thing this
     # pipeline exists to prevent.
-    needs: [lint, test, migrations, authz-check, security, docker]
+    needs: [lint, test, migrations, authz-check, openapi, security, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production

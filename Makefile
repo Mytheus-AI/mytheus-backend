@@ -30,7 +30,24 @@ test:
 # lint + typecheck + test (the standing gate; alias used across repos).
 # `proto` runs first because identity_pb2*.py are gitignored ("regenerate in CI"): without
 # it, pytest fails at COLLECTION on a clean clone and the gate never reaches a real test.
-ci: proto lint typecheck test
+ci: proto lint typecheck openapi-check test
+
+# Emit an OpenAPI 3.1 document per HTTP service, from the running app. Run this after touching
+# a route or a Pydantic model, and commit the result: `openapi-check` fails the build when the
+# committed file and the code disagree, which is what stops the spec from quietly going stale
+# the way the hand-written ones in mytheus-docs did.
+openapi:
+	uv run python -m scripts.emit_openapi
+
+openapi-check:
+	uv run python -m scripts.emit_openapi --check
+
+# The house rules (13 of them) over the emitted documents. Node, so it is not in `ci`: a
+# missing npx would fail the standing gate for a developer who has no Node installed, and the
+# authoritative run is the CI job. --fail-severity=error so the built-in spectral:oas style
+# warnings (missing descriptions, tags, servers) report without blocking.
+openapi-lint:
+	npx --yes @stoplight/spectral-cli@6 lint "design/openapi/*.yaml" 		--ruleset design/.spectral.yaml --fail-severity=error
 
 test-fast:
 	uv run pytest -m "not slow"

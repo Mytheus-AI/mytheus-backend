@@ -1,0 +1,1350 @@
+# GENERATED FILE - DO NOT EDIT.
+#
+# Emitted from the FastAPI app by `python -m scripts.emit_openapi` (`make openapi`).
+# Edit the routes and Pydantic models, then regenerate. CI runs `--check` and fails the
+# build if this file and the code disagree, so a hand edit here is reverted by the next
+# regeneration and blocks the build until then.
+components:
+  schemas:
+    ChatMessage:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - meeting_id
+      - user_id
+      - content
+      - created_at
+      title: ChatMessage
+      type: object
+    ChatMessageCreate:
+      additionalProperties: false
+      properties:
+        content:
+          maxLength: 10000
+          minLength: 1
+          title: Content
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+      required:
+      - meeting_id
+      - content
+      title: ChatMessageCreate
+      type: object
+    Department:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        parent_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Parent Id
+      required:
+      - id
+      - name
+      - parent_id
+      - created_at
+      title: Department
+      type: object
+    DepartmentCreate:
+      additionalProperties: false
+      properties:
+        name:
+          maxLength: 200
+          minLength: 1
+          title: Name
+          type: string
+        parent_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Parent Id
+      required:
+      - name
+      title: DepartmentCreate
+      type: object
+    ErrorCode:
+      description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
+        is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
+        from `libs.shared.errors.ErrorCode`, so this list cannot drift from the code; the no-removal half
+        is asserted by `test_no_published_error_code_is_ever_removed`, because `oasdiff` does not treat
+        narrowing a response enum as a breaking change.
+      enum:
+      - MALFORMED_BODY
+      - INVALID_CURSOR
+      - AUTH_REQUIRED
+      - TOKEN_EXPIRED
+      - FORBIDDEN_ROLE
+      - CROSS_TENANT_DENIED
+      - NOT_FOUND
+      - IDEMPOTENCY_KEY_REUSED
+      - VERSION_CONFLICT
+      - VALIDATION_FAILED
+      - RATE_LIMITED
+      - QUOTA_EXCEEDED
+      - INTERNAL
+      - DEPENDENCY_UNAVAILABLE
+      - NOT_IMPLEMENTED
+      - NOT_A_PARTICIPANT
+      - CONSENT_REQUIRED
+      type: string
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          title: Detail
+          type: array
+      title: HTTPValidationError
+      type: object
+    Meeting:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Created By
+        id:
+          format: uuid
+          title: Id
+          type: string
+        livekit_room:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Livekit Room
+        participants:
+          items:
+            $ref: '#/components/schemas/Participant'
+          title: Participants
+          type: array
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - title
+      - status
+      - scheduled_start
+      - scheduled_end
+      - livekit_room
+      - created_by
+      - created_at
+      - updated_at
+      title: Meeting
+      type: object
+    MeetingCreate:
+      additionalProperties: false
+      properties:
+        participant_ids:
+          items:
+            format: uuid
+            type: string
+          title: Participant Ids
+          type: array
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        title:
+          maxLength: 500
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      title: MeetingCreate
+      type: object
+    MeetingPage:
+      description: 'Cursor pagination, never OFFSET.
+
+
+        OFFSET re-scans every skipped row, so page 500 costs 500 pages of work, and a concurrent
+
+        insert shifts every subsequent page and silently drops a row from the caller''s view. The
+
+        cursor is opaque so its encoding can change without breaking clients.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Meeting'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - items
+      title: MeetingPage
+      type: object
+    MeetingSpeaker:
+      properties:
+        assignment:
+          enum:
+          - manual
+          - suggested
+          title: Assignment
+          type: string
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        speaker_id:
+          title: Speaker Id
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+      required:
+      - id
+      - meeting_id
+      - speaker_id
+      - user_id
+      - confidence
+      - assignment
+      - created_at
+      - updated_at
+      title: MeetingSpeaker
+      type: object
+    MeetingSpeakerList:
+      description: 'Not cursor-paginated, deliberately: a meeting has as many rows here as it had distinct
+
+        diarized speakers, which the capacity model bounds at single digits. A cursor would be
+
+        ceremony over a list that is never long enough to need one.
+
+
+        Declared after `MeetingSpeaker` rather than beside the other page models on purpose: the
+
+        reverse order made `items` a forward reference that Pydantic would have to resolve at
+
+        runtime, which `from __future__ import annotations` hides from every static check.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MeetingSpeaker'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MeetingSpeakerList
+      type: object
+    MeetingUpdate:
+      additionalProperties: false
+      properties:
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          anyOf:
+          - enum:
+            - scheduled
+            - live
+            - ended
+            - cancelled
+            type: string
+          - type: 'null'
+          title: Status
+        title:
+          anyOf:
+          - maxLength: 500
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Title
+      title: MeetingUpdate
+      type: object
+    Participant:
+      properties:
+        role_in_meeting:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role In Meeting
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      title: Participant
+      type: object
+    ParticipantCheck:
+      description: '`GET /meetings/:id/participants/:clerk_user_id`''s response shape.
+
+
+        Deliberately NOT `Participant` with an extra field: `Participant` is also embedded in
+
+        `Meeting.participants` (see `routes.meetings._load_participants`/`create_meeting`), and
+
+        every one of those call sites constructs it with no `org_id` in hand at all (it isn''t
+
+        resolved per-participant, and the meeting itself already implies the tenant). Adding a
+
+        required `org_id` to `Participant` would break those constructions; adding an optional
+
+        one would put a meaningless `"org_id": null` on every entry of every meeting''s
+
+        participants array. This is a distinct resource with its own shape instead.
+
+
+        `org_id` here is `ctx.org_id` - the CALLER''s own tenant, resolved from their own verified
+
+        bearer token, never a lookup on the target resource. `realtime-gateway`''s presence-events
+
+        fix (mytheus-realtime Task 6 follow-up) needs it because the gateway has no database and
+
+        cannot resolve its own JWT''s opaque Clerk org id into our internal UUID any other way; this
+
+        endpoint already computes it for its own RLS scoping, so returning it is not a new query.'
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        role_in_meeting:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role In Meeting
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - org_id
+      title: ParticipantCheck
+      type: object
+    Problem:
+      description: 'RFC 7807 problem detail. Every 4xx and 5xx this service emits has this shape, including
+        the ones FastAPI would otherwise return in its own format: `libs/shared/errors.py` registers handlers
+        for `ProblemDetail`, `HTTPException`, `RequestValidationError` and bare `Exception`.'
+      properties:
+        code:
+          allOf:
+          - $ref: '#/components/schemas/ErrorCode'
+        detail:
+          description: Human-readable specifics. Never parsed.
+          type: string
+        instance:
+          description: URI of the failing request.
+          type: string
+        status:
+          description: Repeats the HTTP status code.
+          type: integer
+        title:
+          description: Short human-readable summary.
+          type: string
+        trace_id:
+          description: Correlates with the trace and logs.
+          type: string
+        type:
+          description: Stable error type URI.
+          format: uri
+          type: string
+      required:
+      - type
+      - title
+      - status
+      - code
+      type: object
+    SpeakerAssign:
+      additionalProperties: false
+      properties:
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      title: SpeakerAssign
+      type: object
+    Team:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        department_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Department Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - department_id
+      - created_at
+      title: Team
+      type: object
+    TeamCreate:
+      additionalProperties: false
+      properties:
+        department_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Department Id
+        name:
+          maxLength: 200
+          minLength: 1
+          title: Name
+          type: string
+      required:
+      - name
+      title: TeamCreate
+      type: object
+    TranscriptChunk:
+      description: 'One persisted final from `transcript_chunks`, owned by `transcription-service`.
+
+
+        `speaker_id` is the raw diarized label as Deepgram emitted it, never a resolved user: the
+
+        `speaker_id` to `user_id` mapping lives in `meeting_speakers` and is served separately, so
+
+        a client relabels turns by joining the two rather than this endpoint guessing. `redacted`
+
+        tells a reader that the text it is seeing had PII replaced, which matters when a transcript
+
+        reads oddly and the reason is redaction rather than mis-transcription.'
+      properties:
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        end_ms:
+          title: End Ms
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        is_final:
+          title: Is Final
+          type: boolean
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        redacted:
+          default: false
+          title: Redacted
+          type: boolean
+        speaker_id:
+          title: Speaker Id
+          type: string
+        start_ms:
+          title: Start Ms
+          type: integer
+        text:
+          title: Text
+          type: string
+      required:
+      - id
+      - meeting_id
+      - speaker_id
+      - start_ms
+      - end_ms
+      - text
+      - is_final
+      title: TranscriptChunk
+      type: object
+    TranscriptPage:
+      description: 'Cursor pagination over `(start_ms, id)`, the same tuple the ORDER BY and the table''s
+
+        `(meeting_id, start_ms)` index use, so a page is an index range scan and a concurrent
+
+        insert cannot shift rows out of a later page.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TranscriptChunk'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - items
+      title: TranscriptPage
+      type: object
+    ValidationError:
+      properties:
+        ctx:
+          title: Context
+          type: object
+        input:
+          title: Input
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          title: Location
+          type: array
+        msg:
+          title: Message
+          type: string
+        type:
+          title: Error Type
+          type: string
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+      type: object
+  securitySchemes:
+    HTTPBearer:
+      bearerFormat: JWT
+      description: Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
+        re-verified in the service tier. `org_id` is derived from the token and is never accepted from
+        a path, query, body or client header.
+      scheme: bearer
+      type: http
+info:
+  title: core-api
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /api/v1/chat:
+    post:
+      operationId: post_chat
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessageCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: &id001
+                $ref: '#/components/schemas/Problem'
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Post Chat
+      tags:
+      - chat
+  /api/v1/departments:
+    get:
+      operationId: list_departments
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Department'
+                title: Response List Departments
+                type: array
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Departments
+      tags:
+      - org-hierarchy
+    post:
+      operationId: create_department
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Department
+      tags:
+      - org-hierarchy
+  /api/v1/meetings:
+    get:
+      description: 'Keyset-paginated listing. No `org_id` parameter: RLS scopes it to the caller''s tenant.'
+      operationId: list_meetings
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingPage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Meetings
+      tags:
+      - meetings
+    post:
+      description: Create a meeting, its participants, its event and its audit record, atomically.
+      operationId: create_meeting
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}:
+    get:
+      operationId: get_meeting
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Meeting
+      tags:
+      - meetings
+    patch:
+      operationId: update_meeting
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/participants/{clerk_user_id}:
+    get:
+      description: 'Deny-by-default participant check. `realtime-gateway` (Task 6) calls this on every
+
+        Socket.io `join` to decide FORBIDDEN vs allow before joining the room.
+
+
+        No `require_tier` gate, matching `meeting_service.routes.mint_token`''s precedent rather
+
+        than the `require_tier("member")` used elsewhere in this file: a genuine participant is
+
+        not guaranteed to hold an `rbac_grants` row (see that route''s "no local mirror row" test
+
+        case), and gating this specific check on RBAC tier would wrongly deny a real participant
+
+        who has none - exactly the failure mode the token-mint route was written to avoid.
+
+        `tenant_session` alone still fails closed on a bad/missing token and on a cross-tenant id
+
+        (via the existence check below), which is the authz this endpoint actually needs.
+
+
+        **Contract-verification note (task-5 report, "contract verification" section):** the path
+
+        parameter is the caller''s Clerk-native user id (the JWT `sub` claim), NOT our internal
+
+        `users.id`. `realtime-gateway` has no database and therefore no way to know our internal
+
+        UUID - its entire identity model runs on the Clerk claims already in the socket''s verified
+
+        JWT (see `mytheus-realtime`''s `libs/auth.ts`). Resolving that opaque id to `users.id`
+
+        HERE, the same way `libs.shared.authz.tenant_context` resolves the caller''s own principal
+
+        via `clerk_user_id`, is what lets this route accept the identifier the gateway actually
+
+        has rather than one it has no way to produce.
+
+
+        **Tenancy source, spelled out because `realtime-gateway` also sends an `X-Org-Id` header
+
+        on this call:** that header is NOT read here - it isn''t even declared as a parameter. The
+
+        ONLY source of `org_id` for this route is `tenant_session` -> `tenant_context` ->
+
+        `verify_token`, i.e. the caller''s OWN re-verified bearer token, exactly like every other
+
+        route in this file. Both the meeting-existence check below and the `meeting_participants
+
+        JOIN users` query are RLS-scoped by that resolved `org_id` with no hand-written predicate,
+
+        so a request naming an org-B `clerk_user_id` while `app.current_org` is org A finds
+
+        nothing - org B''s `users` row is invisible under RLS - rather than "found, but not a
+
+        participant of THIS meeting" from a lookup that forgot to scope by tenant. See
+
+        `tests/test_participant_check_api.py::test_the_participant_join_result_depends_on_users_
+
+        rls_not_just_on_row_existence` for the direct proof (the JOIN layer, isolated). `X-Org-Id`
+
+        is transport-layer context the gateway sets from its own verified JWT for its own
+
+        bookkeeping; it is never the authorization boundary on this side of the call, matching
+
+        `CLAUDE.md`''s "the service tier RE-VERIFIES the JWT (the gateway is a DDoS shield, not a
+
+        trust delegation)".
+
+
+        **`org_id` in the response (`ParticipantCheck`, not `Participant` - see that schema''s
+
+        docstring for why a separate model):** `realtime-gateway`''s fixed `presence-events`
+
+        producer needs our internal `org_id` and has no database to resolve its own JWT''s opaque
+
+        Clerk org id into one; this route already resolves it (as `ctx.org_id`, above) for its own
+
+        RLS scoping, so returning it is serializing an already-computed value, not a new query or
+
+        lookup. Safe to return to THIS caller specifically because `ctx.org_id` is, by
+
+        construction, always the caller''s own tenant - it comes from re-verifying THEIR OWN bearer
+
+        token, never from a lookup on the target meeting or user - and every 200 response is
+
+        additionally consistent with that value: `_fetch_meeting`''s and this query''s RLS scoping
+
+        guarantee that the meeting and the resolved participant/user rows all carry
+
+        `org_id = ctx.org_id`, or the route would already have 404''d/403''d before reaching here.
+
+        There is no code path that reaches `return ParticipantCheck(...)` with an `org_id` that is
+
+        not the caller''s own.'
+      operationId: check_participant
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: clerk_user_id
+        required: true
+        schema:
+          title: Clerk User Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParticipantCheck'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Check Participant
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/speakers:
+    get:
+      description: 'The read half of the speaker-mapping UI (plan 3-4 section 3.8 step 3), which needs
+        to
+
+        list the diarized `speaker_id`s and show any existing assignment plus its confidence as
+
+        advisory before the user overrides it. Only `PATCH` existed, so the UI had a write path and
+
+        no way to know what it was writing over.
+
+
+        Ordered by `speaker_id` rather than by confidence or assignment: the list is a stable set of
+
+        labels the user maps one by one, and reordering it as they assign would move rows out from
+
+        under the pointer.'
+      operationId: list_speakers
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingSpeakerList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Speakers
+      tags:
+      - speakers
+  /api/v1/meetings/{meeting_id}/speakers/{speaker_id}:
+    patch:
+      operationId: assign_speaker
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: speaker_id
+        required: true
+        schema:
+          title: Speaker Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakerAssign'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingSpeaker'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Assign Speaker
+      tags:
+      - speakers
+  /api/v1/meetings/{meeting_id}/transcript:
+    get:
+      description: 'Finals only, in spoken order. No `org_id` parameter: RLS scopes it to the caller.
+
+
+        `from_ms` is the plan''s "timestamp jump via `(meeting_id, start_ms)`" (section 3.8 step 2):
+
+        seek straight to the first final at or after a millisecond offset. It is a server-side seek
+
+        rather than something the client does after loading everything, because "load the whole
+
+        meeting and scroll" only holds while a meeting fits in one page. The capacity model says
+
+        ~360 finals and `MAX_LIMIT` is 500, so today it usually would - but a long meeting is
+
+        exactly the case where jumping matters most, and that is the case where the client-side
+
+        shortcut fails. Both forms use the same `(meeting_id, start_ms)` index.
+
+
+        `cursor` wins if both are given: a cursor is a position in a walk already in progress, and
+
+        silently restarting that walk somewhere else would repeat or skip rows.'
+      operationId: get_transcript
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: from_ms
+        required: false
+        schema:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          title: From Ms
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptPage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Transcript
+      tags:
+      - transcript
+  /api/v1/teams:
+    get:
+      description: 'Deliberately `/teams`, not the plan''s `/orgs/{id}/teams`.
+
+
+        The plan''s own form puts a tenant identifier in the path, which violates the
+
+        `org_id`-never-in-path invariant the same plan states two sections earlier. The tenant is
+
+        already known from the token, so the path parameter could only ever agree with it or be
+
+        an attempted cross-tenant read.'
+      operationId: list_teams
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Team'
+                title: Response List Teams
+                type: array
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Teams
+      tags:
+      - org-hierarchy
+    post:
+      operationId: create_team
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Team
+      tags:
+      - org-hierarchy
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                title: Response Healthz Healthz Get
+                type: object
+          description: Successful Response
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security: []
+      summary: Healthz
+security:
+- HTTPBearer: []

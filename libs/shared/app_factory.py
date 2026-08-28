@@ -13,6 +13,7 @@ from redis.asyncio import from_url
 
 from libs.shared.errors import add_exception_handlers
 from libs.shared.idempotency import IdempotencyMiddleware
+from libs.shared.openapi import install as install_openapi
 from libs.shared.telemetry import setup_telemetry
 
 
@@ -23,6 +24,12 @@ def create_app(service_name: str) -> FastAPI:
     app.add_middleware(IdempotencyMiddleware, redis=redis)  # replay mutating POST/PUT/PATCH
     add_exception_handlers(app)
     setup_telemetry(app, service_name=service_name)  # no-op unless OTEL endpoint set
+
+    # Documents what the three lines above actually do. Middleware, exception handlers and
+    # dependency-injected auth are all invisible to FastAPI's schema generator, so without
+    # this the emitted spec describes an API with no security, no idempotency header and no
+    # error shape. See libs/shared/openapi.py.
+    install_openapi(app, service_name)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

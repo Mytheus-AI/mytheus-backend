@@ -1,0 +1,177 @@
+# Spectral ruleset for the Mytheus /api/v1 surface.
+#
+# P1 design artifact (Plan 1-2 section 3.1 step 4 acceptance checks). This ruleset is what
+# makes those checks executable rather than aspirational, and it is wired into CI in
+# section 3.11 step 5 alongside the oasdiff breaking-change gate.
+#
+# Run:  npx @stoplight/spectral-cli lint design/openapi/*.yaml --ruleset design/openapi/.spectral.yaml
+#
+# Every rule below encodes an invariant from 19-api-architecture.md or ADR-0002. A rule at
+# `severity: error` fails the build.
+
+extends: ["spectral:oas"]
+
+rules:
+  # --- Tenant isolation -----------------------------------------------------------------
+
+  org-id-never-in-path:
+    description: >
+      `org_id` is derived from the verified Clerk JWT and never from the URL. A tenant
+      identifier in a path lets a client assert its own tenancy, which is the failure this
+      whole architecture is built to prevent.
+    message: "Path '{{property}}' contains a tenant identifier. org_id is never in a path."
+    severity: error
+    given: "$.paths"
+    then:
+      field: "@key"
+      function: pattern
+      functionOptions:
+        notMatch: "/(org_id|orgid|organization_id|\\{org[_-]?id\\}|/orgs/\\{)/i"
+
+  org-id-never-in-query:
+    description: >
+      Same rule for query parameters. Scoping is implicit in the token.
+    message: "Parameter '{{value}}' is a tenant identifier. org_id is never client-supplied."
+    severity: error
+    given: "$.paths[*][*].parameters[?(@.in == 'query' || @.in == 'path')].name"
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: "/^(org_id|orgId|organization_id|tenant_id)$/i"
+
+  # --- Authentication -------------------------------------------------------------------
+
+  global-security-declared:
+    description: >
+      Every spec declares a document-level security scheme, so a new route is authenticated
+      by default and opting out is an explicit, reviewable act.
+    message: "The document must declare top-level `security`."
+    severity: error
+    given: "$"
+    then:
+      field: security
+      function: truthy
+
+  security-scheme-defined:
+    description: The declared scheme must actually exist in components.
+    message: "No securitySchemes defined."
+    severity: error
+    given: "$.components"
+    then:
+      field: securitySchemes
+      function: truthy
+
+  authed-operations-document-401:
+    description: >
+      Any operation that requires auth must document the 401 it can return, so the generated
+      client has a typed branch for it rather than falling through to a generic error.
+    message: "Authenticated operation does not document a 401 response."
+    severity: error
+    given: "$.paths[*][?(@property != 'parameters' && !@.security)].responses"
+    then:
+      field: "401"
+      function: truthy
+
+  # --- RFC 7807 -------------------------------------------------------------------------
+
+  errors-use-problem-json:
+    description: >
+      Every 4xx and 5xx body is `application/problem+json`. A bare `application/json` error
+      is the FastAPI default shape leaking through and breaks the client's error parsing.
+    message: "Error response {{property}} must use application/problem+json."
+    severity: error
+    given: "$.paths[*][*].responses[?(@property.match(/^[45]/))].content"
+    then:
+      field: "application/problem+json"
+      function: truthy
+
+  problem-schema-has-code-enum:
+    description: >
+      The Problem schema carries a stable machine-readable `code`. Clients branch on `code`,
+      never on `detail`, which is human-readable and free to change.
+    message: "components.schemas.Problem must define a `code` property."
+    severity: error
+    given: "$.components.schemas.Problem.properties"
+    then:
+      field: code
+      function: truthy
+
+  error-code-enum-is-frozen:
+    description: >
+      The `code` enum is program-wide and frozen. Values may be ADDED; a published value is
+      never removed or repurposed.
+
+      This rule only checks that the enum EXISTS. The removal half was documented here as
+      "oasdiff enforces it in CI" and that was untrue: `ErrorCode` is reachable only from a
+      response schema, and narrowing a response enum is not breaking by oasdiff's definition -
+      the server just stops sending a value clients already handle. Verified by deleting
+      NOT_FOUND from a copy of core-api.yaml and running `oasdiff breaking`, which flagged two
+      deleted paths in the same probe and said nothing about the enum. The removal half is
+      enforced instead by `tests/test_openapi_contract.py::test_no_published_error_code_is_ever_removed`,
+      which holds the published list. Removing a code is breaking HERE for a reason specific to
+      this program rather than to OpenAPI: both clients branch on `code`.
+    message: "ErrorCode must be an enum."
+    severity: error
+    given: "$.components.schemas.ErrorCode"
+    then:
+      field: enum
+      function: truthy
+
+  # --- Pagination -----------------------------------------------------------------------
+
+  list-endpoints-are-cursor-paginated:
+    description: >
+      Keyset pagination only. OFFSET scans degrade linearly and skip or duplicate rows under
+      concurrent writes, which at this row count is a correctness bug and not just a
+      performance one.
+    message: "Offset-style pagination is forbidden. Use `cursor` plus `limit`."
+    severity: error
+    given: "$.paths[*][*].parameters[?(@.in == 'query')].name"
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: "/^(offset|page|page_number|skip)$/i"
+
+  page-meta-shape:
+    description: The pagination envelope is `{limit, next_cursor, has_more}`.
+    message: "PageMeta must define has_more."
+    severity: error
+    given: "$.components.schemas.PageMeta.properties"
+    then:
+      field: has_more
+      function: truthy
+
+  # --- Idempotency ----------------------------------------------------------------------
+
+  mutating-post-accepts-idempotency-key:
+    description: >
+      Every mutating POST accepts `Idempotency-Key`. A replay with the same body returns the
+      original response; a replay with a different body is 409 IDEMPOTENCY_KEY_REUSED.
+      Webhooks are exempt: they dedupe on the provider's event id via the inbox instead.
+    message: "Mutating POST '{{path}}' does not accept an Idempotency-Key header."
+    severity: warn
+    given: "$.paths[?(!@property.match(/webhook/))].post"
+    then:
+      field: parameters
+      function: truthy
+
+  # --- House style ----------------------------------------------------------------------
+
+  operation-has-operation-id:
+    description: The TypeScript client generator names methods from operationId.
+    severity: error
+    given: "$.paths[*][?(@property != 'parameters')]"
+    then:
+      field: operationId
+      function: truthy
+
+  snake-case-properties:
+    description: JSON bodies are snake_case, matching the column names they carry.
+    message: "Property '{{property}}' is not snake_case."
+    severity: warn
+    given: "$.components.schemas[*].properties"
+    then:
+      field: "@key"
+      function: pattern
+      functionOptions:
+        match: "^[a-z][a-z0-9_]*$"
