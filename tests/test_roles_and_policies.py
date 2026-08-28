@@ -154,6 +154,15 @@ async def test_no_application_role_can_reach_a_partition_directly(migrated_db):
 
     Every future partition must be revoked the same way, which is why this is a CI assertion
     and not a comment in the migration that added the last one.
+
+    BROADENED in `9b2c4d1e6f30`. This asserted against `APPLICATION_ROLES` - the three
+    `mytheus_*` roles - and passed for months while every partition also granted the full DML
+    set to `anon`, `authenticated` and `service_role`, which `supabase/postgres` grants on
+    every new table in `public` at bootstrap. `service_role` holds `rolbypassrls`. The test
+    was scoped to the roles the defect was found on rather than to the property worth holding,
+    so it could not see the larger arm of the same defect. It now asserts the property: NO
+    grantee other than the relation's owner holds anything on a partition, whatever it is
+    called and whoever created it.
     """
     engine = create_async_engine(migrated_db)
     try:
@@ -162,16 +171,16 @@ async def test_no_application_role_can_reach_a_partition_directly(migrated_db):
                 (
                     await conn.execute(
                         text(
-                            "SELECT c.relname || ' -> ' || g.grantee || ':' || g.privilege_type "
+                            "SELECT c.oid::regclass::text || ' -> ' "
+                            "       || COALESCE(pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC') "
+                            "       || ':' || a.privilege_type "
                             "FROM pg_class c "
-                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                            "JOIN information_schema.role_table_grants g "
-                            "  ON g.table_name = c.relname AND g.table_schema = n.nspname "
-                            "WHERE n.nspname = 'public' AND c.relispartition "
-                            "  AND g.grantee = ANY(:roles) "
+                            "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+                            "WHERE c.relnamespace = 'public'::regnamespace "
+                            "  AND c.relispartition "
+                            "  AND a.grantee <> c.relowner "
                             "ORDER BY 1"
-                        ),
-                        {"roles": APPLICATION_ROLES},
+                        )
                     )
                 )
                 .scalars()
@@ -180,7 +189,231 @@ async def test_no_application_role_can_reach_a_partition_directly(migrated_db):
     finally:
         await engine.dispose()
 
-    assert leaked == [], f"application roles hold direct privileges on partitions: {leaked}"
+    assert leaked == [], f"non-owner roles hold direct privileges on partitions: {leaked}"
+
+
+# --- CI assertion 4: the schema grants nothing by default ------------------------------------
+
+
+async def test_public_schema_grants_nothing_by_default(migrated_db):
+    """The root cause, asserted so it cannot be reintroduced by a well-meaning migration.
+
+    A default privilege on TABLES in `public` is not a convenience, it is the mechanism that
+    produced a live cross-tenant read/write/delete: a partition created by
+    `CREATE TABLE ... PARTITION OF` is a newly created table, so it inherits the grant, while
+    the parent's RLS policy is only enforced on access through the parent. Migration
+    `9b2c4d1e6f30` retired it; this is what stops the next person from putting it back because
+    a new table was unreadable and a one-line `ALTER DEFAULT PRIVILEGES` looked like the fix.
+
+    Stated as "no default ACL grants to anyone but its own owner" rather than as a list of
+    forbidden roles, because the list is what failed last time: the recorded defect named
+    `mytheus_app`/`mytheus_admin`, and the grants actually present also included the image's
+    `anon`/`authenticated`/`service_role`.
+
+    SEQUENCES are deliberately not covered: a sequence has no rows, no RLS and no partitions,
+    so inheriting a grant there costs nothing and removing it would break the next BIGSERIAL
+    insert for no gain.
+
+    Scoped to roles that actually own a table here, which is the sentence worth asserting:
+    "no role that creates tables in this schema grants anything on them by default." A default
+    ACL applies only to objects created BY its owner, so `supabase_admin`'s entry - which the
+    image installs, which still grants everything to `anon`/`authenticated`/`service_role`,
+    and which the migration runner cannot alter because it is not a member - is inert while
+    `supabase_admin` owns nothing here. If it ever creates a table in `public`, this starts
+    failing, which is when it stops being inert. That is a live residual, recorded in
+    `9b2c4d1e6f30`, not something this test pretends is closed.
+    """
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            granted = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT d.defaclrole::regrole::text || ' grants ' "
+                            "       || a.privilege_type || ' on new TABLES to ' "
+                            "       || COALESCE(pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC') "
+                            "FROM pg_default_acl d "
+                            "CROSS JOIN LATERAL aclexplode(d.defaclacl) a "
+                            "WHERE d.defaclnamespace = 'public'::regnamespace "
+                            "  AND d.defaclobjtype = 'r' "
+                            "  AND a.grantee <> d.defaclrole "
+                            "  AND d.defaclrole IN ("
+                            "    SELECT DISTINCT c.relowner FROM pg_class c "
+                            "    WHERE c.relnamespace = 'public'::regnamespace "
+                            "      AND c.relkind IN ('r','p')) "
+                            "ORDER BY 1"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+
+    assert granted == [], (
+        "public grants privileges on new TABLES by default; a future partition will inherit "
+        f"them and the parent's RLS policy will not follow: {granted}"
+    )
+
+
+# --- CI assertion 5: no BYPASSRLS role can reach anything ------------------------------------
+
+
+async def test_no_bypassrls_role_holds_privileges_on_a_public_table(migrated_db):
+    """Defect D1's shape on a role nobody in this program created.
+
+    `test_no_application_role_is_superuser_or_bypasses_rls` checks the three roles we make.
+    It cannot see `service_role`, which `supabase/postgres` ships with `rolbypassrls` and
+    grants the full DML set on every new table in `public` - including `audit_logs`, whose
+    append-only guarantee is a GRANT, and `organizations`, whose carve-out is column-level
+    grants. `authenticator` is a LOGIN role and a member of it, so "NOLOGIN" is not the
+    control it looks like. Verified live before `9b2c4d1e6f30`: `SET ROLE service_role` then
+    `SELECT count(*) FROM audit_logs` returned every tenant's rows with no `app.current_org`
+    set, and the matching DELETE succeeded.
+
+    The migration revokes the reach. It cannot revoke the attribute - `ALTER ROLE ...
+    NOBYPASSRLS` needs superuser and the migration runner is not one on this image - so the
+    role still exists and `supabase_admin` could re-grant. That is why this is a standing CI
+    assertion and not a one-time cleanup.
+
+    The relation's owner is excluded: it is the migration runner, it holds everything by
+    definition, and it is BYPASSRLS on this image too.
+    """
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            reachable = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT DISTINCT r.rolname || ' -> ' || c.oid::regclass::text "
+                            "FROM pg_class c "
+                            "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+                            "JOIN pg_roles r ON r.oid = a.grantee "
+                            "WHERE c.relnamespace = 'public'::regnamespace "
+                            "  AND c.relkind IN ('r','p') "
+                            "  AND a.grantee <> c.relowner "
+                            "  AND r.rolbypassrls "
+                            "ORDER BY 1"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+
+    assert reachable == [], (
+        "a role holding BYPASSRLS has privileges on a tenant table; every tenant_isolation "
+        f"policy is inert for anything that can reach it: {reachable}"
+    )
+
+
+async def test_a_new_partition_inherits_no_privileges(migrated_db):
+    """The guard fires, proven by creating a partition rather than by reading a migration.
+
+    This is the property `9b2c4d1e6f30` actually buys, and the only way to know it holds is to
+    make a partition the way a future migration would - with no `REVOKE`, no
+    `lock_down_partition`, nobody remembering anything - and look at what it came out with.
+    Before the migration this partition would have carried the full DML set for five roles.
+
+    A throwaway table rather than a real one: attaching a range to `audit_logs` while a
+    DEFAULT partition exists forces a scan of that partition under an ACCESS EXCLUSIVE lock,
+    and this assertion is about the schema's behaviour, not about any one table's.
+    """
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS _partition_grant_probe CASCADE"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE _partition_grant_probe (org_id uuid NOT NULL, at date NOT NULL) "
+                    "PARTITION BY RANGE (at)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE _partition_grant_probe_p1 PARTITION OF _partition_grant_probe "
+                    "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')"
+                )
+            )
+        try:
+            async with engine.connect() as conn:
+                inherited = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT COALESCE("
+                                "         pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC') "
+                                "       || ':' || a.privilege_type "
+                                "FROM pg_class c "
+                                "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+                                "WHERE c.relname = '_partition_grant_probe_p1' "
+                                "  AND a.grantee <> c.relowner "
+                                "ORDER BY 1"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+        finally:
+            async with engine.begin() as conn:
+                await conn.execute(text("DROP TABLE IF EXISTS _partition_grant_probe CASCADE"))
+    finally:
+        await engine.dispose()
+
+    assert inherited == [], (
+        "a partition created with no explicit revoke still inherited privileges: "
+        f"{inherited}. The schema-wide default privilege is back."
+    )
+
+
+async def test_every_org_id_table_grants_read_to_the_request_role(migrated_db):
+    """The other half of retiring the default privilege, and the reason it was safe to.
+
+    Migration 0002 defended the schema-wide grant on the grounds that without it "every new
+    table is silently unreadable by the application until someone remembers a GRANT, and the
+    symptom is a production permission error rather than a failing test." That objection is
+    right, and this is the failing test it asked for: nothing is inherited any more, so a
+    migration that creates a tenant table and forgets `migrations/_grants.grant_tenant_table`
+    fails here instead of at runtime.
+
+    SELECT is the assertion rather than the full DML set, so it stays exceptionless.
+    `audit_logs` deliberately holds only SELECT and INSERT - its tamper-evidence is the
+    absence of UPDATE and DELETE - and a test demanding all four would need a carve-out for
+    it, which is the kind of hardcoded exception list this file avoids everywhere else.
+    """
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            ungranted = (
+                (
+                    await conn.execute(
+                        text(
+                            f"SELECT t.relname FROM ({_ORG_ID_TABLES}) t "
+                            "WHERE NOT EXISTS ("
+                            "  SELECT 1 FROM pg_class c "
+                            "  CROSS JOIN LATERAL aclexplode(c.relacl) a "
+                            "  WHERE c.oid = t.oid AND a.privilege_type = 'SELECT' "
+                            "    AND a.grantee = 'mytheus_app'::regrole) "
+                            "ORDER BY t.relname"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+
+    assert ungranted == [], (
+        "tables with org_id that mytheus_app cannot read; nothing is inherited since "
+        f"9b2c4d1e6f30, so these need an explicit grant: {ungranted}"
+    )
 
 
 async def test_organizations_carries_no_tenant_isolation_policy(migrated_db):
