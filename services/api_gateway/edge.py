@@ -166,6 +166,7 @@ ROUTE_MAP: dict[str, str] = {
     "/context": "identity-tenant-service",
     "/users": "identity-tenant-service",
     "/taxonomy": "identity-tenant-service",
+    "/tenant-settings": "identity-tenant-service",
     "/clerk/webhook": "identity-tenant-service",
     "/billing": "billing-metering-service",
     "/usage": "billing-metering-service",
