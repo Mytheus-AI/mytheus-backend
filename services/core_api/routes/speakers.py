@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api.schemas import MeetingSpeaker, SpeakerAssign
+from services.core_api.schemas import MeetingSpeaker, MeetingSpeakerList, SpeakerAssign
 
 router = APIRouter(prefix="/api/v1", tags=["speakers"])
 
@@ -42,6 +42,39 @@ async def _fetch_meeting_exists(session: AsyncSession, meeting_id: uuid.UUID) ->
     ).first()
     if row is None:
         raise not_found()
+
+
+@router.get("/meetings/{meeting_id}/speakers", response_model=MeetingSpeakerList)
+async def list_speakers(
+    meeting_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> MeetingSpeakerList:
+    """The read half of the speaker-mapping UI (plan 3-4 section 3.8 step 3), which needs to
+    list the diarized `speaker_id`s and show any existing assignment plus its confidence as
+    advisory before the user overrides it. Only `PATCH` existed, so the UI had a write path and
+    no way to know what it was writing over.
+
+    Ordered by `speaker_id` rather than by confidence or assignment: the list is a stable set of
+    labels the user maps one by one, and reordering it as they assign would move rows out from
+    under the pointer.
+    """
+    await _fetch_meeting_exists(session, meeting_id)
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, meeting_id, speaker_id, user_id, confidence, assignment, "
+                    "created_at, updated_at FROM meeting_speakers "
+                    "WHERE meeting_id = :meeting_id ORDER BY speaker_id ASC"
+                ),
+                {"meeting_id": str(meeting_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return MeetingSpeakerList(items=[MeetingSpeaker(**dict(r)) for r in rows])
 
 
 @router.patch(

@@ -109,6 +109,36 @@ class MeetingPage(BaseModel):
     next_cursor: str | None = None
 
 
+class TranscriptChunk(BaseModel):
+    """One persisted final from `transcript_chunks`, owned by `transcription-service`.
+
+    `speaker_id` is the raw diarized label as Deepgram emitted it, never a resolved user: the
+    `speaker_id` to `user_id` mapping lives in `meeting_speakers` and is served separately, so
+    a client relabels turns by joining the two rather than this endpoint guessing. `redacted`
+    tells a reader that the text it is seeing had PII replaced, which matters when a transcript
+    reads oddly and the reason is redaction rather than mis-transcription.
+    """
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    speaker_id: str
+    start_ms: int
+    end_ms: int
+    text: str
+    is_final: bool
+    confidence: float | None = None
+    redacted: bool = False
+
+
+class TranscriptPage(BaseModel):
+    """Cursor pagination over `(start_ms, id)`, the same tuple the ORDER BY and the table's
+    `(meeting_id, start_ms)` index use, so a page is an index range scan and a concurrent
+    insert cannot shift rows out of a later page."""
+
+    items: list[TranscriptChunk]
+    next_cursor: str | None = None
+
+
 class TeamCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -179,3 +209,16 @@ class MeetingSpeaker(BaseModel):
     assignment: SpeakerAssignment
     created_at: datetime
     updated_at: datetime
+
+
+class MeetingSpeakerList(BaseModel):
+    """Not cursor-paginated, deliberately: a meeting has as many rows here as it had distinct
+    diarized speakers, which the capacity model bounds at single digits. A cursor would be
+    ceremony over a list that is never long enough to need one.
+
+    Declared after `MeetingSpeaker` rather than beside the other page models on purpose: the
+    reverse order made `items` a forward reference that Pydantic would have to resolve at
+    runtime, which `from __future__ import annotations` hides from every static check.
+    """
+
+    items: list[MeetingSpeaker]
