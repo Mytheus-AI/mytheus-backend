@@ -1,0 +1,13 @@
+# Generated OpenAPI documents are compared BYTE FOR BYTE by
+# `scripts/emit_openapi.py --check`, which is the gate that stops a spec from silently
+# going stale. The emitter writes LF; a checkout under the common global
+# `core.autocrlf=true` would rewrite them to CRLF in the working tree.
+#
+# Python's text-mode read normalises newlines, so the check survives either way today.
+# Pinning it anyway, because `mytheus-realtime` lost a whole CI gate to exactly this in
+# the same program (Plan 3-4 gap 14: no .gitattributes, `core.autocrlf` turned every file
+# CRLF, `prettier --check` failed for every Windows developer and was green on Linux).
+# `eol=lf` rather than a bare `text=auto` is the load-bearing part: `text=auto` alone still
+# honours `core.autocrlf` for the working tree.
+design/openapi/*.yaml text eol=lf
+design/.spectral.yaml text eol=lf
