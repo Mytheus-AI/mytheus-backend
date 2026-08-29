@@ -243,9 +243,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_tenant_settings_ner_unavailable_policy_valid", "tenant_settings", type_="check"
-    )
+    # SHORT name, not the rendered one. The `ck` naming convention
+    # (`ck_%(table_name)s_%(constraint_name)s`, libs/shared/db.py) is applied by
+    # `drop_constraint` exactly as it is by `create_check_constraint`, so passing the full
+    # name here yields `ck_tenant_settings_ck_tenant_settings_ner_unavailable_p_6efc` -
+    # double-prefixed, truncated to 63 characters with a hash - and the drop fails with
+    # "constraint ... does not exist". Proven by CI run 33267863927.
+    #
+    # Note that `b7d9f3a55c21` and `866f7eedb0e7` both pass the FULL name to
+    # `drop_constraint` and carry this same defect. It has never been caught because the
+    # `migrations` job only runs `downgrade -1`, so only the head migration's downgrade is
+    # ever exercised; theirs have not run since they stopped being head. Not fixed from here,
+    # since neither is this change's migration, but recorded so the next person to downgrade
+    # past either one knows why it fails.
+    op.drop_constraint("ner_unavailable_policy_valid", "tenant_settings", type_="check")
     op.drop_column("tenant_settings", "ner_unavailable_policy")
     op.drop_index(op.f("ix_pii_tokens_org_id"), table_name="pii_tokens")
     op.drop_table("pii_tokens")
