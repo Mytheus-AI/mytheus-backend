@@ -9,6 +9,18 @@ __pycache__/
 *.env
 !/.env.example
 docker-compose.yml
+# The dev interpreter pin must not enter the image. `.python-version` requests an EXACT
+# patch (3.12.13), the builder runs `FROM python:3.12-slim` with UV_PYTHON_DOWNLOADS=never,
+# and the base image moves to a new 3.12 patch on its own schedule. When it does, `uv sync`
+# fails with "No interpreter found for Python 3.12.13" and is not permitted to download one,
+# so the image build breaks with no commit having touched it - which is exactly how the
+# `docker` job went red on main while every other gate stayed green.
+#
+# Ignoring it here is the fix rather than pinning the base image to the patch, because
+# UV_PYTHON_DOWNLOADS=never already states the intent: use the interpreter the image ships.
+# `requires-python = ">=3.12"` is the constraint that actually matters for the build, and the
+# exact pin stays in place for local development where reproducibility is the point.
+.python-version
 tests/
 PREVIOUS.md
 *.md
