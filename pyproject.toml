@@ -55,6 +55,11 @@ dev = [
     # 83.0.0; the first pip-audit run flagged it. A floor here keeps the finding fixed
     # instead of allowlisted, which is the difference between a scanner and a formality.
     "setuptools>=83.0.0",
+    # Same shape as the setuptools floor above, and the same reasoning. `pip` is transitive
+    # through `pip-api`, which `pip-audit` itself depends on, so the scanner flags its own
+    # dependency tree: 26.1.2 carries PYSEC-2026-3721, fixed in 26.2. Floored rather than
+    # added to an ignore list, because an allowlisted finding is one nobody revisits.
+    "pip>=26.2",
 ]
 
 [build-system]

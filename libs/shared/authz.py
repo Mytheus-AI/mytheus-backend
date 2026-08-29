@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -139,6 +140,29 @@ async def tenant_session(
     async with sessionmaker() as session:
         async with session.begin():
             await set_rls(session, ctx.org_id)
+            yield session
+
+
+@asynccontextmanager
+async def tenant_session_for_org(org_id: UUID) -> AsyncIterator[AsyncSession]:
+    """`tenant_session`'s guarantees for a route that has no user to derive the org from.
+
+    The internal service-to-service surfaces (`libs/shared/internal_auth.py`) authenticate a
+    workload, not a person, so there is no `RequestContext` to read `org_id` off. They name the
+    tenant explicitly instead, and still need every property `tenant_session` provides: one
+    transaction, `app.current_org` bound TRANSACTION-LOCALLY so a pooled connection cannot leak
+    it into the next request, and the route body plus its audit row committing together.
+
+    This is deliberately NOT a FastAPI dependency. A dependency would need the org before the
+    body is parsed, and these routes carry it IN the body - which is also why it is worth
+    restating that RLS is the last line here rather than the only one: this helper will bind
+    whatever org it is given, so the caller's authentication is what stands between a service
+    credential and any tenant. See `internal_auth.py` on exactly how much that is worth.
+    """
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        async with session.begin():
+            await set_rls(session, org_id)
             yield session
 
 
