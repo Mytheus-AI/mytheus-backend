@@ -153,6 +153,22 @@ class Team(BaseModel):
     created_at: datetime
 
 
+class TeamMemberUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Free text rather than an enum: the seeder writes `lead`/`member`, but this column is a
+    # label on the membership, NOT an authorization tier. Authorization reads `rbac_grants`
+    # and nothing else (the Plan 1-2 decision recorded in the status overview), so constraining
+    # this to a fixed vocabulary would imply a permission meaning it does not carry.
+    role: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+
+
+class TeamMember(BaseModel):
+    team_id: uuid.UUID
+    user_id: uuid.UUID
+    role: str | None
+
+
 class DepartmentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

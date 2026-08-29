@@ -512,6 +512,39 @@ components:
       - name
       title: TeamCreate
       type: object
+    TeamMember:
+      properties:
+        role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role
+        team_id:
+          format: uuid
+          title: Team Id
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - team_id
+      - user_id
+      - role
+      title: TeamMember
+      type: object
+    TeamMemberUpsert:
+      additionalProperties: false
+      properties:
+        role:
+          anyOf:
+          - maxLength: 100
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Role
+      title: TeamMemberUpsert
+      type: object
     TranscriptChunk:
       description: 'One persisted final from `transcript_chunks`, owned by `transcription-service`.
 
@@ -1324,6 +1357,157 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Create Team
+      tags:
+      - org-hierarchy
+  /api/v1/teams/{team_id}/members:
+    get:
+      description: 'The roster. Readable by any member: who is on a team is not privileged inside a tenant.'
+      operationId: list_team_members
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TeamMember'
+                title: Response List Team Members
+                type: array
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Team Members
+      tags:
+      - org-hierarchy
+  /api/v1/teams/{team_id}/members/{user_id}:
+    delete:
+      description: '404 when the row is not there, rather than a silent 204.
+
+
+        A no-op reported as success tells an admin the removal happened when the id was simply
+
+        wrong, and membership is exactly the kind of change someone verifies by reading the
+
+        response rather than re-reading the roster.'
+      operationId: remove_team_member
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Remove Team Member
+      tags:
+      - org-hierarchy
+    put:
+      description: 'PUT, not POST, because `(team_id, user_id)` is the primary key.
+
+
+        Adding somebody already on the team is not an error, it is the same end state, and a POST
+
+        would force a caller correcting a role to DELETE first. The upsert makes the request
+
+        naturally idempotent, which is also why it needs no `Idempotency-Key` interaction.'
+      operationId: add_team_member
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamMemberUpsert'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Add Team Member
       tags:
       - org-hierarchy
   /healthz:

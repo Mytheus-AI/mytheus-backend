@@ -87,3 +87,7 @@ ACTION_USER_SYNCED = "user.synced"
 ACTION_USER_PROFILE_UPDATED = "user.profile_updated"
 ACTION_MEETING_CREATED = "meeting.created"
 ACTION_MEETING_UPDATED = "meeting.updated"
+# Membership decides what `get_user_context` reports for a user, which downstream bands use to
+# scope agents and worklog rollups, so who changed it is a compliance fact rather than a log line.
+ACTION_TEAM_MEMBER_ADDED = "team.member_added"
+ACTION_TEAM_MEMBER_REMOVED = "team.member_removed"
