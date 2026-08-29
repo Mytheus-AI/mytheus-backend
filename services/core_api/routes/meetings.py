@@ -182,9 +182,26 @@ async def create_meeting(
 
     participants: list[Participant] = []
     for user_id in dict.fromkeys(body.participant_ids):  # de-duplicated, order preserved
-        # The FK to users plus RLS means a participant id belonging to another tenant is
-        # simply not insertable: the row is invisible, so the reference fails. A cross-tenant
-        # participant is unrepresentable rather than merely rejected.
+        # The existence check is what keeps a participant inside the tenant. The foreign key
+        # does NOT: PostgreSQL runs referential-integrity checks as the referenced table's
+        # owner with RLS bypassed, so `fk_meeting_participants_user_id_users` resolves another
+        # tenant's `users` row even though this transaction cannot SELECT it, and
+        # `meeting_participants`' WITH CHECK passes because the `org_id` written is the
+        # caller's own. This comment previously asserted the opposite and was wrong: the route
+        # returned 201 and persisted a row referencing another tenant's user. See
+        # `test_another_tenants_user_cannot_be_named_as_a_participant`.
+        visible = (
+            await session.execute(text("SELECT 1 FROM users WHERE id = :id"), {"id": str(user_id)})
+        ).first()
+        if visible is None:
+            # 404, not 422: whether a user id exists at all is tenant-confidential, and this
+            # route must not become an oracle for user ids in other tenants. Raising rolls the
+            # whole transaction back, so the meeting does not survive without its participant.
+            raise ProblemDetail(
+                status.HTTP_404_NOT_FOUND,
+                ErrorCode.NOT_FOUND,
+                "No such user in this organization",
+            )
         await session.execute(
             text(
                 "INSERT INTO meeting_participants (meeting_id, user_id, org_id) "

@@ -218,6 +218,50 @@ def test_list_never_shows_another_tenants_meetings(client, tenant_a, tenant_b):
     assert titles == ["B-only"]
 
 
+def test_another_tenants_user_cannot_be_named_as_a_participant(client, tenant_a, tenant_b):
+    """The foreign key does NOT enforce this, contrary to what this route used to claim.
+
+    PostgreSQL runs referential-integrity checks as the referenced table's owner with RLS
+    bypassed, so `fk_meeting_participants_user_id_users` resolves another tenant's `users` row
+    even though this transaction cannot SELECT it. `meeting_participants`' own WITH CHECK
+    passes too, because the `org_id` written is the caller's own - the column crossing the
+    boundary is `user_id`, which no policy constrains.
+
+    Observed before the fix: `201`, with a persisted row whose `org_id` was the caller's tenant
+    and whose `user_id` belonged to the other tenant. It is not a read leak (every read path
+    filters on the denormalized `org_id`), but it is a reference that resolves outside the
+    tenant, which is the property the Plan 1-2 D6 foreign-key work exists to guarantee and
+    which right-to-be-forgotten relies on to find everything.
+    """
+    sign_in(tenant_a)
+
+    resp = client.post(
+        "/api/v1/meetings",
+        json={"title": "Cross-tenant invite", "participant_ids": [str(tenant_b.user_id)]},
+    )
+
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "NOT_FOUND"
+    assert (
+        _sql(
+            "SELECT 1 FROM meeting_participants WHERE user_id = %(u)s",
+            {"u": str(tenant_b.user_id)},
+        )
+        == []
+    ), "nothing may persist, including the meeting's own row"
+    # Scoped to this run's org, not to the title. The suite shares a long-lived dev database
+    # and does not truncate between runs, so a title-only predicate also matches rows a
+    # PREVIOUS run committed - which is exactly how this assertion first appeared to fail
+    # against a fix that was in fact working.
+    assert (
+        _sql(
+            "SELECT 1 FROM meetings WHERE org_id = %(o)s",
+            {"o": str(tenant_a.org_id)},
+        )
+        == []
+    ), "the meeting must roll back with the participant that made it invalid"
+
+
 # --- authorization --------------------------------------------------------------------------
 
 
