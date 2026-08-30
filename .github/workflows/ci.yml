@@ -190,6 +190,14 @@ jobs:
         #
         # Skipped on a push to main, where there is no base to diff against: the comparison is
         # "what this change does to the contract", which only exists for a change.
+        #
+        # `--fail-on ERR` is load-bearing, not a refinement. Without it `oasdiff breaking`
+        # PRINTS the breaking changes and still exits 0, so the `|| failed=1` below never
+        # fires and the gate passes a build it has just finished describing as broken.
+        # Proven both ways against `tufin/oasdiff:latest`: deleting a path reports
+        # `api-path-removed-without-deprecation` and exits 0 without the flag, 1 with it.
+        # This step has never run in Actions (it is pull_request-only and no PR has carried a
+        # spec change), which is why the exit code had never been observed.
         if: github.event_name == 'pull_request'
         run: |
           base="${{ github.event.pull_request.base.sha }}"
@@ -202,7 +210,7 @@ jobs:
               continue
             fi
             echo "--- $name ---"
-            docker run --rm               -v /tmp/oasdiff-base:/base:ro               -v "$PWD/design/openapi:/head:ro"               tufin/oasdiff:latest breaking "/base/$name" "/head/$name" || failed=1
+            docker run --rm               -v /tmp/oasdiff-base:/base:ro               -v "$PWD/design/openapi:/head:ro"               tufin/oasdiff:latest breaking --fail-on ERR "/base/$name" "/head/$name" || failed=1
           done
           if [ "$failed" -ne 0 ]; then
             echo "::error::a breaking API change was detected. Bump to /api/v2 with a"
