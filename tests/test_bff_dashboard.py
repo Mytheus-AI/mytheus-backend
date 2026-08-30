@@ -159,15 +159,15 @@ def test_a_slow_arm_degrades_and_does_not_500(client, monkeypatch):
 
     original = dashboard_mod._arm
 
-    async def slow_arm(name, load):
+    async def slow_arm(name, arm, load):
         if name == "upcoming_meetings":
 
             async def _hang():
                 await asyncio.sleep(5)
                 return []
 
-            return await original(name, _hang)
-        return await original(name, load)
+            return await original(name, arm, _hang)
+        return await original(name, arm, load)
 
     monkeypatch.setattr(dashboard_mod, "_arm", slow_arm)
 
@@ -185,14 +185,14 @@ def test_a_failing_arm_degrades_and_does_not_500(client, monkeypatch):
     _seed_tenant()
     original = dashboard_mod._arm
 
-    async def broken_arm(name, load):
+    async def broken_arm(name, arm, load):
         if name == "upcoming_meetings":
 
             async def _boom():
                 raise RuntimeError("core-api is down")
 
-            return await original(name, _boom)
-        return await original(name, load)
+            return await original(name, arm, _boom)
+        return await original(name, arm, load)
 
     monkeypatch.setattr(dashboard_mod, "_arm", broken_arm)
 

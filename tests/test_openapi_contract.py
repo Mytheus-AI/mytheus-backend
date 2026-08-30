@@ -183,3 +183,143 @@ def test_finalize_is_idempotent() -> None:
     once = finalize(_raw_document())
     twice = finalize(finalize(_raw_document()))
     assert once == twice
+
+
+# --- Response models must carry a real item type -----------------------------------------
+#
+# These exist because the emitted document is what a generated client is built from, and a
+# response model typed `list[dict[str, Any]]` emits as an unconstrained object map: the client
+# gets `Record<string, unknown>[]`, which is WEAKER than the hand-written types the generated
+# client exists to replace. Nothing else in the gate stack can see that. `--check` only asks
+# whether the spec matches the code, `spectral` has no rule about item types, and `oasdiff`
+# calls loosening a response schema non-breaking. So the loosening is invisible to all three
+# and only shows up as a worse frontend, months later.
+
+
+def _bff_dashboard_schemas() -> dict:
+    from services.bff.main import app
+
+    return app.openapi()["components"]["schemas"]
+
+
+def test_the_meetings_arm_declares_its_item_type() -> None:
+    """`MeetingsArm.items` refs a named schema, never a free-form object.
+
+    Guard against the shape this file's header describes: `items` typed as a dict map. The
+    assertion is on the property (an item type exists and is a `$ref`), not on the spelling of
+    one schema name, so renaming `DashboardMeeting` does not silently disarm it.
+    """
+    items = _bff_dashboard_schemas()["MeetingsArm"]["properties"]["items"]
+    assert items["type"] == "array"
+    assert "$ref" in items["items"], (
+        "MeetingsArm.items has no item type. A client generated from this document would "
+        f"receive an untyped array: {items['items']!r}"
+    )
+
+
+def test_the_meetings_arm_item_type_is_fully_specified() -> None:
+    """The referenced schema has real fields, not `additionalProperties`.
+
+    A `$ref` alone is not enough: a `$ref` to a schema that is itself an open object map is
+    the same defect one level down.
+    """
+    schemas = _bff_dashboard_schemas()
+    ref = schemas["MeetingsArm"]["properties"]["items"]["items"]["$ref"]
+    target = schemas[ref.rsplit("/", 1)[-1]]
+
+    assert target.get("additionalProperties") is not True, f"{ref} is an open object map"
+    assert set(target["properties"]) == {
+        "id",
+        "title",
+        "status",
+        "scheduled_start",
+        "scheduled_end",
+        "livekit_room",
+    }
+    # The status union, not a bare string. A client switches on these four values.
+    assert target["properties"]["status"]["enum"] == ["scheduled", "live", "ended", "cancelled"]
+
+
+def test_every_arm_marks_items_required() -> None:
+    """The server always sends `items`, so the schema has to say so.
+
+    With a Pydantic default the field is optional in the schema and a generated client types
+    it `items?:`, forcing every caller to handle an absence the server never produces. That is
+    a contract that understates itself, and callers write dead null-handling against it.
+    """
+    schemas = _bff_dashboard_schemas()
+    for arm in ("MeetingsArm", "UnbuiltArm"):
+        assert "items" in schemas[arm]["required"], arm
+        assert "status" in schemas[arm]["required"], arm
+
+
+def test_the_unbuilt_arms_do_not_invent_an_item_type() -> None:
+    """The other direction, and it matters as much as the first.
+
+    `action_items`, `worklogs` and `decisions` have no read model until Plan 7-9. Emitting a
+    fabricated record type for them would ship an invention to every generated client as
+    though it were the contract, so their item type stays the open object map it is today.
+    """
+    schemas = _bff_dashboard_schemas()
+    unbuilt_items = schemas["UnbuiltArm"]["properties"]["items"]["items"]
+    assert (
+        "$ref" not in unbuilt_items
+    ), f"an item type was invented for the unbuilt arms: {unbuilt_items!r}"
+
+    dashboard = schemas["Dashboard"]["properties"]
+    for arm in ("action_items", "worklogs", "decisions"):
+        assert dashboard[arm]["$ref"].endswith("/UnbuiltArm"), arm
+    assert dashboard["upcoming_meetings"]["$ref"].endswith("/MeetingsArm")
+
+
+def test_the_dashboard_and_core_api_serialize_the_same_column_identically() -> None:
+    """`meetings.scheduled_start` must look the same whichever endpoint returned it.
+
+    Found while typing the dashboard arm: `bff` hand-built its rows and called `.isoformat()`,
+    emitting `+00:00`, while `core-api` returned a Pydantic model and emitted `Z`, for the same
+    column of the same table. Both are valid RFC 3339 and both parse, so nothing was broken -
+    which is why it survived: a client that normalises on one spelling is simply wrong against
+    the other endpoint, and only on UTC values.
+
+    Asserted as agreement between the two models rather than against a literal, so the pair
+    stays consistent even if the serializer's spelling changes under both at once.
+    """
+    import datetime
+    import json
+    import uuid
+
+    from services.bff.dashboard import DashboardMeeting
+    from services.core_api.schemas import Meeting
+
+    when = datetime.datetime(2026, 8, 31, 10, 0, 0, 123456, tzinfo=datetime.UTC)
+    meeting_id = uuid.uuid4()
+
+    arm_row = json.loads(
+        DashboardMeeting(
+            id=meeting_id,
+            title="Standup",
+            status="scheduled",
+            scheduled_start=when,
+            scheduled_end=None,
+            livekit_room=None,
+        ).model_dump_json()
+    )
+    resource = json.loads(
+        Meeting(
+            id=meeting_id,
+            title="Standup",
+            status="scheduled",
+            scheduled_start=when,
+            scheduled_end=None,
+            livekit_room=None,
+            created_by=None,
+            created_at=when,
+            updated_at=when,
+        ).model_dump_json()
+    )
+
+    for field in ("id", "title", "status", "scheduled_start", "scheduled_end", "livekit_room"):
+        assert arm_row[field] == resource[field], (
+            f"{field} differs between /bff/dashboard and /api/v1/meetings for the same row: "
+            f"{arm_row[field]!r} vs {resource[field]!r}"
+        )

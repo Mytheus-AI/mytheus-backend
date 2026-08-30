@@ -12,21 +12,34 @@ Two properties matter more than the payload itself:
 - **The unbuilt arms are shaped, not absent.** `action_items`, `worklogs` and `decisions`
   return `[]` with a settled status today. The frontend renders its empty states against the
   real shape now, so the band that populates them is a data change rather than a UI change.
+
+An arm that HAS data declares its item type, and that is load-bearing rather than tidiness.
+This module is the source the OpenAPI document is emitted from (ADR-0022), so the models here
+are the generated client's types. `items: list[dict[str, Any]]` emits as an unconstrained
+object map, and a client generated from that gets `Record<string, unknown>[]` - strictly
+weaker than the hand-written types the generated client exists to replace. So the typing has
+to be right here, or generating the client makes the frontend worse rather than better.
+
+The three arms with no read model behind them keep the open map on purpose; `UnbuiltArm` says
+why, and why widening it was tried and reverted.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, require_tier, tenant_session
+from services.core_api.schemas import MeetingStatus
 
 logger = logging.getLogger(__name__)
 
@@ -40,23 +53,68 @@ DEFAULT_UPCOMING = 10
 ArmStatus = Literal["ok", "degraded", "empty"]
 
 
-class Arm(BaseModel):
+class DashboardMeeting(BaseModel):
+    """The meetings-panel projection: six columns, not the whole `Meeting` resource.
+
+    `status` is imported from `core-api`, which owns `meetings`, rather than restated here.
+    A second copy of the four values would be a second place for them to drift, and this
+    program has already found two copies of one thing diverging silently.
+    """
+
+    id: uuid.UUID
+    title: str | None
+    status: MeetingStatus
+    scheduled_start: datetime | None
+    scheduled_end: datetime | None
+    livekit_room: str | None
+
+
+class _ArmBase[ItemT](BaseModel):
     """One panel. `status` is part of the contract, not diagnostics.
 
     The client needs to tell "you have no meetings" from "we could not load your meetings",
     because those call for completely different empty states, and guessing from an empty list
     gets it wrong half the time.
+
+    Generic in the item type, but never used parameterized on the wire: each panel is a named
+    subclass below, so the emitted schema carries `MeetingsArm` rather than the `_ArmBase_...`
+    name Pydantic derives for a parameterized generic. `items` has no default, so it is
+    `required` in the schema and a generated client types it as present - which is what the
+    server actually always sends.
     """
 
     status: ArmStatus
-    items: list[dict[str, Any]] = Field(default_factory=list)
+    items: list[ItemT]
+
+
+class MeetingsArm(_ArmBase[DashboardMeeting]):
+    pass
+
+
+class UnbuiltArm(_ArmBase[dict[str, Any]]):
+    """A panel whose read model does not exist yet, so its item type stays open.
+
+    `action_items`, `worklogs` and `decisions` are shaped-but-empty until Plan 7-9 builds the
+    read models behind them. Inventing an item shape now would freeze a wire contract that
+    band has to either honour or break, on no evidence, and a generated client would carry
+    that invention to every caller as though it were measured.
+
+    The item type is therefore left exactly as it is on the wire today, an open object map.
+    Widening it to `Any` was tried and reverted: `oasdiff breaking` reports `object` -> `any`
+    as a `response-property-type-changed` on all three arms, and no client can observe the
+    difference because these arrays are always empty. Loosening a live response type to make
+    an always-empty array read better is not worth a breaking-change entry.
+
+    The name is the signal: when a read model lands, this class is replaced by a typed arm,
+    and that rename is a visible breaking change rather than a silent shape swap.
+    """
 
 
 class Dashboard(BaseModel):
-    upcoming_meetings: Arm
-    action_items: Arm
-    worklogs: Arm
-    decisions: Arm
+    upcoming_meetings: MeetingsArm
+    action_items: UnbuiltArm
+    worklogs: UnbuiltArm
+    decisions: UnbuiltArm
 
     @property
     def degraded(self) -> bool:
@@ -66,23 +124,29 @@ class Dashboard(BaseModel):
         )
 
 
-async def _arm(name: str, load: Callable[[], Awaitable[list[dict[str, Any]]]]) -> Arm:
+async def _arm[ArmT: _ArmBase[Any]](
+    name: str, arm: type[ArmT], load: Callable[[], Awaitable[list[Any]]]
+) -> ArmT:
     """Run one arm under a timeout, degrading rather than raising.
 
     Catches broadly on purpose. Anything an arm can raise - a timeout, a downstream 500, a
     serialization error - has the same correct handling at this layer: show the rest of the
     screen. Letting one arm's exception escape would make the composite strictly worse than
     the six round trips it replaced.
+
+    The arm class is a parameter rather than a fixed type because each panel carries its own
+    item type; `load` stays loosely typed because the arm model is what validates the items,
+    so a loader that returns the wrong shape degrades its own panel instead of the screen.
     """
     try:
         items = await asyncio.wait_for(load(), timeout=ARM_TIMEOUT_SECONDS)
     except TimeoutError:
         logger.warning("bff dashboard: arm %s timed out after %ss", name, ARM_TIMEOUT_SECONDS)
-        return Arm(status="degraded")
+        return arm(status="degraded", items=[])
     except Exception:  # noqa: BLE001 - one arm must never take down the screen
         logger.exception("bff dashboard: arm %s failed", name)
-        return Arm(status="degraded")
-    return Arm(status="ok" if items else "empty", items=items)
+        return arm(status="degraded", items=[])
+    return arm(status="ok" if items else "empty", items=items)
 
 
 @router.get("/dashboard", response_model=Dashboard)
@@ -93,7 +157,7 @@ async def dashboard(
 ) -> Dashboard:
     """One composite payload for the user dashboard, org-scoped by RLS."""
 
-    async def upcoming_meetings() -> list[dict[str, Any]]:
+    async def upcoming_meetings() -> list[DashboardMeeting]:
         rows = (
             (
                 await session.execute(
@@ -112,21 +176,22 @@ async def dashboard(
             .mappings()
             .all()
         )
+        # Built as models rather than dicts so the columns are checked here, at the one place
+        # that knows what the SELECT returned, instead of arriving at the client as whatever
+        # the driver happened to hand back.
         return [
-            {
-                "id": str(r["id"]),
-                "title": r["title"],
-                "status": r["status"],
-                "scheduled_start": (
-                    r["scheduled_start"].isoformat() if r["scheduled_start"] else None
-                ),
-                "scheduled_end": r["scheduled_end"].isoformat() if r["scheduled_end"] else None,
-                "livekit_room": r["livekit_room"],
-            }
+            DashboardMeeting(
+                id=r["id"],
+                title=r["title"],
+                status=r["status"],
+                scheduled_start=r["scheduled_start"],
+                scheduled_end=r["scheduled_end"],
+                livekit_room=r["livekit_room"],
+            )
             for r in rows
         ]
 
-    async def not_yet_built() -> list[dict[str, Any]]:
+    async def not_yet_built() -> list[Any]:
         """Shaped and settled, not degraded.
 
         `empty` is the honest status: these read models genuinely have nothing in them yet, as
@@ -137,10 +202,10 @@ async def dashboard(
 
     # Arms are gathered concurrently, so the screen costs the slowest arm rather than the sum.
     meetings_arm, actions_arm, worklogs_arm, decisions_arm = await asyncio.gather(
-        _arm("upcoming_meetings", upcoming_meetings),
-        _arm("action_items", not_yet_built),
-        _arm("worklogs", not_yet_built),
-        _arm("decisions", not_yet_built),
+        _arm("upcoming_meetings", MeetingsArm, upcoming_meetings),
+        _arm("action_items", UnbuiltArm, not_yet_built),
+        _arm("worklogs", UnbuiltArm, not_yet_built),
+        _arm("decisions", UnbuiltArm, not_yet_built),
     )
 
     return Dashboard(

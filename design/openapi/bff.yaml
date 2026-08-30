@@ -6,49 +6,75 @@
 # regeneration and blocks the build until then.
 components:
   schemas:
-    Arm:
-      description: 'One panel. `status` is part of the contract, not diagnostics.
-
-
-        The client needs to tell "you have no meetings" from "we could not load your meetings",
-
-        because those call for completely different empty states, and guessing from an empty list
-
-        gets it wrong half the time.'
-      properties:
-        items:
-          items:
-            additionalProperties: true
-            type: object
-          title: Items
-          type: array
-        status:
-          enum:
-          - ok
-          - degraded
-          - empty
-          title: Status
-          type: string
-      required:
-      - status
-      title: Arm
-      type: object
     Dashboard:
       properties:
         action_items:
-          $ref: '#/components/schemas/Arm'
+          $ref: '#/components/schemas/UnbuiltArm'
         decisions:
-          $ref: '#/components/schemas/Arm'
+          $ref: '#/components/schemas/UnbuiltArm'
         upcoming_meetings:
-          $ref: '#/components/schemas/Arm'
+          $ref: '#/components/schemas/MeetingsArm'
         worklogs:
-          $ref: '#/components/schemas/Arm'
+          $ref: '#/components/schemas/UnbuiltArm'
       required:
       - upcoming_meetings
       - action_items
       - worklogs
       - decisions
       title: Dashboard
+      type: object
+    DashboardMeeting:
+      description: 'The meetings-panel projection: six columns, not the whole `Meeting` resource.
+
+
+        `status` is imported from `core-api`, which owns `meetings`, rather than restated here.
+
+        A second copy of the four values would be a second place for them to drift, and this
+
+        program has already found two copies of one thing diverging silently.'
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        livekit_room:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Livekit Room
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      - status
+      - scheduled_start
+      - scheduled_end
+      - livekit_room
+      title: DashboardMeeting
       type: object
     DepartmentNode:
       properties:
@@ -160,6 +186,25 @@ components:
       - scheduled_start
       - scheduled_end
       title: MeetingRef
+      type: object
+    MeetingsArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardMeeting'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: MeetingsArm
       type: object
     Member:
       description: '`role` is the domain role from `users.role` (e.g. "engineer"); `role_in_team` is
@@ -362,6 +407,52 @@ components:
       - name
       - department_id
       title: TeamRef
+      type: object
+    UnbuiltArm:
+      description: 'A panel whose read model does not exist yet, so its item type stays open.
+
+
+        `action_items`, `worklogs` and `decisions` are shaped-but-empty until Plan 7-9 builds the
+
+        read models behind them. Inventing an item shape now would freeze a wire contract that
+
+        band has to either honour or break, on no evidence, and a generated client would carry
+
+        that invention to every caller as though it were measured.
+
+
+        The item type is therefore left exactly as it is on the wire today, an open object map.
+
+        Widening it to `Any` was tried and reverted: `oasdiff breaking` reports `object` -> `any`
+
+        as a `response-property-type-changed` on all three arms, and no client can observe the
+
+        difference because these arrays are always empty. Loosening a live response type to make
+
+        an always-empty array read better is not worth a breaking-change entry.
+
+
+        The name is the signal: when a read model lands, this class is replaced by a typed arm,
+
+        and that rename is a visible breaking change rather than a silent shape swap.'
+      properties:
+        items:
+          items:
+            additionalProperties: true
+            type: object
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: UnbuiltArm
       type: object
     ValidationError:
       properties:
