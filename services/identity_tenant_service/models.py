@@ -145,7 +145,7 @@ class TeamMember(Base, TenantMixin):
         UUID(as_uuid=True), ForeignKey("teams.id"), primary_key=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True, index=True
     )
     # Membership role within the team (lead, member). Distinct again from rbac_grants.tier.
     role: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -158,7 +158,7 @@ class Department(Base, TenantMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, index=True
     )
 
 
