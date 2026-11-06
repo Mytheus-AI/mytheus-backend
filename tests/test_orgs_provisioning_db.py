@@ -8,10 +8,9 @@ Two layers, because the request-path role cannot write the tenant root today:
 
 - `provision_tenant` is driven directly as `mytheus_admin` (the operator seam, which holds DML
   on `organizations`), proving the six-table birth commits and rolls back as one unit.
-- The HTTP route runs as `mytheus_app`, which migration `a1c4e7f20b18` limits to column SELECT
-  on `organizations`. The route must answer `501 NOT_IMPLEMENTED` and leave NOTHING behind,
-  including no half-written audit row. When a migration grants the INSERT, that test is the one
-  to flip to a 201 assertion.
+- The HTTP route runs as `mytheus_app`. Migration `1afe4928b214` (ADR-0025) grants it a
+  column-level INSERT on `organizations`, so `POST /orgs` answers `201` and creates the whole
+  tenant in one commit.
 
 Real Clerk is never called: `CLERK_SECRET_KEY` is unset in tests, so
 `sync_internal_org_id_to_clerk` logs and returns False (see `libs/shared/clerk_admin.py`).
@@ -99,7 +98,9 @@ async def test_provision_tenant_writes_the_whole_tenant_in_one_commit() -> None:
         "outbox": 1,
     }
     grant = _sql("SELECT user_id, tier FROM rbac_grants WHERE org_id = %(o)s", {"o": str(org_id)})
-    assert grant == [{"user_id": result.owner_user_id, "tier": "owner"}]
+    assert [{"user_id": str(g["user_id"]), "tier": g["tier"]} for g in grant] == [
+        {"user_id": str(result.owner_user_id), "tier": "owner"}
+    ]
     residency = _sql("SELECT region FROM data_residency WHERE org_id = %(o)s", {"o": str(org_id)})
     assert residency == [{"region": "us"}]
 
@@ -152,6 +153,12 @@ class _Principal:
 
 
 PRINCIPAL = _Principal()
+
+
+@pytest.fixture(autouse=True)
+def _never_call_real_clerk(monkeypatch) -> None:
+    # A developer's .env may hold a real CLERK_SECRET_KEY; provisioning would then hit Clerk.
+    monkeypatch.delenv("CLERK_SECRET_KEY", raising=False)
 
 
 @pytest.fixture(scope="module")
@@ -216,7 +223,7 @@ def _sign_in(t: dict[str, Any]) -> None:
     PRINCIPAL.clerk_org, PRINCIPAL.clerk_user = t["clerk_org"], t["clerk_user"]
 
 
-def test_post_orgs_as_mytheus_app_is_501_and_writes_nothing(client, monkeypatch) -> None:
+def test_post_orgs_as_mytheus_app_creates_the_tenant(client, monkeypatch) -> None:
     operator = _seed("owner")
     monkeypatch.setenv(orgs_routes.OPERATOR_ORGS_ENV, str(operator["org_id"]))
     _sign_in(operator)
@@ -234,13 +241,22 @@ def test_post_orgs_as_mytheus_app_is_501_and_writes_nothing(client, monkeypatch)
             "owner": {"clerk_user_id": f"user_{uuid.uuid4().hex[:12]}", "email": "o@n.test"},
         },
     )
-    assert r.status_code == 501, r.text
-    assert r.json()["code"] == "NOT_IMPLEMENTED"
-    assert _sql("SELECT 1 FROM organizations WHERE slug = %(s)s", {"s": slug}) == []
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["slug"] == slug
+    created = uuid.UUID(body["id"])
+    assert _counts(created) == {
+        "organizations": 1,
+        "tenant_settings": 1,
+        "data_residency": 1,
+        "users": 1,
+        "rbac_grants": 1,
+        "outbox": 1,
+    }
     after = _sql(
         "SELECT count(*) AS n FROM audit_logs WHERE org_id = %(o)s", {"o": str(operator["org_id"])}
     )[0]["n"]
-    assert after == before  # the operator-side audit row rolled back with everything else
+    assert after == before + 1  # the operator-side org.provisioned audit row committed with it
 
 
 def test_get_orgs_returns_the_callers_tenant(client) -> None:
