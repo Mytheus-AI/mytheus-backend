@@ -91,3 +91,6 @@ ACTION_MEETING_UPDATED = "meeting.updated"
 # scope agents and worklog rollups, so who changed it is a compliance fact rather than a log line.
 ACTION_TEAM_MEMBER_ADDED = "team.member_added"
 ACTION_TEAM_MEMBER_REMOVED = "team.member_removed"
+# An RBAC tier change is a privilege change: `PUT/DELETE /rbac/grants/{user_id}`.
+ACTION_RBAC_GRANTED = "rbac.granted"
+ACTION_RBAC_REVOKED = "rbac.revoked"

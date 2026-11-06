@@ -36,17 +36,12 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.audit import audit
+from libs.shared.audit import ACTION_RBAC_GRANTED, ACTION_RBAC_REVOKED, audit
 from libs.shared.authz import TIER_RANK, RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.identity_tenant_service.schemas import RbacGrant, RbacGrantPage, RbacGrantUpdate
 
 router = APIRouter(tags=["rbac"])
-
-# Kept here rather than in `libs/shared/audit.py`'s vocabulary only because that module is
-# outside this change's scope; they belong there and should move (same values).
-ACTION_RBAC_GRANTED = "rbac.granted"
-ACTION_RBAC_REVOKED = "rbac.revoked"
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
