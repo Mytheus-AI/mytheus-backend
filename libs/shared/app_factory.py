@@ -18,11 +18,18 @@ from libs.shared.openapi import install as install_openapi
 from libs.shared.telemetry import setup_telemetry
 
 
-def create_app(service_name: str) -> FastAPI:
+def create_app(service_name: str, *, idempotency: bool = True) -> FastAPI:
+    """`idempotency=False` is for a pure proxy (api-gateway). The Idempotency-Key header is
+    forwarded to the service behind it, which owns the replay. Two layers sharing one
+    org-scoped key make the inner one see the outer's in-progress marker and answer 409 to a
+    perfectly fresh request."""
     app = FastAPI(title=service_name, version="1.0.0")
 
-    redis = from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False)
-    app.add_middleware(IdempotencyMiddleware, redis=redis)  # replay mutating POST/PUT/PATCH
+    if idempotency:
+        redis = from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
+        )
+        app.add_middleware(IdempotencyMiddleware, redis=redis)  # replay mutating POST/PUT/PATCH
     add_exception_handlers(app)
     setup_telemetry(app, service_name=service_name)  # no-op unless OTEL endpoint set
 

@@ -15,7 +15,8 @@ from libs.shared.app_factory import create_app
 from services.api_gateway import proxy
 from services.api_gateway.edge import edge_auth
 
-app = create_app("api-gateway")
+# No idempotency layer here: the gateway only proxies, and the service behind it owns the replay.
+app = create_app("api-gateway", idempotency=False)
 app.middleware("http")(edge_auth)
 
 # Forwarding, mounted last so `/healthz` and the docs routes this process serves itself are
