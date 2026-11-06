@@ -285,8 +285,8 @@ def test_apply_lifecycle_puts_the_whole_configuration():
     calls: list[dict[str, Any]] = []
     client = SimpleNamespace(put_bucket_lifecycle_configuration=lambda **kw: calls.append(kw))
     rules = bucket_lifecycle.build_lifecycle_rules(tenant_retention_days={})
-    bucket_lifecycle.apply_lifecycle(client, bucket="nexus-recordings", rules=rules)
-    assert calls == [{"Bucket": "nexus-recordings", "LifecycleConfiguration": {"Rules": rules}}]
+    bucket_lifecycle.apply_lifecycle(client, bucket="mytheus-recordings", rules=rules)
+    assert calls == [{"Bucket": "mytheus-recordings", "LifecycleConfiguration": {"Rules": rules}}]
 
 
 def test_cli_dry_run_prints_rules(tmp_path, capsys, monkeypatch):
@@ -296,7 +296,7 @@ def test_cli_dry_run_prints_rules(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("RECORDING_BUCKET", raising=False)
     assert bucket_lifecycle.main(["--tenant-retention", str(path), "--dry-run"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["Bucket"] == "nexus-recordings"
+    assert out["Bucket"] == "mytheus-recordings"
     assert out["Rules"][1]["Expiration"]["Days"] == 365
 
 

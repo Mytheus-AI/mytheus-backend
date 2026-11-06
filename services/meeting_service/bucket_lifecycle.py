@@ -1,6 +1,6 @@
-"""Lifecycle (retention) configuration for the `nexus-recordings` bucket.
+"""Lifecycle (retention) configuration for the `mytheus-recordings` bucket.
 
-Canon `_canon/02-data-model.md` §6: `nexus-recordings`, key prefix `{org_id}/{meeting_id}/`,
+Canon `_canon/02-data-model.md` §6: `mytheus-recordings`, key prefix `{org_id}/{meeting_id}/`,
 "Per-tenant `retention_days_transcripts`; transition to cold tier after 30d; purge on RTBF".
 Built as plain S3 lifecycle rules so the same config applies to Cloudflare R2 (ADR-0023),
 MinIO, and AWS S3 through boto3:
@@ -59,7 +59,7 @@ def build_lifecycle_rules(
     if cold_after_days < 1:
         raise ValueError("cold_after_days must be >= 1")
     base: dict[str, Any] = {
-        "ID": "nexus-recordings-cold-tier",
+        "ID": "mytheus-recordings-cold-tier",
         "Filter": {"Prefix": ""},
         "Status": "Enabled",
         "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": ABORT_MULTIPART_DAYS},
@@ -118,7 +118,7 @@ def apply_lifecycle(s3_client: Any, *, bucket: str, rules: Sequence[Mapping[str,
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Apply nexus-recordings lifecycle rules")
+    parser = argparse.ArgumentParser(description="Apply mytheus-recordings lifecycle rules")
     parser.add_argument("--tenant-retention", required=True, help="JSON file: {org_id: days}")
     parser.add_argument("--default-retention-days", type=int, default=DEFAULT_RETENTION_DAYS)
     parser.add_argument("--cold-after-days", type=int, default=COLD_AFTER_DAYS)

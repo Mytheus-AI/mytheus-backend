@@ -1,7 +1,7 @@
 # meeting-service
 
 The LiveKit transport adapter: room-token mint, LiveKit webhooks, the server-side audio tap
-to `transcription-service`, and recording egress into `nexus-recordings`. Everything that
+to `transcription-service`, and recording egress into `mytheus-recordings`. Everything that
 touches the LiveKit SDK lives in `transport.py`, behind `MeetingTransport`
 (`tests/test_livekit_import_boundary.py` enforces that).
 
@@ -14,7 +14,7 @@ touches the LiveKit SDK lives in `transport.py`, behind `MeetingTransport`
 | `audio_tap.py` | Provider-neutral tap plumbing: reconnecting WebSocket sink, backoff, tap registry |
 | `audio_tap_worker.py` | Dedicated tap worker (own process: `python -m services.meeting_service.audio_tap_worker`), `AUDIO_TAP_MODE` |
 | `room_lifecycle.py` | What `room_started` / `room_finished` do: consent + recording gates, tap, egress |
-| `storage.py` | `nexus-recordings` key convention, `RecordingConfig` |
+| `storage.py` | `mytheus-recordings` key convention, `RecordingConfig` |
 | `bucket_lifecycle.py` | Bucket lifecycle rules + CLI (cold tier at 30 d, per-tenant expiry) |
 
 ## Room lifecycle

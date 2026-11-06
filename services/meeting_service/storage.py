@@ -1,4 +1,4 @@
-"""The `nexus-recordings` key convention, and the `recording_ref` builder.
+"""The `mytheus-recordings` key convention, and the `recording_ref` builder.
 
 Deviation (Task 4 brief): no S3 bucket and no LiveKit account exist for this build, and this
 task does not create one. What it must get right, for real, is the KEY CONVENTION -
@@ -37,8 +37,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-# Canon (CLAUDE.md service map): meeting-service owns the `nexus-recordings` bucket.
-RECORDINGS_BUCKET = "nexus-recordings"
+# Canon (CLAUDE.md service map): meeting-service owns the `mytheus-recordings` bucket.
+RECORDINGS_BUCKET = "mytheus-recordings"
 
 
 class RecordingStorage(Protocol):
@@ -48,7 +48,8 @@ class RecordingStorage(Protocol):
 @dataclass(frozen=True)
 class KeyConventionRecordingStorage:
     """The real key convention. `bucket` is carried for callers that need the full location
-    (e.g. a future presigned-URL reader) without baking `nexus-recordings` into every call site."""
+    (e.g. a future presigned-URL reader) without baking `mytheus-recordings` into every call
+    site."""
 
     bucket: str = RECORDINGS_BUCKET
 

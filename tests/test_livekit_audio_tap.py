@@ -275,7 +275,7 @@ async def test_start_egress_writes_room_composite_to_the_tenant_prefix(fake_lkap
     assert req.room_name == "meeting-x"
     out = req.file_outputs[0]
     assert out.filepath == f"{org}/{meeting}/{{time}}.mp4"
-    assert out.s3.bucket == "nexus-recordings"
+    assert out.s3.bucket == "mytheus-recordings"
     assert out.s3.endpoint == "https://acct.r2.cloudflarestorage.test"
     assert out.s3.force_path_style is True
     assert fake_lkapi.closed == [True]
@@ -305,5 +305,5 @@ def test_recording_config_from_env_defaults_off_and_hides_secrets():
         }
     )
     assert cfg.enabled and cfg.s3_configured and cfg.audio_only
-    assert cfg.bucket == "nexus-recordings"
+    assert cfg.bucket == "mytheus-recordings"
     assert "shh-test" not in repr(cfg) and "AKIA_TEST" not in repr(cfg)
