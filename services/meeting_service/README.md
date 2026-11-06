@@ -12,6 +12,7 @@ touches the LiveKit SDK lives in `transport.py`, behind `MeetingTransport`
 | `consumer.py` | `meeting-events` consumer (own process: `python -m services.meeting_service.consumer`) |
 | `transport.py` | `MeetingTransport`, `LiveKitTransport` (incl. `LiveKitAudioTap`, egress), `FakeTransport` |
 | `audio_tap.py` | Provider-neutral tap plumbing: reconnecting WebSocket sink, backoff, tap registry |
+| `audio_tap_worker.py` | Dedicated tap worker (own process: `python -m services.meeting_service.audio_tap_worker`), `AUDIO_TAP_MODE` |
 | `room_lifecycle.py` | What `room_started` / `room_finished` do: consent + recording gates, tap, egress |
 | `storage.py` | `nexus-recordings` key convention, `RecordingConfig` |
 | `bucket_lifecycle.py` | Bucket lifecycle rules + CLI (cold tier at 30 d, per-tenant expiry) |
@@ -34,8 +35,33 @@ Consent: when `tenant_settings.consent_required` is true, the tap forwards only 
 with `meeting_participants.consented_at` set (and does not start if nobody has consented), and
 recording starts only if every participant has consented.
 
-`room_finished` stops the tap and the egress. Taps are held in-process, so webhooks must reach
-the replica that runs the tap (one replica today; a dedicated tap worker is the follow-up).
+`room_finished` stops the tap and the egress.
+
+## Where taps run: `AUDIO_TAP_MODE`
+
+| Mode | Default when | Who runs the tap |
+| --- | --- | --- |
+| `in-process` | `ENVIRONMENT` is `development`/`dev`/`local`/`test` | The API process (`room_lifecycle.TAPS`). Correct with ONE replica only. |
+| `worker` | everything else, including `ENVIRONMENT` unset | `python -m services.meeting_service.audio_tap_worker` (run 1..N). |
+
+An unknown value makes the API and the worker refuse to start.
+
+In `worker` mode the verified, deduped `room_started` webhook still starts recording egress
+itself, but for the tap it only writes a trigger to Redis,
+`nexus:{org_id}:tap:want:{meeting_id}` = `{org_id, meeting_id, room, room_sid}` (12 h safety
+TTL). `room_finished` deletes it (compare-and-delete on `room_sid`, so a late event for an
+old room instance cannot cancel the new one) and stops egress. No new topic or Avro change.
+
+Each worker polls the triggers every 2 s and claims a free room with
+`SET nexus:{org_id}:tap:{meeting_id} <worker_id> NX PX TAP_CLAIM_TTL_SECONDS` (default 30), so
+exactly one worker taps a room. The owner refreshes the TTL on every poll. A crashed worker's
+claim expires and another worker re-claims the room on its next poll; a worker that finds its
+claim gone or taken stops its tap. On SIGTERM a worker stops its taps and releases its claims
+for immediate takeover. Consent gate and `INTERNAL_AUDIO_TOKEN` checks are the same code path
+as in-process (`room_lifecycle.start_audio_tap`, gate reloaded at claim time). A tap refused
+by the gate, or one that ends because the room emptied, drops its trigger and is not retried
+until the next `room_started`, matching in-process behaviour. `METRICS_PORT` exposes the
+worker's metrics.
 
 ## `/internal/audio` wire contract
 
@@ -60,6 +86,7 @@ lifecycle configuration.
 
 `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `INTERNAL_AUDIO_TOKEN`,
 `TRANSCRIPTION_AUDIO_URL`, `AUDIO_TAP_BACKOFF_BASE_SECONDS`, `AUDIO_TAP_BACKOFF_CAP_SECONDS`,
+`AUDIO_TAP_MODE`, `TAP_CLAIM_TTL_SECONDS`, `METRICS_PORT`,
 `RECORDING_ENABLED`, `RECORDING_BUCKET`, `RECORDING_AUDIO_ONLY`, `RECORDING_COLD_STORAGE_CLASS`,
 `S3_ENDPOINT_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
 `S3_FORCE_PATH_STYLE`. See `../../.env.example`.
@@ -70,7 +97,8 @@ No LiveKit account, bucket, or running transcription-service is needed for the u
 
 ```bash
 uv run pytest tests/test_meeting_audio_tap.py tests/test_livekit_audio_tap.py \
-  tests/test_meeting_room_lifecycle.py tests/test_meeting_transport.py -q
+  tests/test_meeting_room_lifecycle.py tests/test_meeting_transport.py \
+  tests/test_audio_tap_worker.py tests/test_worker_metrics_port.py -q
 ```
 
 `tests/test_livekit_webhook.py` needs the Postgres test container.

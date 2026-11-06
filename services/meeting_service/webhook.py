@@ -50,6 +50,12 @@ rejoin after the room closed, and each new room instance must start a new tap.
 Internal participants (the tap itself, LiveKit egress recorders) produce participant
 webhooks too. Those are a 200 no-op here, so the tap is never counted as an attendee.
 
+AUDIO_TAP_MODE. In `in-process` mode (development default) the background task above joins
+the room in this process, exactly as before. In `worker` mode (default elsewhere) it instead
+records the trigger in Redis (`audio_tap_worker.record_tap_wanted` / `clear_tap_wanted`, keyed
+`nexus:{org_id}:tap:want:{meeting_id}`) and the dedicated audio tap worker claims and runs the
+tap; recording egress still starts/stops here in both modes. See `audio_tap_worker.py`.
+
 `egress_ended` stores the REAL uploaded object key from the egress file result when it sits
 under this meeting's `{org_id}/{meeting_id}/` prefix (see `storage.py` for why the egress id
 cannot be in the filename), falling back to `recording_key` otherwise.
@@ -77,6 +83,13 @@ from libs.shared.org_resolver import resolve_org_by_id
 from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 from services.meeting_service.audio_tap import AudioTapConfig, is_internal_identity
+from services.meeting_service.audio_tap_worker import (
+    MODE_IN_PROCESS,
+    TapWant,
+    audio_tap_mode,
+    clear_tap_wanted,
+    record_tap_wanted,
+)
 from services.meeting_service.room_lifecycle import (
     RoomStarted,
     load_consent_gate,
@@ -263,6 +276,7 @@ async def _apply_egress_ended(
 @dataclass(frozen=True)
 class _RoomFinished:
     org_id: uuid.UUID
+    meeting_id: uuid.UUID
     room: str
     egress_id: str | None
 
@@ -291,7 +305,7 @@ async def _load_room_lifecycle(
     meeting_id = uuid.UUID(str(found["meeting_id"]))
     egress_id = str(found["egress_id"]) if found["egress_id"] else None
     if event_type == "room_finished":
-        return _RoomFinished(org_id=org_id, room=room, egress_id=egress_id)
+        return _RoomFinished(org_id=org_id, meeting_id=meeting_id, room=room, egress_id=egress_id)
     gate = await load_consent_gate(session, org_id, meeting_id)
     return RoomStarted(
         org_id=org_id,
@@ -354,6 +368,30 @@ async def _apply_participant_event(
             idempotency_key=dedupe_key,
         ),
     )
+
+
+async def _tap_trigger(
+    *, org_id: uuid.UUID, meeting_id: uuid.UUID, room: str, room_sid: str, started: bool
+) -> None:
+    """Worker mode: record (room_started) or clear (room_finished) the tap want. Runs after the
+    response like the in-process tap does, and likewise never raises into the webhook."""
+    redis = from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False)
+    try:
+        if started:
+            await record_tap_wanted(
+                redis, TapWant(org_id=org_id, meeting_id=meeting_id, room=room, room_sid=room_sid)
+            )
+        else:
+            await clear_tap_wanted(redis, org_id=org_id, meeting_id=meeting_id, room_sid=room_sid)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "audio tap: could not %s the worker trigger (org=%s meeting=%s)",
+            "record" if started else "clear",
+            org_id,
+            meeting_id,
+        )
+    finally:
+        await redis.aclose()  # type: ignore[attr-defined]
 
 
 @router.post("/livekit/webhook", status_code=status.HTTP_200_OK)
@@ -435,8 +473,20 @@ async def livekit_webhook(
 
         await record_consumed(session, CONSUMER_GROUP, str(org_id), dedupe_key)
 
-    # Committed. The tap/egress work is network I/O, so it runs after the response.
+    # Committed. The tap/egress work is network I/O, so it runs after the response. In
+    # worker mode the tap leg is only a Redis trigger; the audio tap worker runs the tap.
+    in_process = audio_tap_mode() == MODE_IN_PROCESS
+    room_sid = _room_sid(evt) or "-"
     if isinstance(lifecycle, RoomStarted):
+        if not in_process:
+            background_tasks.add_task(
+                _tap_trigger,
+                org_id=lifecycle.org_id,
+                meeting_id=lifecycle.meeting_id,
+                room=lifecycle.room,
+                room_sid=room_sid,
+                started=True,
+            )
         background_tasks.add_task(
             on_room_started,
             sessionmaker,
@@ -444,14 +494,25 @@ async def livekit_webhook(
             lifecycle,
             tap_config=AudioTapConfig.from_env(),
             recording=RecordingConfig.from_env(),
+            run_tap=in_process,
         )
     elif isinstance(lifecycle, _RoomFinished):
+        if not in_process:
+            background_tasks.add_task(
+                _tap_trigger,
+                org_id=lifecycle.org_id,
+                meeting_id=lifecycle.meeting_id,
+                room=lifecycle.room,
+                room_sid=room_sid,
+                started=False,
+            )
         background_tasks.add_task(
             on_room_finished,
             transport,
             org_id=lifecycle.org_id,
             room=lifecycle.room,
             egress_id=lifecycle.egress_id,
+            run_tap=in_process,
         )
 
     return Response(status_code=status.HTTP_200_OK)

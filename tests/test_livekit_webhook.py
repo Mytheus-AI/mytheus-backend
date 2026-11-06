@@ -25,6 +25,7 @@ Acceptance checks covered here (Task 4 brief):
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -452,6 +453,7 @@ def _recording_env(monkeypatch):
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.setenv("INTERNAL_AUDIO_TOKEN", "test-internal-token")
+    monkeypatch.setenv("AUDIO_TAP_MODE", "in-process")
 
 
 def _room_with_sid(name: str, org_id: uuid.UUID, sid: str) -> SimpleNamespace:
@@ -513,6 +515,48 @@ def test_room_started_with_consent_required_and_none_recorded_starts_nothing(
     assert resp.status_code == 200, resp.text
     methods = [c.method for c in FAKE.calls]
     assert "subscribe_room_audio" not in methods and "start_egress" not in methods
+
+
+def test_worker_mode_records_the_tap_trigger_and_never_taps_in_process(
+    client, _recording_env, monkeypatch
+):
+    """AUDIO_TAP_MODE=worker: the API records the want in Redis and still starts/stops egress,
+    but never joins the room itself; room_finished clears the want."""
+    import asyncio
+
+    from redis.asyncio import from_url
+
+    from services.meeting_service.audio_tap_worker import TapWant, want_key
+
+    monkeypatch.setenv("AUDIO_TAP_MODE", "worker")
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.calls.clear()
+    FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_W"))
+
+    async def _get() -> bytes | None:
+        r = from_url(os.environ["REDIS_URL"], decode_responses=False)
+        try:
+            return await r.get(want_key(org_id, meeting_id))
+        finally:
+            await r.aclose()
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert resp.status_code == 200, resp.text
+    methods = [c.method for c in FAKE.calls]
+    assert "subscribe_room_audio" not in methods
+    assert "start_egress" in methods
+    raw = asyncio.run(_get())
+    assert raw is not None
+    assert TapWant.decode(raw) == TapWant(
+        org_id=org_id, meeting_id=meeting_id, room=room, room_sid="RM_W"
+    )
+
+    FAKE.verify_webhook_result = _evt("room_finished", room=_room_with_sid(room, org_id, "RM_W"))
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert resp.status_code == 200, resp.text
+    assert FAKE.calls[-1].method == "stop_egress"
+    assert asyncio.run(_get()) is None
 
 
 def test_the_taps_own_participant_events_are_ignored(client):

@@ -19,11 +19,18 @@ RECORDING GATE. No tenant-level recording setting exists in `tenant_settings`, s
 `RECORDING_ENABLED` (env, default false) gates it, plus the S3 settings having been
 provided. Either missing means no egress, logged, never an error.
 
-STATE. Taps live in this process (`TAPS`), which is a disclosed exception to the
-"stateless services" invariant: a running tap is a live media connection, not
-authoritative state - losing it on a pod restart loses captions until the room's next
-`room_started`, never data. Webhooks must reach the replica that runs the tap; with more
-than one meeting-service replica that needs a dedicated tap worker (follow-up).
+STATE. Where a tap runs is `AUDIO_TAP_MODE` (`audio_tap_worker.audio_tap_mode`):
+
+- `in-process` (the development default): taps live in this API process (`TAPS`). Only
+  correct with ONE meeting-service replica, because the `room_finished` webhook must reach the
+  replica that holds the tap.
+- `worker` (the default everywhere else): the webhook only records the trigger in Redis and
+  calls the hooks below with `run_tap=False`, so the API stays stateless; the dedicated
+  `python -m services.meeting_service.audio_tap_worker` process claims the room
+  (`nexus:{org_id}:tap:{meeting_id}`, TTL + heartbeat) and runs the tap through the same
+  `start_audio_tap` (same consent gate, same `INTERNAL_AUDIO_TOKEN` check).
+
+Recording egress is a stateless LiveKit API call, so it stays in the webhook in both modes.
 """
 
 from __future__ import annotations
@@ -205,17 +212,20 @@ async def on_room_started(
     tap_config: AudioTapConfig | None = None,
     recording: RecordingConfig | None = None,
     sink_factory: AudioSinkFactory | None = None,
+    run_tap: bool = True,
 ) -> None:
     """Never raises: a failure in one leg (tap or egress) is logged and does not stop the
-    other, and nothing propagates back into the webhook response."""
-    try:
-        await start_audio_tap(
-            transport, taps, started, tap_config=tap_config, sink_factory=sink_factory
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "audio tap: start failed (org=%s meeting=%s)", started.org_id, started.meeting_id
-        )
+    other, and nothing propagates back into the webhook response. `run_tap=False` (worker
+    mode) skips the tap leg: the audio tap worker owns it."""
+    if run_tap:
+        try:
+            await start_audio_tap(
+                transport, taps, started, tap_config=tap_config, sink_factory=sink_factory
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "audio tap: start failed (org=%s meeting=%s)", started.org_id, started.meeting_id
+            )
     try:
         await start_recording(
             session_factory,
@@ -239,13 +249,16 @@ async def on_room_finished(
     room: str,
     egress_id: str | None,
     taps: TapManager = TAPS,
+    run_tap: bool = True,
 ) -> None:
     """Stop the tap and the egress. LiveKit also ends a room-composite egress on its own when
-    the room closes, so a failed `stop_egress` is logged at info, not treated as an error."""
-    try:
-        await taps.stop(org_id=org_id, room=room)
-    except Exception:  # noqa: BLE001
-        logger.exception("audio tap: stop failed (org=%s room=%s)", org_id, room)
+    the room closes, so a failed `stop_egress` is logged at info, not treated as an error.
+    `run_tap=False` (worker mode) leaves the tap to the audio tap worker."""
+    if run_tap:
+        try:
+            await taps.stop(org_id=org_id, room=room)
+        except Exception:  # noqa: BLE001
+            logger.exception("audio tap: stop failed (org=%s room=%s)", org_id, room)
     if egress_id:
         try:
             await transport.stop_egress(egress_id=egress_id)
