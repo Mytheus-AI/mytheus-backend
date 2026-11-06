@@ -73,6 +73,13 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
+from libs.shared.metrics import (
+    observe_consumer_lag,
+    record_dlq,
+    record_processed,
+    serve_metrics,
+    set_service,
+)
 from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
@@ -232,7 +239,11 @@ async def process_decoded_message(
     except PoisonMessage as exc:
         logger.error("meeting-events: poison message routed to DLQ: %s", exc)
         route_to_dlq(dlq_producer, topic=TOPIC, key=key, raw_value=raw_value, error=exc)
+        record_dlq(CONSUMER_GROUP, TOPIC, "POISON")
+        record_processed(CONSUMER_GROUP, TOPIC, "dlq")
         return
+
+    record_processed(CONSUMER_GROUP, TOPIC, "applied" if result.applied else "duplicate")
 
     if result.pending_room_sync is not None:
         # By this point `session.begin()` above has already committed and the connection is
@@ -273,6 +284,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
         {"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True}
     )
     deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
+    set_service("meeting-service-consumer")
+    serve_metrics()  # no-op unless METRICS_PORT is set
     session_factory = get_sessionmaker()
     transport = select_transport()
 
@@ -286,6 +299,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 continue
             raw_value = msg.value()
             topic_name = msg.topic() or TOPIC
+            _ts_type, _ts = msg.timestamp()
+            observe_consumer_lag(CONSUMER_GROUP, TOPIC, _ts if _ts_type else None)
             value = deserializer(raw_value, SerializationContext(topic_name, MessageField.VALUE))
             await process_decoded_message(
                 value,
