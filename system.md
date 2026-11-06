@@ -60,7 +60,7 @@ For each service: responsibility, owned tables/stores, events produced, events c
 ### 2.5 `meeting-service` (CRUD / real-time-adjacent)
 
 - **Responsibility.** LiveKit transport adapter: mints participant-verified room tokens, receives LiveKit webhooks, bridges the server-side audio hook to `transcription-service`. SDK abstracted behind the adapter so the pick stays swappable.
-- **Owned tables/stores.** `meeting_rooms` (LiveKit room ↔ meeting map, egress/recording refs), Postgres RLS by `org_id`. Object storage: `nexus-recordings` (`{org_id}/{meeting_id}/`).
+- **Owned tables/stores.** `meeting_rooms` (LiveKit room ↔ meeting map, egress/recording refs), Postgres RLS by `org_id`. Object storage: `mytheus-recordings` (`{org_id}/{meeting_id}/`).
 - **Events produced.** `meeting-room-events` (joined/left/recording-ready). The raw-audio handoff to `transcription-service` is a **server-side LiveKit hook, not a topic**.
 - **Events consumed.** `meeting-events` (to open/close rooms).
 - **Sync API (REST).** `POST /api/meetings/:id/token` (p95 < 250 ms), `POST /livekit/webhook`.
@@ -76,7 +76,7 @@ For each service: responsibility, owned tables/stores, events produced, events c
 ### 2.7 `billing-metering-service` (CRUD)
 
 - **Responsibility.** SaaS monetization: Stripe billing/subscriptions/seats/dunning/tax, usage metering (`usage-events` → aggregation → quota enforcement), plans/tiers (Free/Pro/Enterprise), per-tenant token budgets & hard quotas (enforces R4), billing read models.
-- **Owned tables/stores.** `plans` (global, no `org_id`), `subscriptions`, `usage_events` (append-only, daily range-partition), `usage_aggregates`, `quotas`, `invoices` (immutable once finalized, 7-year retention), `agent_budgets` (per tenant+month; `ok`/`throttled`/`blocked`). Redis hot mirror: `nexus:{org_id}:budget:{period}`. Object storage: `nexus-invoices`.
+- **Owned tables/stores.** `plans` (global, no `org_id`), `subscriptions`, `usage_events` (append-only, daily range-partition), `usage_aggregates`, `quotas`, `invoices` (immutable once finalized, 7-year retention), `agent_budgets` (per tenant+month; `ok`/`throttled`/`blocked`). Redis hot mirror: `nexus:{org_id}:budget:{period}`. Object storage: `mytheus-invoices`.
 - **Events produced.** `billing-events` (quota-exceeded, dunning, plan-changed), `notifications`.
 - **Events consumed.** `usage-events`, `tenant-events`.
 - **Sync API (REST).** `GET/POST /billing/*`, `POST /stripe/webhook`, `GET /usage`.
@@ -84,7 +84,7 @@ For each service: responsibility, owned tables/stores, events produced, events c
 ### 2.8 `admin-ops-service` (CRUD)
 
 - **Responsibility.** Two consoles: tenant-admin (org-scoped self-serve: members, plan, integrations, export/erasure requests) and internal ops (cross-tenant support, feature flags, tenant suspend/migrate, consumer-lag & cost dashboards, audit-log access).
-- **Owned tables/stores.** Feature flags, ops audit log, support/impersonation grants, and the compliance `audit_logs` trail (append-only, no UPDATE/DELETE, tamper-evident, monthly range-partition, 1y hot → `nexus-audit-archive`).
+- **Owned tables/stores.** Feature flags, ops audit log, support/impersonation grants, and the compliance `audit_logs` trail (append-only, no UPDATE/DELETE, tamper-evident, monthly range-partition, 1y hot → `mytheus-audit-archive`).
 - **Events produced.** `admin-events` (flag changed, tenant suspended, erasure requested).
 - **Events consumed.** `tenant-events`, `billing-events`, `graph-events` (ops views).
 - **Sync API (REST).** `GET/POST /admin/tenant/*`, `/admin/ops/*` (RBAC-gated, fully audited).
@@ -100,7 +100,7 @@ For each service: responsibility, owned tables/stores, events produced, events c
 ### 2.10 `workflow-service` (async / Temporal)
 
 - **Responsibility.** Durable orchestration on Temporal: `MeetingLifecycleWorkflow`, `ActionFollowUpWorkflow` (reminders day 1/3/7, manager escalation via Slack DM at day 10), RTBF (right-to-be-forgotten) deletion saga across all stores, and dunning sagas. Temporal owns workflow state; the workers here are stateless.
-- **Owned tables/stores.** None durable outside Temporal (which owns workflow state). May write `nexus-exports` / `nexus-audit-archive` object buckets.
+- **Owned tables/stores.** None durable outside Temporal (which owns workflow state). May write `mytheus-exports` / `mytheus-audit-archive` object buckets.
 - **Events produced.** `notifications`.
 - **Events consumed.** `billing-events`, `tenant-events`, `meeting-events`, `actions`, `admin-events` (drives suspend/migrate/RTBF).
 - **Sync API.** Drives CRUD over REST (`core-api`, `integration-service`); internal `/workflows/*` admin surface (not public). Temporal task queues are the primary inbound.
@@ -144,10 +144,10 @@ Every store has exactly one **owning service** that writes it; everyone else rea
 |---|---|
 | `identity-tenant-service` | `organizations`, `users`, `teams`*, `team_members`*, `departments`*, `tenant_settings`, `data_residency`, RBAC/SSO/SCIM/agent-authz state |
 | `core-api` | `meetings`, `meeting_participants`, `meeting_speakers`, `worklogs`, `decisions`, `action_items`, `agent_suggestions`, `agent_collaborations`, `chat_messages`, `teams`, `team_members`, `departments` |
-| `meeting-service` | `meeting_rooms`; `nexus-recordings` object bucket |
+| `meeting-service` | `meeting_rooms`; `mytheus-recordings` object bucket |
 | `integration-service` | `integration_connections`, `oauth_tokens` |
-| `billing-metering-service` | `plans`, `subscriptions`, `usage_events`, `usage_aggregates`, `quotas`, `invoices`, `agent_budgets`; `nexus-invoices` object bucket |
-| `admin-ops-service` | feature flags, ops audit log, `audit_logs`, impersonation grants; `nexus-audit-archive` |
+| `billing-metering-service` | `plans`, `subscriptions`, `usage_events`, `usage_aggregates`, `quotas`, `invoices`, `agent_budgets`; `mytheus-invoices` object bucket |
+| `admin-ops-service` | feature flags, ops audit log, `audit_logs`, impersonation grants; `mytheus-audit-archive` |
 | `notification-service` | `notification_log`, delivery receipts, channel prefs |
 
 \* Org-hierarchy CRUD (`teams`/`team_members`/`departments`) is assigned to `core-api` per `03-container-architecture.md` §5; identity holds the identity-and-tenancy surface. Stores owned by the AI/real-time tiers (`transcript_chunks` → `transcription-service`; `document_chunks`/`document_elements` → `ingestion-service`; Qdrant vectors → `embedding-service`; AGE `nexus_knowledge` → `knowledge-graph-service`) are read-only from this repo's perspective. **Any new write path requires a `_canon/02-data-model.md` edit first.**

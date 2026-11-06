@@ -175,7 +175,7 @@ class LiveKitTransport:
         return tok.to_jwt()
 
     async def start_egress(self, *, org_id: UUID, meeting_id: UUID, room: str) -> str:
-        """Room-composite egress straight into the S3-compatible `nexus-recordings` bucket
+        """Room-composite egress straight into the S3-compatible `mytheus-recordings` bucket
         (R2 per ADR-0023; MinIO locally). LiveKit's egress worker writes the object itself
         with the credentials carried in this request; nothing here logs them. Returns the
         LiveKit egress id, which the caller persists on `meeting_rooms.egress_id`.
