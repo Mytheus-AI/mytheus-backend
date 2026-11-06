@@ -36,7 +36,10 @@ def test_route_template_label_not_raw_path() -> None:
     assert 'route="/api/v1/things/{thing_id}"' in body
     assert org not in body and "zzz-secret-123" not in body
     assert 'route="unmatched"' in body
-    assert "org_id" not in body and "user_id" not in body
+    # No tenant/user LABEL. Matched as `name=` rather than the bare word: the registry is
+    # process-global, so another test module's route template (e.g. `/bff/people/{user_id}`)
+    # legitimately contains the word and made this order-dependent.
+    assert "org_id=" not in body and "user_id=" not in body
     assert (
         _sample(
             "mytheus_http_requests_total",
