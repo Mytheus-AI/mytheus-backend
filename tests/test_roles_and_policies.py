@@ -519,6 +519,57 @@ async def test_app_role_has_only_column_grants_on_organizations(migrated_db):
         await app.dispose()
 
 
+async def test_app_role_insert_on_organizations_is_exactly_the_provisioning_columns(migrated_db):
+    """ADR-0025 / migration `1afe4928b214`: `POST /orgs` may create a tenant root, and nothing
+    more. Asserted as an exact column set, plus no table-level INSERT, UPDATE or DELETE, so a
+    later "just grant INSERT on organizations" widening fails here rather than in review."""
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            insertable = set(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.column_privileges "
+                            "WHERE table_schema = 'public' AND table_name = 'organizations' "
+                            "  AND grantee = 'mytheus_app' AND privilege_type = 'INSERT'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            table_level = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT a.privilege_type FROM pg_class c "
+                            "CROSS JOIN LATERAL aclexplode(c.relacl) a "
+                            "WHERE c.oid = 'organizations'::regclass "
+                            "  AND a.grantee = 'mytheus_app'::regrole ORDER BY 1"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            col_update_delete = (
+                await conn.execute(
+                    text(
+                        "SELECT count(*) FROM information_schema.column_privileges "
+                        "WHERE table_schema = 'public' AND table_name = 'organizations' "
+                        "  AND grantee = 'mytheus_app' AND privilege_type = 'UPDATE'"
+                    )
+                )
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    assert insertable == {"id", "name", "slug", "status", "plan_id", "clerk_org_id"}
+    assert table_level == [], f"mytheus_app holds table-level privileges: {table_level}"
+    assert col_update_delete == 0, "mytheus_app must not UPDATE any organizations column"
+
+
 # --- The relay role --------------------------------------------------------------------------
 
 

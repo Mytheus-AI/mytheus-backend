@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.core_api.schemas import MeetingSpeaker, MeetingSpeakerList, SpeakerAssign
+from services.core_api.visibility import is_visible
 
 router = APIRouter(prefix="/api/v1", tags=["speakers"])
 
@@ -42,6 +43,14 @@ async def _fetch_meeting_exists(session: AsyncSession, meeting_id: uuid.UUID) ->
     ).first()
     if row is None:
         raise not_found()
+
+
+def _user_not_in_org() -> ProblemDetail:
+    return ProblemDetail(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        "user_id does not name a user in this organization",
+    )
 
 
 @router.get("/meetings/{meeting_id}/speakers", response_model=MeetingSpeakerList)
@@ -90,6 +99,13 @@ async def assign_speaker(
 ) -> MeetingSpeaker:
     await _fetch_meeting_exists(session, meeting_id)
 
+    # Gap 31: the FK on user_id does NOT keep the reference inside the tenant (RI checks
+    # bypass RLS - see services/core_api/visibility.py), so without this check another
+    # tenant's user id was accepted and pinned to this tenant's speaker. 422 with the same
+    # message as a nonexistent id, so the route is not an oracle for other tenants' users.
+    if not await is_visible(session, "users", body.user_id):
+        raise _user_not_in_org()
+
     # Upsert rather than a bare UPDATE: a manual assignment must succeed even if diarization
     # never produced a "suggested" row for this speaker_id at all (e.g. the mapping UI is used
     # before or without transcription). `assignment = 'manual'` is always the literal on the
@@ -121,15 +137,8 @@ async def assign_speaker(
             .one()
         )
     except IntegrityError as exc:
-        # The FK on user_id -> users(id) is the enforcement: a user id from another tenant, or
-        # one that does not exist, is not insertable (same mechanism `routes.meetings`'s
-        # participant-insert comment describes for meeting_participants). Translated to a
-        # client error rather than the generic 500 the unhandled-exception handler would give,
-        # matching the "every error is RFC 7807 with a stable code" house rule.
-        raise ProblemDetail(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "user_id does not name a user in this organization",
-        ) from exc
+        # Backstop only (e.g. the user was deleted between the check and the insert). The FK
+        # is NOT the tenant boundary - the visibility check above is.
+        raise _user_not_in_org() from exc
 
     return MeetingSpeaker(**dict(row))

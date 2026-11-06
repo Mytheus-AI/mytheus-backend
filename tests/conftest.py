@@ -1,6 +1,6 @@
 """Shared fixtures for the backend tests.
 
-Tests run against the local dev stack: an isolated test Postgres (default localhost:5433), the
+Tests run against the local dev stack: an isolated test Postgres (default localhost:5443), the
 compose Redpanda (localhost:9092 / :8081), and fakeredis for Redis-only unit tests. Env is set
 here BEFORE any app module imports. Tests that need a service they cannot reach skip gracefully.
 
@@ -25,11 +25,38 @@ import os
 import psycopg2
 import pytest
 
-_DEFAULT_BOOTSTRAP = "postgresql+asyncpg://postgres:postgres@localhost:5433/mytheus"
+_DEFAULT_BOOTSTRAP = "postgresql+asyncpg://postgres:postgres@localhost:5443/mytheus"
+
+# Developer-.env values that must never reach a test. A sourced `.env` sets real upstream
+# addresses (the gateway proxy would route to them instead of the compose names the tests
+# assert), the internal audio token, and Clerk keys (a real CLERK_SECRET_KEY means real Clerk
+# calls). They are stripped once here, at import, before any app module reads them, and again
+# per test by `_isolate_developer_env` in case anything re-injects the developer's value. A
+# test that needs one sets it itself (monkeypatch.setenv, or a fixture), and that wins.
+LEAKY_ENV_VARS = (
+    "UPSTREAM_BFF",
+    "UPSTREAM_IDENTITY_TENANT_SERVICE",
+    "UPSTREAM_CORE_API",
+    "UPSTREAM_MEETING_SERVICE",
+    "INTERNAL_AUDIO_TOKEN",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "CLERK_SECRET_KEY",
+    "CLERK_WEBHOOK_SECRET",
+)
+_DEVELOPER_ENV = {k: os.environ.pop(k) for k in LEAKY_ENV_VARS if k in os.environ}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_developer_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove a developer-.env value if it is present again; keep any value a test set."""
+    for key, leaked in _DEVELOPER_ENV.items():
+        if os.environ.get(key) == leaked:
+            monkeypatch.delenv(key)
+
 
 os.environ.setdefault("REDPANDA_BROKERS", "localhost:9092")
-os.environ.setdefault("SCHEMA_REGISTRY_URL", "http://localhost:8081")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6380")
+os.environ.setdefault("SCHEMA_REGISTRY_URL", "http://localhost:8085")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6390")
 
 # The schema owner, read from BOOTSTRAP_DATABASE_URL and NOT from DATABASE_URL. Since
 # section 3.3, `DATABASE_URL` names `mytheus_app` in any correctly configured environment,
@@ -115,7 +142,7 @@ def migrated_db() -> str:
                 "Refusing to skip: skipped isolation tests report green without proving "
                 "anything, which is defect D7."
             )
-        pytest.skip("test Postgres not reachable (expected on localhost:5433)")
+        pytest.skip("test Postgres not reachable (expected on localhost:5443)")
 
     from alembic import command
     from alembic.config import Config

@@ -73,10 +73,18 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
+from libs.shared.metrics import (
+    observe_consumer_lag,
+    record_dlq,
+    record_processed,
+    serve_metrics,
+    set_service,
+)
 from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_ended,
+    meeting_is_visible,
     sync_livekit_metadata,
 )
 from services.meeting_service.transport import MeetingTransport, select_transport
@@ -183,6 +191,15 @@ async def handle_meeting_event(
     # `meeting_id` are the only fields this handler needs, and both are validated above.
     pending_room_sync: tuple[uuid.UUID, str] | None = None
     if event_type == "created":
+        # Explicit tenant-visibility check before `meeting_id` becomes a foreign key: the FK
+        # check bypasses RLS, so without this a `created` event whose header names tenant A
+        # and whose body names tenant B's meeting would upsert a tenant-A room pointing into
+        # tenant B. Not visible (absent, soft-deleted, or another tenant's) is a header/body
+        # mismatch this consumer cannot safely apply: poison -> DLQ, never block the partition.
+        if not await meeting_is_visible(session, meeting_id):
+            raise PoisonMessage(
+                f"meeting-events created: meeting {meeting_id} is not visible to org {org_id}"
+            )
         result = await ensure_meeting_room(session, org_id, meeting_id)
         if result.needs_livekit_sync:
             pending_room_sync = (org_id, result.room)
@@ -232,7 +249,11 @@ async def process_decoded_message(
     except PoisonMessage as exc:
         logger.error("meeting-events: poison message routed to DLQ: %s", exc)
         route_to_dlq(dlq_producer, topic=TOPIC, key=key, raw_value=raw_value, error=exc)
+        record_dlq(CONSUMER_GROUP, TOPIC, "POISON")
+        record_processed(CONSUMER_GROUP, TOPIC, "dlq")
         return
+
+    record_processed(CONSUMER_GROUP, TOPIC, "applied" if result.applied else "duplicate")
 
     if result.pending_room_sync is not None:
         # By this point `session.begin()` above has already committed and the connection is
@@ -254,7 +275,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     from libs.shared.db import get_sessionmaker
 
     brokers = os.environ.get("REDPANDA_BROKERS", "localhost:9092")
-    sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
+    sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8085")
     redis: Redis[bytes] = redis_from_url(
         os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
     )
@@ -273,6 +294,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
         {"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True}
     )
     deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
+    set_service("meeting-service-consumer")
+    serve_metrics()  # no-op unless METRICS_PORT is set
     session_factory = get_sessionmaker()
     transport = select_transport()
 
@@ -286,6 +309,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 continue
             raw_value = msg.value()
             topic_name = msg.topic() or TOPIC
+            _ts_type, _ts = msg.timestamp()
+            observe_consumer_lag(CONSUMER_GROUP, TOPIC, _ts if _ts_type else None)
             value = deserializer(raw_value, SerializationContext(topic_name, MessageField.VALUE))
             await process_decoded_message(
                 value,

@@ -25,6 +25,7 @@ Acceptance checks covered here (Task 4 brief):
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -432,7 +433,7 @@ def test_participant_left_emits_left_without_reactivating_status(client):
 def test_unhandled_event_type_is_a_200_no_op(client):
     org_id = seed_org()
     meeting_id, room = seed_meeting_room(org_id)
-    evt = _evt("room_started", room=_room(room, org_id))
+    evt = _evt("track_published", room=_room(room, org_id))
     FAKE.verify_webhook_result = evt
 
     resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
@@ -441,3 +442,171 @@ def test_unhandled_event_type_is_a_200_no_op(client):
     row = meeting_room_row(org_id, meeting_id)
     assert row["recording_ref"] is None
     assert row["status"] == "pending"
+
+
+# --- room_started / room_finished: audio tap + recording egress ---------------------------------
+
+
+@pytest.fixture
+def _recording_env(monkeypatch):
+    monkeypatch.setenv("RECORDING_ENABLED", "true")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("INTERNAL_AUDIO_TOKEN", "test-internal-token")
+    monkeypatch.setenv("AUDIO_TAP_MODE", "in-process")
+
+
+def _room_with_sid(name: str, org_id: uuid.UUID, sid: str) -> SimpleNamespace:
+    return SimpleNamespace(name=name, metadata=json.dumps({"org_id": str(org_id)}), sid=sid)
+
+
+def test_room_started_starts_tap_and_egress_and_persists_egress_id(client, _recording_env):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_1"))
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    methods = [c.method for c in FAKE.calls]
+    assert "subscribe_room_audio" in methods and "start_egress" in methods
+    assert meeting_room_row(org_id, meeting_id)["egress_id"] == (
+        f"fake-egress-{org_id}-{meeting_id}"
+    )
+    # No meeting-room-events row: the topic has no symbol for room lifecycle.
+    assert outbox_rows(f"{room}:room_started:RM_1") == []
+
+    # Redelivery of the same room instance is a no-op.
+    FAKE.calls.clear()
+    client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert [c.method for c in FAKE.calls] == ["verify_webhook"]
+
+    FAKE.verify_webhook_result = _evt("room_finished", room=_room_with_sid(room, org_id, "RM_1"))
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert resp.status_code == 200, resp.text
+    assert FAKE.calls[-1].method == "stop_egress"
+
+
+def test_room_started_with_consent_required_and_none_recorded_starts_nothing(
+    client, _recording_env
+):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    user_id = uuid.uuid4()
+    _sql(
+        "INSERT INTO tenant_settings (org_id, consent_required) VALUES (%(o)s, true) "
+        "ON CONFLICT (org_id) DO UPDATE SET consent_required = true",
+        {"o": str(org_id)},
+    )
+    _sql(
+        "INSERT INTO users (id, org_id, clerk_user_id, email) "
+        "VALUES (%(u)s, %(o)s, %(c)s, %(e)s)",
+        {"u": str(user_id), "o": str(org_id), "c": f"user_{user_id}", "e": f"{user_id}@t.test"},
+    )
+    _sql(
+        "INSERT INTO meeting_participants (org_id, meeting_id, user_id) "
+        "VALUES (%(o)s, %(m)s, %(u)s)",
+        {"o": str(org_id), "m": str(meeting_id), "u": str(user_id)},
+    )
+    FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_2"))
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    methods = [c.method for c in FAKE.calls]
+    assert "subscribe_room_audio" not in methods and "start_egress" not in methods
+
+
+def test_worker_mode_records_the_tap_trigger_and_never_taps_in_process(
+    client, _recording_env, monkeypatch
+):
+    """AUDIO_TAP_MODE=worker: the API records the want in Redis and still starts/stops egress,
+    but never joins the room itself; room_finished clears the want."""
+    import asyncio
+
+    from redis.asyncio import from_url
+
+    from services.meeting_service.audio_tap_worker import TapWant, want_key
+
+    monkeypatch.setenv("AUDIO_TAP_MODE", "worker")
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.calls.clear()
+    FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_W"))
+
+    async def _get() -> bytes | None:
+        r = from_url(os.environ["REDIS_URL"], decode_responses=False)
+        try:
+            return await r.get(want_key(org_id, meeting_id))
+        finally:
+            await r.aclose()
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert resp.status_code == 200, resp.text
+    methods = [c.method for c in FAKE.calls]
+    assert "subscribe_room_audio" not in methods
+    assert "start_egress" in methods
+    raw = asyncio.run(_get())
+    assert raw is not None
+    assert TapWant.decode(raw) == TapWant(
+        org_id=org_id, meeting_id=meeting_id, room=room, room_sid="RM_W"
+    )
+
+    FAKE.verify_webhook_result = _evt("room_finished", room=_room_with_sid(room, org_id, "RM_W"))
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    assert resp.status_code == 200, resp.text
+    assert FAKE.calls[-1].method == "stop_egress"
+    assert asyncio.run(_get()) is None
+
+
+def test_the_taps_own_participant_events_are_ignored(client):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.verify_webhook_result = _evt(
+        "participant_joined",
+        room=_room(room, org_id),
+        participant=SimpleNamespace(sid="PA_tap", identity=f"nexus-audio-tap-{meeting_id}"),
+    )
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    assert outbox_rows(f"{room}:participant_joined:PA_tap") == []
+    assert meeting_room_row(org_id, meeting_id)["status"] == "pending"
+
+
+def test_egress_ended_stores_the_uploaded_key_under_the_meeting_prefix(client):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    uploaded = f"{org_id}/{meeting_id}/2026-11-06T101500.mp4"
+    FAKE.verify_webhook_result = _evt(
+        "egress_ended",
+        room=_room(room, org_id),
+        egress_info=SimpleNamespace(
+            egress_id="EG_up", file_results=[SimpleNamespace(filename=uploaded)]
+        ),
+    )
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    assert meeting_room_row(org_id, meeting_id)["recording_ref"] == uploaded
+
+
+def test_egress_ended_never_stores_a_key_outside_the_meeting_prefix(client):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.verify_webhook_result = _evt(
+        "egress_ended",
+        room=_room(room, org_id),
+        egress_info=SimpleNamespace(
+            egress_id="EG_bad", file_results=[SimpleNamespace(filename="other-org/x.mp4")]
+        ),
+    )
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    assert meeting_room_row(org_id, meeting_id)["recording_ref"] == (
+        f"{org_id}/{meeting_id}/EG_bad"
+    )

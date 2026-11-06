@@ -29,6 +29,7 @@ from services.core_api.schemas import (
     TeamMember,
     TeamMemberUpsert,
 )
+from services.core_api.visibility import is_visible
 from services.identity_tenant_service.context.service import invalidate_user_context
 
 router = APIRouter(prefix="/api/v1", tags=["org-hierarchy"])
@@ -67,6 +68,12 @@ async def create_team(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> Team:
+    # Gap 31: the FK to departments resolves another tenant's row (RI bypasses RLS), so
+    # without this a team could be filed under another tenant's department.
+    if body.department_id is not None and not await is_visible(
+        session, "departments", body.department_id
+    ):
+        raise _no_such_department()
     row = (
         (
             await session.execute(
@@ -86,6 +93,12 @@ async def create_team(
         .one()
     )
     return Team(**dict(row))
+
+
+def _no_such_department() -> ProblemDetail:
+    # 404, not 422, matching the participant and team-member checks: whether an id exists at
+    # all is tenant-confidential.
+    return ProblemDetail(status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, "No such department")
 
 
 @router.get("/departments", response_model=list[Department])
@@ -114,6 +127,12 @@ async def create_department(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> Department:
+    # Gap 31. The comment that used to sit on `parent` below claimed "a parent in another
+    # tenant is invisible to RLS, so the FK cannot resolve". False: RI checks bypass RLS, so
+    # the FK resolves it and the insert succeeded, nesting this tenant's department under
+    # another tenant's. The explicit visible-parent check is the enforcement.
+    if body.parent_id is not None and not await is_visible(session, "departments", body.parent_id):
+        raise _no_such_department()
     row = (
         (
             await session.execute(
@@ -125,8 +144,6 @@ async def create_department(
                 {
                     "org": str(ctx.org_id),
                     "name": body.name,
-                    # A parent in another tenant is invisible to RLS, so the FK cannot resolve
-                    # and the insert fails. Cross-tenant nesting is unrepresentable.
                     "parent": str(body.parent_id) if body.parent_id else None,
                 },
             )
@@ -159,13 +176,7 @@ async def _visible_team_id(session: AsyncSession, team_id: uuid.UUID) -> None:
     "no such team" and "not your team" identically - which is the point. Distinguishing them
     would confirm the existence of another tenant's team to anyone who can guess a UUID.
     """
-    row = (
-        await session.execute(
-            text("SELECT 1 FROM teams WHERE id = :id AND deleted_at IS NULL"),
-            {"id": str(team_id)},
-        )
-    ).first()
-    if row is None:
+    if not await is_visible(session, "teams", team_id):
         raise ProblemDetail(status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, "No such team")
 
 
@@ -186,10 +197,7 @@ async def _visible_user_id(session: AsyncSession, user_id: uuid.UUID) -> None:
     the insert returned 200 and wrote a row joining this tenant's team to another tenant's
     user. Removing it is a cross-tenant write, not a worse error message.
     """
-    row = (
-        await session.execute(text("SELECT 1 FROM users WHERE id = :id"), {"id": str(user_id)})
-    ).first()
-    if row is None:
+    if not await is_visible(session, "users", user_id):
         raise ProblemDetail(status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, "No such user")
 
 

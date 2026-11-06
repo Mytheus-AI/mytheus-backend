@@ -2,6 +2,12 @@
 
 All SQLAlchemy models from every service must be imported here so
 Alembic's autogenerate can detect table additions/removals.
+
+Autogenerate is filtered — see `include_object` below. Not every table in this database is
+mapped as a SQLAlchemy model, and one of them is not even owned by this repository, so an
+unfiltered autogenerate proposes dropping them. `866f7eedb0e7`'s docstring records hitting
+exactly that and hand-writing the migration body instead; this filter fixes the cause rather
+than working around it once per migration.
 """
 
 from __future__ import annotations
@@ -14,7 +20,10 @@ from sqlalchemy import engine_from_config, pool
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the default disables every logger created before this
+    # runs, so any process that migrates in-process (the test session's `migrated_db`
+    # fixture) silently lost all application logging - and every caplog assertion after it.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Import every service's models so autogenerate sees all tables.
 # (later bands append their service model imports here)
@@ -23,6 +32,7 @@ import services.admin_ops_service.models  # noqa: F401,E402  (audit_logs)
 import services.core_api.models  # noqa: F401,E402
 import services.identity_tenant_service.models  # noqa: F401,E402
 from libs.shared.db import Base  # noqa: E402
+from migrations.autogen_filter import include_object  # noqa: E402
 
 target_metadata = Base.metadata
 
@@ -40,6 +50,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -52,7 +63,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

@@ -53,6 +53,27 @@ def room_name_for(meeting_id: UUID) -> str:
     return f"meeting-{meeting_id}"
 
 
+async def meeting_is_visible(session: AsyncSession, meeting_id: UUID) -> bool:
+    """True iff this tenant-scoped session can see a live (not soft-deleted) `meetings` row.
+
+    The same check `services/core_api/visibility.py` makes before a caller-supplied id becomes
+    a foreign key (gap 31): PostgreSQL runs FK checks as the referenced table's owner with RLS
+    BYPASSED, so `meeting_rooms.meeting_id -> meetings(id)` would happily resolve ANOTHER
+    tenant's meeting while the row's own `org_id` WITH CHECK passes. No `org_id` predicate: RLS
+    scopes it, so "does not exist" and "exists in another tenant" are indistinguishable.
+
+    MUST run after `set_rls` on a role subject to RLS (`mytheus_app`); on a BYPASSRLS
+    connection it would see every tenant's meetings and pass silently.
+    """
+    row = (
+        await session.execute(
+            text("SELECT 1 FROM meetings WHERE id = :id AND deleted_at IS NULL"),
+            {"id": str(meeting_id)},
+        )
+    ).first()
+    return row is not None
+
+
 @dataclass(frozen=True)
 class RoomUpsertResult:
     room: str

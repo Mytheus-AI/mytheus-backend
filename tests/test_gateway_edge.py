@@ -285,3 +285,18 @@ def test_no_two_services_share_a_prefix():
                 assert (
                     edge.ROUTE_MAP[inner] == edge.ROUTE_MAP[outer]
                 ), f"{inner} and {outer} overlap but resolve to different services"
+
+
+@pytest.mark.parametrize(
+    "path", ["/pii-tokens/mint", "/pii-tokens/resolve", "/pii-tokens", "/pii-tokens/anything"]
+)
+def test_the_gateway_never_routes_the_pii_vault(path):
+    """`/pii-tokens/mint` is INTERNAL (per-caller service secret, ADR-0020 D2/ADR-0024): it must
+    never be reachable from the public edge. `resolve` is user-facing in principle but is not
+    exposed through the gateway either until a deliberate, reviewed change adds it. Asserted
+    against the map itself AND the longest-prefix resolver, so neither a direct entry nor a
+    shorter prefix that happens to capture `/pii-tokens` can sneak it in."""
+    assert edge.route_for(path) is None, f"api-gateway routes {path} to {edge.route_for(path)}"
+    assert not any(
+        p.startswith("/pii") or path.startswith(p) for p in edge.ROUTE_MAP
+    ), "a ROUTE_MAP prefix captures the pii vault"

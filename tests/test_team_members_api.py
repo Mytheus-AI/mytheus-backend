@@ -392,3 +392,49 @@ def test_both_writes_are_audited_with_the_acting_admin(client, tenant_a):
     assert all(str(r["actor_id"]) == str(tenant_a.user_id) for r in rows)
     assert all(r["target_type"] == "team" for r in rows)
     assert rows[0]["metadata"]["user_id"] == str(member)
+
+
+# --- gap 31: body-supplied department ids are foreign keys too ------------------------------
+#
+# Postgres RI checks bypass RLS, so `teams.department_id` and `departments.parent_id` resolved
+# another tenant's department and the insert returned 201. The visibility check in
+# `services/core_api/visibility.py` is the enforcement; these tests fail if it is removed.
+
+
+def _make_department(client: TestClient, name: str, parent: uuid.UUID | None = None) -> Any:
+    body: dict[str, Any] = {"name": name}
+    if parent is not None:
+        body["parent_id"] = str(parent)
+    return client.post("/api/v1/departments", json=body)
+
+
+def test_a_team_cannot_be_filed_under_another_tenants_department(client, tenant_a):
+    victim = seed_tenant(tier="admin")
+    sign_in(victim)
+    victim_dept = uuid.UUID(_make_department(client, "Victim Dept").json()["id"])
+
+    sign_in(tenant_a)
+    own_dept = uuid.UUID(_make_department(client, "Own Dept").json()["id"])
+    control = client.post("/api/v1/teams", json={"name": "Ok", "department_id": str(own_dept)})
+    assert control.status_code == 201, "positive control: an own-tenant department is accepted"
+
+    resp = client.post("/api/v1/teams", json={"name": "Cross", "department_id": str(victim_dept)})
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "NOT_FOUND"
+    assert _sql("SELECT 1 FROM teams WHERE department_id = %(d)s", {"d": str(victim_dept)}) == []
+
+
+def test_a_department_cannot_be_nested_under_another_tenants_department(client, tenant_a):
+    victim = seed_tenant(tier="admin")
+    sign_in(victim)
+    victim_dept = uuid.UUID(_make_department(client, "Victim Root").json()["id"])
+
+    sign_in(tenant_a)
+    own_root = uuid.UUID(_make_department(client, "Own Root").json()["id"])
+    control = _make_department(client, "Own Child", parent=own_root)
+    assert control.status_code == 201, "positive control: an own-tenant parent is accepted"
+
+    resp = _make_department(client, "Cross Child", parent=victim_dept)
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["code"] == "NOT_FOUND"
+    assert _sql("SELECT 1 FROM departments WHERE parent_id = %(p)s", {"p": str(victim_dept)}) == []

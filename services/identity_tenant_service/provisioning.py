@@ -70,6 +70,7 @@ async def provision_organization(
     slug: str,
     plan_code: str,
     clerk_org_id: str | None = None,
+    link_existing: bool = True,
 ) -> ProvisionResult:
     """Create the tenant root plus its `tenant-events` `provisioned` outbox row, atomically.
 
@@ -105,6 +106,12 @@ async def provision_organization(
     from an `internal_org_id` token claim, which Clerk populates from the organization's
     `public_metadata`. Pushing that value into Clerk is a network call and therefore not part
     of this transaction: call `sync_internal_org_id_to_clerk` after commit.
+
+    `link_existing=False` turns off the fill-a-NULL `clerk_org_id` behaviour on an idempotent
+    re-run. The seeder wants it (it re-runs against tenants it created itself); a request-path
+    caller (`POST /orgs`, via `provision_tenant`) must not have it, because there a slug
+    collision is somebody ELSE's tenant and a request must never be able to attach a Clerk
+    organization to a tenant it did not just create.
     """
     row = (
         await session.execute(
@@ -120,7 +127,7 @@ async def provision_organization(
         existing = (await session.execute(_SELECT_ORG_BY_SLUG, {"slug": slug})).first()
         resolved_id = uuid.UUID(str(existing[0])) if existing else org_id
 
-    if not created and clerk_org_id is not None:
+    if not created and clerk_org_id is not None and link_existing:
         # The row predates this Clerk organization (the seeder can create a tenant before it
         # exists in Clerk). Fill the link so the tenant becomes resolvable, but only when the
         # column is still NULL - see _LINK_CLERK_ORG.
@@ -169,3 +176,116 @@ async def sync_internal_org_id_to_clerk(result: ProvisionResult, clerk_org_id: s
     from libs.shared.clerk_admin import set_internal_org_id
 
     return await set_internal_org_id(clerk_org_id, result.org_id)
+
+
+# --- The full tenant birth: Plan 1-2 section 3.4 step 3 ---------------------------------------
+#
+# `provision_organization` above is the tenant ROOT plus its lifecycle event, and is what the
+# seeder has always called. `provision_tenant` is the complete birth the plan specifies for
+# `POST /orgs`: the root, its `tenant_settings` defaults, its `data_residency` row, the initial
+# owner's mirror row and `rbac_grants` owner grant, and the `tenant-events` outbox row, all in
+# the CALLER'S transaction. Nothing here commits; the caller's `session.begin()` does, so any
+# failure below rolls every one of these rows back together (the plan's rollback acceptance
+# check).
+
+_SELECT_ORG_BY_CLERK_ID = text("SELECT 1 FROM organizations WHERE clerk_org_id = :c")
+# Defaults come from the column defaults, not from this file: the region default (`us`, MVP
+# single-region per ADR-0016) and `db_cell` are schema facts, and restating them here would be
+# a second place to change when the residency decision moves.
+_INSERT_TENANT_SETTINGS = text(
+    "INSERT INTO tenant_settings (org_id) VALUES (:o) ON CONFLICT (org_id) DO NOTHING"
+)
+_INSERT_DATA_RESIDENCY = text(
+    "INSERT INTO data_residency (org_id) VALUES (:o) ON CONFLICT (org_id) DO NOTHING"
+)
+# The owner's mirror row. Clerk stays the source of truth: the first `user.created` /
+# `user.updated` webhook for this person upserts on the same `(org_id, clerk_user_id)` key
+# (`routes/auth.py::_apply`) and overwrites `email` with Clerk's value. The row has to exist
+# NOW because `rbac_grants.user_id` is a foreign key to it, and a tenant born with no owner
+# grant is a tenant nobody can administer: every `require_tier` check in it would deny.
+_INSERT_OWNER_USER = text(
+    "INSERT INTO users (org_id, clerk_user_id, email) VALUES (:o, :cuid, :email) "
+    "ON CONFLICT (org_id, clerk_user_id) DO UPDATE SET updated_at = now() "
+    "RETURNING id"
+)
+_INSERT_OWNER_GRANT = text(
+    "INSERT INTO rbac_grants (org_id, user_id, tier, granted_by) " "VALUES (:o, :u, 'owner', NULL)"
+)
+
+
+class TenantConflict(Exception):
+    """The slug or the Clerk organization already names a tenant.
+
+    Deliberately carries no detail about WHICH one collided: unique indexes are not subject to
+    RLS, so a 409 that named the constraint or echoed the value would be an existence oracle
+    over the customer base.
+    """
+
+
+@dataclass(frozen=True)
+class TenantOwner:
+    clerk_user_id: str
+    email: str
+
+
+@dataclass(frozen=True)
+class TenantProvisioned:
+    org_id: uuid.UUID
+    owner_user_id: uuid.UUID
+
+
+async def provision_tenant(
+    session: AsyncSession,
+    *,
+    name: str,
+    slug: str,
+    clerk_org_id: str,
+    owner: TenantOwner,
+    plan_code: str = "free",
+    org_id: uuid.UUID | None = None,
+) -> TenantProvisioned:
+    """Create a complete tenant atomically, or raise `TenantConflict`. Never links or reuses.
+
+    Unlike `provision_organization`, a slug that already exists is an error here, not an
+    idempotent no-op: on the request path a matching slug is somebody else's tenant. Request
+    retries are made safe by the `Idempotency-Key` middleware replaying the stored 201, not by
+    re-running this function into an existing row.
+
+    Leaves `app.current_org` set to the NEW tenant (that is what makes the tenant-scoped
+    inserts below pass RLS). A caller that writes anything for another tenant afterwards must
+    `set_rls` back first.
+    """
+    if (await session.execute(_SELECT_ORG_BY_CLERK_ID, {"c": clerk_org_id})).first():
+        raise TenantConflict
+    if (await session.execute(_SELECT_ORG_BY_SLUG, {"slug": slug})).first():
+        raise TenantConflict
+
+    result = await provision_organization(
+        session,
+        org_id=org_id or uuid.uuid4(),
+        name=name,
+        slug=slug,
+        plan_code=plan_code,
+        clerk_org_id=clerk_org_id,
+        link_existing=False,
+    )
+    if not result.created:
+        # Lost a race on the slug between the check above and the INSERT.
+        raise TenantConflict
+
+    # `provision_organization` set RLS to the new tenant before writing its outbox row; it is
+    # re-asserted here so this function does not depend on that ordering detail.
+    await set_rls(session, result.org_id)
+    params = {"o": str(result.org_id)}
+    await session.execute(_INSERT_TENANT_SETTINGS, params)
+    await session.execute(_INSERT_DATA_RESIDENCY, params)
+    owner_row = (
+        await session.execute(
+            _INSERT_OWNER_USER,
+            {**params, "cuid": owner.clerk_user_id, "email": owner.email},
+        )
+    ).one()
+    owner_user_id = uuid.UUID(str(owner_row[0]))
+    await session.execute(_INSERT_OWNER_GRANT, {**params, "u": str(owner_user_id)})
+
+    return TenantProvisioned(org_id=result.org_id, owner_user_id=owner_user_id)

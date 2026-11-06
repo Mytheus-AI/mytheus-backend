@@ -6,9 +6,12 @@ get_user_context (gRPC GetUserContext, org_id in metadata).
 """
 
 from libs.shared.app_factory import create_app
+from services.identity_tenant_service.pii_vault import routes as pii_vault_routes
 from services.identity_tenant_service.routes import (
     auth,
     context,
+    orgs,
+    rbac,
     scim,
     taxonomy,
     tenant_settings,
@@ -22,5 +25,8 @@ app.include_router(users.router)  # PATCH /users/{user_id} (role/skills/bio)
 app.include_router(context.router)  # GET /context/{user_id} (get_user_context, cached)
 app.include_router(taxonomy.router)  # GET /taxonomy/role-topics (role -> topics, versioned)
 app.include_router(tenant_settings.router)  # GET/PATCH /tenant-settings (pii_redaction_enabled)
-
-# TODO: add routers for /orgs /rbac
+app.include_router(orgs.router)  # GET /orgs (own tenant), POST /orgs (platform-operator provision)
+app.include_router(rbac.router)  # GET /rbac/grants, PUT/DELETE /rbac/grants/{user_id}
+# POST /pii-tokens/mint (INTERNAL, per-caller service secret; never routed by api-gateway) and
+# POST /pii-tokens/resolve (Clerk JWT, `admin` tier, audited).
+app.include_router(pii_vault_routes.router)

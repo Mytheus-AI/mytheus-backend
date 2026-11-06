@@ -560,3 +560,74 @@ async def test_a_poison_message_lands_in_the_dlq_and_does_not_block_the_partitio
     finally:
         await app_engine.dispose()
         await su.dispose()
+
+
+# --- tenant visibility: a created event may not reference another tenant's meeting ------------
+
+
+async def test_created_for_another_tenants_meeting_is_poison_and_writes_nothing(migrated_db):
+    """The FK `meeting_rooms.meeting_id -> meetings(id)` is checked with RLS bypassed, so
+    without the explicit visibility check a `created` event whose header says tenant A and
+    whose body names tenant B's meeting would upsert a tenant-A room pointing into tenant B."""
+    su = create_async_engine(migrated_db)
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    await seed_org(su, org_a, slug_prefix="mevis-a")
+    await seed_org(su, org_b, slug_prefix="mevis-b")
+    b_meeting = uuid.uuid4()
+    await _seed_meeting(su, org_b, b_meeting)
+
+    redis = fakeredis.aioredis.FakeRedis()
+    app_engine = create_async_engine(APP_URL)
+    value = _envelope(
+        str(org_a), str(uuid.uuid4()), meeting_id=str(b_meeting), event_type="created"
+    )
+    try:
+        with pytest.raises(PoisonMessage, match="not visible"):
+            async with app_engine.connect() as conn, conn.begin():
+                await handle_meeting_event(conn, redis, value)
+        assert await _meeting_room(app_engine, org_a, b_meeting) is None
+        assert await _meeting_room(app_engine, org_b, b_meeting) is None
+
+        # Through the poll-loop body it lands in the DLQ instead of crashing the consumer.
+        # A fresh idempotency key: the Redis dedupe check above already claimed the first.
+        dlq = _FakeDlqProducer()
+        await process_decoded_message(
+            _envelope(
+                str(org_a), str(uuid.uuid4()), meeting_id=str(b_meeting), event_type="created"
+            ),
+            raw_value=b"raw",
+            key=None,
+            session_factory=async_sessionmaker(app_engine, expire_on_commit=False),
+            redis=redis,
+            dlq_producer=dlq,
+            transport=FakeTransport(),
+        )
+        assert dlq.topics() == ["meeting-events.dlq"]
+        assert await _meeting_room(app_engine, org_a, b_meeting) is None
+    finally:
+        await app_engine.dispose()
+        await su.dispose()
+
+
+async def test_created_for_a_nonexistent_meeting_is_poison(migrated_db):
+    su = create_async_engine(migrated_db)
+    org = uuid.uuid4()
+    await seed_org(su, org, slug_prefix="mevis-n")
+    redis = fakeredis.aioredis.FakeRedis()
+    app_engine = create_async_engine(APP_URL)
+    try:
+        with pytest.raises(PoisonMessage, match="not visible"):
+            async with app_engine.connect() as conn, conn.begin():
+                await handle_meeting_event(
+                    conn,
+                    redis,
+                    _envelope(
+                        str(org),
+                        str(uuid.uuid4()),
+                        meeting_id=str(uuid.uuid4()),
+                        event_type="created",
+                    ),
+                )
+    finally:
+        await app_engine.dispose()
+        await su.dispose()

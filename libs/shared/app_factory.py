@@ -13,6 +13,7 @@ from redis.asyncio import from_url
 
 from libs.shared.errors import add_exception_handlers
 from libs.shared.idempotency import IdempotencyMiddleware
+from libs.shared.metrics import install as install_metrics
 from libs.shared.openapi import install as install_openapi
 from libs.shared.telemetry import setup_telemetry
 
@@ -34,5 +35,7 @@ def create_app(service_name: str) -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "service": service_name}
+
+    install_metrics(app, service_name)  # /metrics + request metrics (internal scrape only)
 
     return app

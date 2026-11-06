@@ -3,7 +3,7 @@
 Structural pattern mirrors `tests/test_org_model_reconciliation.py`: one module-scoped
 `TestClient` with `verify_token` overridden (no live Clerk needed), everything downstream real
 - `app.current_org`, RLS, the actual route and resolver bodies, and a REAL Redis at
-`REDIS_URL` (localhost:6380 for local dev / CI - this band's infrastructure is real, not
+`REDIS_URL` (localhost:6390 for local dev / CI - this band's infrastructure is real, not
 faked).
 
 The acceptance checks from the plan, each covered by name below:
@@ -186,7 +186,7 @@ def _seed_meeting(org_id: uuid.UUID, user_id: uuid.UUID, title: str = "Standup")
 
 
 def _redis_url() -> str:
-    return os.environ.get("REDIS_URL", "redis://localhost:6380")
+    return os.environ.get("REDIS_URL", "redis://localhost:6390")
 
 
 async def _ttl(key: str) -> int:
