@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 
 from fastapi import FastAPI
@@ -143,7 +143,20 @@ class MetricsMiddleware:
 
 # Headers added by public-facing proxies. A scrape from inside the network carries none; if one
 # is present the request came through ingress and /metrics must not answer.
-_INGRESS_HEADERS = ("x-forwarded-for", "x-forwarded-host", "cf-connecting-ip", "forwarded")
+_INGRESS_HEADERS = (
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "forwarded",
+)
+
+
+def came_through_ingress(headers: Mapping[str, str]) -> bool:
+    """True when any public-proxy header is present. ``headers`` must do case-insensitive
+    lookup (Starlette ``Headers`` does). The single check every ``/metrics`` guard uses,
+    including the api-gateway's ``edge_auth`` exemption."""
+    return any(h in headers for h in _INGRESS_HEADERS)
 
 
 def install(app: FastAPI, service_name_: str) -> None:
@@ -153,7 +166,7 @@ def install(app: FastAPI, service_name_: str) -> None:
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics(request: Request) -> Response:
-        if any(h in request.headers for h in _INGRESS_HEADERS):
+        if came_through_ingress(request.headers):
             return Response(status_code=404)
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 

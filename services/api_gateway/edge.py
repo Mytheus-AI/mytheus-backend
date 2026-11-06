@@ -27,6 +27,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from libs.shared.auth import clerk_org_id_from, verify_token
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail, problem_response
+from libs.shared.metrics import came_through_ingress
 from libs.shared.org_resolver import resolve_org_id
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,11 @@ PUBLIC_PREFIXES = (
     "/livekit/webhook",
     "/oauth/",
 )
+
+# The gateway's own Prometheus endpoint (mounted by `create_app`). Deliberately NOT in
+# PUBLIC_PATHS and never in ROUTE_MAP: it is exempt from the bearer check only for an internal
+# scrape, i.e. a GET that carries none of the ingress headers (`metrics.came_through_ingress`).
+METRICS_PATH = "/metrics"
 
 
 def _signing_key() -> bytes:
@@ -94,6 +100,14 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
     """
     if is_public(request.url.path):
         return await call_next(request)
+
+    if request.url.path == METRICS_PATH:
+        # Internal scrape: no token (Prometheus has no Clerk session). Anything that came
+        # through ingress, or is not a GET, gets the same 404 as an unknown path, so the
+        # endpoint's existence is not advertised publicly.
+        if request.method == "GET" and not came_through_ingress(request.headers):
+            return await call_next(request)
+        return problem_response(404, ErrorCode.NOT_FOUND, f"No service owns {METRICS_PATH}")
 
     # Strip any inbound copy of the internal headers. Without this, a client can simply send
     # `X-Mytheus-Org` itself and, if anything downstream ever trusts the header without

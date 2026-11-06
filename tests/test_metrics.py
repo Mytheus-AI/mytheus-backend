@@ -8,7 +8,7 @@ from prometheus_client import REGISTRY
 from starlette.testclient import TestClient
 
 from libs.shared import metrics
-from services.api_gateway import proxy
+from services.api_gateway import edge, proxy
 from services.api_gateway.edge import is_public, route_for
 
 
@@ -96,7 +96,9 @@ def test_consumer_and_outbox_helpers() -> None:
 def test_gateway_does_not_proxy_metrics() -> None:
     assert route_for("/metrics") is None
     assert route_for("/metrics/anything") is None
-    assert not is_public("/metrics")  # gateway's own /metrics stays behind edge_auth
+    # Not public: the gateway's own /metrics is exempt from edge_auth only for an internal
+    # scrape (see `test_gateway_metrics_*` below), never listed as a public path.
+    assert not is_public("/metrics")
 
     calls: list[str] = []
     up = FastAPI()
@@ -112,3 +114,79 @@ def test_gateway_does_not_proxy_metrics() -> None:
     r = TestClient(gw).get("/metrics")
     assert r.status_code == 404
     assert calls == []
+
+
+# --- api-gateway: /metrics vs edge_auth ---------------------------------------------------------
+
+_INGRESS = [
+    {"X-Forwarded-For": "1.2.3.4"},
+    {"X-Forwarded-Host": "app.example.com"},
+    {"X-Real-IP": "1.2.3.4"},
+    {"CF-Connecting-IP": "1.2.3.4"},
+    {"Forwarded": "for=1.2.3.4"},
+]
+
+
+def _gateway() -> tuple[TestClient, list[str]]:
+    """The real gateway wiring (create_app + edge_auth + proxy catch-all) with a fake upstream
+    that records every proxied path. No DB: every request here stops before tenant resolution."""
+    from libs.shared.app_factory import create_app
+
+    calls: list[str] = []
+    up = FastAPI()
+
+    @up.api_route("/{p:path}", methods=["GET", "POST"])
+    async def _any(p: str) -> dict[str, str]:
+        calls.append(p)
+        return {}
+
+    gw = create_app("api-gateway-metrics-test")
+    gw.middleware("http")(edge.edge_auth)
+    proxy.install(gw)
+    gw.state.proxy_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=up))
+    return TestClient(gw), calls
+
+
+def test_gateway_metrics_internal_scrape_needs_no_token() -> None:
+    c, calls = _gateway()
+    r = c.get("/metrics")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "mytheus_http_requests_total" in r.text
+    assert calls == []  # served by the gateway itself, never proxied
+
+
+def test_gateway_metrics_through_ingress_is_404() -> None:
+    c, calls = _gateway()
+    for headers in _INGRESS:
+        assert c.get("/metrics", headers=headers).status_code == 404, headers
+        # A bearer token does not change that: ingress never reaches /metrics.
+        r = c.get("/metrics", headers={**headers, "Authorization": "Bearer x"})
+        assert r.status_code == 404, headers
+    assert calls == []
+
+
+def test_gateway_metrics_exemption_is_get_only_and_exact_path() -> None:
+    c, calls = _gateway()
+    assert c.post("/metrics").status_code == 404
+    # Not the exempt path: falls into normal edge auth.
+    assert c.get("/metrics/extra").status_code == 401
+    assert calls == []
+    assert "/metrics" not in edge.ROUTE_MAP and route_for("/metrics") is None
+
+
+def test_gateway_other_routes_still_require_auth() -> None:
+    c, calls = _gateway()
+    for path in ("/api/v1/meetings", "/bff/dashboard", "/orgs"):
+        r = c.get(path)
+        assert r.status_code == 401, path
+        assert r.json()["code"] == "AUTH_REQUIRED"
+    assert calls == []
+
+
+def test_came_through_ingress_is_case_insensitive() -> None:
+    from starlette.datastructures import Headers
+
+    assert metrics.came_through_ingress(Headers({"x-real-ip": "1.2.3.4"}))
+    assert metrics.came_through_ingress(Headers({"Forwarded": "for=1.2.3.4"}))
+    assert not metrics.came_through_ingress(Headers({"user-agent": "Prometheus/2.53"}))

@@ -8,13 +8,15 @@ Every series carries `service` (the `create_app` name, `SERVICE_NAME`, or the wo
 
 ## Exposure
 - HTTP services: `GET /metrics` on the service port, mounted by `create_app`. Returns 404 when the
-  request carries `X-Forwarded-For`, `X-Forwarded-Host`, `Forwarded` or `CF-Connecting-IP`
-  (i.e. came through ingress). Scrape service-to-service on the internal network only.
-- api-gateway: `/metrics` is not in `ROUTE_MAP` (never proxied) and not in `PUBLIC_PATHS`, so the
-  gateway's own endpoint requires a bearer token via `edge_auth`. Prometheus cannot scrape it
-  through `edge_auth` today; Grafana/ops must either scrape the gateway on a separate internal
-  port or allow `/metrics` in `edge.PUBLIC_PATHS` once ingress strips it. Open follow-up.
-- Workers (relay, Kafka consumers): set `METRICS_PORT` (e.g. 9100) to start a standalone exporter.
+  request carries `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`, `Forwarded` or
+  `CF-Connecting-IP` (i.e. came through ingress). One check, `metrics.came_through_ingress()`,
+  used by every guard. Scrape service-to-service on the internal network only.
+- api-gateway: `/metrics` is not in `ROUTE_MAP` (never proxied) and not in `PUBLIC_PATHS`.
+  `edge_auth` exempts exactly `GET /metrics` from the bearer check when
+  `came_through_ingress()` is false, so Prometheus scrapes the gateway on the internal network
+  without a token. Any `/metrics` request carrying an ingress header, or using another method,
+  gets 404 at the edge, token or not.
+- Workers (relay, Kafka consumers, the audio tap worker): set `METRICS_PORT` (e.g. 9100) to start a standalone exporter.
 - realtime-gateway: `GET /metrics` on its HTTP port, same ingress-header rule.
 
 ## HTTP (all `create_app` services)
