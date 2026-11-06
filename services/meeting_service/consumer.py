@@ -84,6 +84,7 @@ from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_ended,
+    meeting_is_visible,
     sync_livekit_metadata,
 )
 from services.meeting_service.transport import MeetingTransport, select_transport
@@ -190,6 +191,15 @@ async def handle_meeting_event(
     # `meeting_id` are the only fields this handler needs, and both are validated above.
     pending_room_sync: tuple[uuid.UUID, str] | None = None
     if event_type == "created":
+        # Explicit tenant-visibility check before `meeting_id` becomes a foreign key: the FK
+        # check bypasses RLS, so without this a `created` event whose header names tenant A
+        # and whose body names tenant B's meeting would upsert a tenant-A room pointing into
+        # tenant B. Not visible (absent, soft-deleted, or another tenant's) is a header/body
+        # mismatch this consumer cannot safely apply: poison -> DLQ, never block the partition.
+        if not await meeting_is_visible(session, meeting_id):
+            raise PoisonMessage(
+                f"meeting-events created: meeting {meeting_id} is not visible to org {org_id}"
+            )
         result = await ensure_meeting_room(session, org_id, meeting_id)
         if result.needs_livekit_sync:
             pending_room_sync = (org_id, result.room)

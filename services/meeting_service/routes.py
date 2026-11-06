@@ -66,7 +66,11 @@ from libs.shared.authz import RequestContext, not_found, tenant_context
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
-from services.meeting_service.rooms import ensure_meeting_room, sync_livekit_metadata
+from services.meeting_service.rooms import (
+    ensure_meeting_room,
+    meeting_is_visible,
+    sync_livekit_metadata,
+)
 from services.meeting_service.schemas import TokenResponse
 from services.meeting_service.transport import MeetingTransport, select_transport
 
@@ -108,13 +112,7 @@ async def _fetch_meeting_or_404(session: AsyncSession, meeting_id: uuid.UUID) ->
     """RLS-scoped existence check. No `org_id` predicate: RLS already scopes it (matches
     `core_api.routes.meetings._fetch_meeting`), so a cross-tenant id is invisible rather than
     excluded by a query this route could forget to write."""
-    row = (
-        await session.execute(
-            text("SELECT id FROM meetings WHERE id = :id AND deleted_at IS NULL"),
-            {"id": str(meeting_id)},
-        )
-    ).first()
-    if row is None:
+    if not await meeting_is_visible(session, meeting_id):
         raise not_found()
 
 
