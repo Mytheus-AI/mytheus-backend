@@ -48,6 +48,13 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
+from libs.shared.metrics import (
+    observe_consumer_lag,
+    record_dlq,
+    record_processed,
+    serve_metrics,
+    set_service,
+)
 from libs.shared.tenancy import set_rls
 
 logger = logging.getLogger(__name__)
@@ -125,6 +132,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
 
     from libs.shared.db import get_sessionmaker
 
+    set_service("core-api-consumer")
+    serve_metrics()  # no-op unless METRICS_PORT is set
     brokers = os.environ.get("REDPANDA_BROKERS", "localhost:9092")
     sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
     redis: Redis[bytes] = redis_from_url(
@@ -157,12 +166,15 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 continue
             raw_value = msg.value()
             topic_name = msg.topic() or TOPIC
+            _ts_type, _ts = msg.timestamp()
+            observe_consumer_lag(CONSUMER_GROUP, TOPIC, _ts if _ts_type else None)
             try:
                 value = deserializer(
                     raw_value, SerializationContext(topic_name, MessageField.VALUE)
                 )
                 async with session_factory() as session, session.begin():
-                    await handle_presence_event(session, redis, value)
+                    applied = await handle_presence_event(session, redis, value)
+                record_processed(CONSUMER_GROUP, TOPIC, "applied" if applied else "duplicate")
             except PoisonMessage as exc:
                 logger.error("presence-events: poison message routed to DLQ: %s", exc)
                 dlq_producer.produce(
@@ -173,6 +185,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                     ).encode(),
                 )
                 dlq_producer.flush(10)
+                record_dlq(CONSUMER_GROUP, TOPIC, "POISON")
+                record_processed(CONSUMER_GROUP, TOPIC, "dlq")
             consumer.commit(message=msg)
     finally:
         consumer.close()

@@ -31,6 +31,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from libs.shared.metrics import serve_metrics, set_service
 from libs.shared.relay import relay_once
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,8 @@ async def run() -> None:
             "mytheus_app the fail-closed policy hides every row and this relay will report "
             "an empty queue forever (defect D4)."
         )
+    set_service("relay")
+    serve_metrics()  # no-op unless METRICS_PORT is set (internal scrape port)
     engine = create_async_engine(url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     producer = ConfluentRelayProducer(

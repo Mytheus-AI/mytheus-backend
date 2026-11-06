@@ -27,12 +27,16 @@ from typing import Any, Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.shared.metrics import record_outbox
+
 logger = logging.getLogger(__name__)
 
 # How many times a row may fail to serialize or produce before it is dead-lettered. Low on
 # purpose: these failures are almost always deterministic (a schema mismatch), so retrying
 # many times only delays the DLQ while the row holds up its partition key's ordering.
 MAX_ATTEMPTS = 5
+
+_COUNT_PENDING = text("SELECT count(*) FROM outbox WHERE published_at IS NULL")
 
 _SELECT_PENDING = text(
     "SELECT id, topic, partition_key, schema_subject, payload, attempts "
@@ -74,6 +78,7 @@ async def relay_once(session: AsyncSession, producer: RelayProducer, *, limit: i
     """
     rows = (await session.execute(_SELECT_PENDING, {"limit": limit})).mappings().all()
     if not rows:
+        record_outbox(backlog=0)
         return 0
 
     produced_ids: list[int] = []
@@ -123,6 +128,14 @@ async def relay_once(session: AsyncSession, producer: RelayProducer, *, limit: i
         await session.execute(_BUMP_ATTEMPTS, {"ids": retry_ids})
     if dead_ids:
         await session.execute(_MARK_DEAD_LETTERED, {"ids": dead_ids})
+
+    backlog: int | None = None
+    try:
+        async with session.begin_nested():  # savepoint: a failure must not poison the txn
+            backlog = int((await session.execute(_COUNT_PENDING)).scalar_one())
+    except Exception:  # noqa: BLE001 - a metrics query must never fail a drain
+        logger.debug("outbox relay: backlog count failed", exc_info=True)
+    record_outbox(published=len(produced_ids), poisoned=len(dead_ids), backlog=backlog)
 
     return len(produced_ids)
 
