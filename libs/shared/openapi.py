@@ -54,6 +54,9 @@ _UNIVERSAL_ERRORS: dict[str, str] = {
 _AUTHENTICATED_ERRORS: dict[str, str] = {
     "401": "No bearer token, or a token that is expired, malformed or fails JWKS verification.",
 }
+_SERVICE_CREDENTIAL_401 = (
+    "Missing or invalid credentials for this operation's own security scheme (not a bearer token)."
+)
 
 
 def _problem_response(description: str) -> dict[str, Any]:
@@ -259,6 +262,11 @@ def finalize(schema: dict[str, Any]) -> dict[str, Any]:
             documented = dict(_UNIVERSAL_ERRORS)
             if not public:
                 documented.update(_AUTHENTICATED_ERRORS)
+                # An operation that still carries its own `security` block here declares a
+                # non-bearer scheme (e.g. the pii-vault's internal service secret), so the
+                # bearer-specific 401 text would overstate.
+                if operation.get("security"):
+                    documented["401"] = _SERVICE_CREDENTIAL_401
             for status, description in documented.items():
                 responses.setdefault(status, _problem_response(description))
 

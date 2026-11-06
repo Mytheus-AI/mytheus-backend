@@ -1,7 +1,7 @@
 """The unavailable-NER decision, as code the redaction boundaries can call.
 
-ADR-0020 left this to Security/Compliance. ADR-0020's amendment records a PROPOSED default,
-pending the user's decision: when `ner-service` is unreachable and the tenant has
+ADR-0020 left this to Security/Compliance. DECIDED by the lead (2026-11-06), confirming the
+default ADR-0020's amendment proposed: when `ner-service` is unreachable and the tenant has
 `pii_redaction_enabled`, the final is HELD (not persisted), never persisted regex-only and
 never persisted raw. Losing (or delaying) a final is recoverable - it can be retried from the
 held buffer, or re-transcribed from the recording - while a persisted row carrying names and
@@ -23,7 +23,7 @@ class FinalDisposition(StrEnum):
 
 
 def final_disposition(*, pii_redaction_enabled: bool, ner_available: bool) -> FinalDisposition:
-    """PROPOSED default (ADR-0020 amendment): fail closed when NER is unavailable."""
+    """Decided (ADR-0020 amendment, lead 2026-11-06): fail closed when NER is unavailable."""
     if not pii_redaction_enabled:
         return FinalDisposition.PERSIST
     return FinalDisposition.PERSIST if ner_available else FinalDisposition.HOLD

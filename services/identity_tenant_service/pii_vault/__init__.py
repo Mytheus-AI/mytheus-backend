@@ -3,6 +3,6 @@
 - `vault.PiiVault`        mint / resolve against `pii_tokens` (envelope-encrypted values,
                           keyed blind index, audited resolve).
 - `routes.router`         `POST /pii-tokens/mint` (internal) and `POST /pii-tokens/resolve`
-                          (RBAC-gated). Not yet mounted on the app.
-- `policy`                the PROPOSED unavailable-NER default (fail closed: hold the final).
+                          (RBAC-gated, `admin`). Mounted in `main.py`.
+- `policy`                the DECIDED unavailable-NER rule (fail closed: hold the final).
 """

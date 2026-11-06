@@ -20,6 +20,19 @@ components:
       - name
       title: DepartmentRef
       type: object
+    EntityType:
+      description: Canon `_canon/02-data-model.md` `pii_tokens.entity_type`. Mirrored by a CHECK.
+      enum:
+      - EMAIL
+      - PHONE
+      - IBAN
+      - CARD
+      - GOVID
+      - PERSON
+      - ORG
+      - LOC
+      title: EntityType
+      type: string
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -90,6 +103,46 @@ components:
       - scheduled_start
       - scheduled_end
       title: MeetingRef
+      type: object
+    MintRequest:
+      properties:
+        spans:
+          items:
+            $ref: '#/components/schemas/Span'
+          maxItems: 256
+          minItems: 1
+          title: Spans
+          type: array
+      required:
+      - spans
+      title: MintRequest
+      type: object
+    MintResponse:
+      properties:
+        tokens:
+          items:
+            $ref: '#/components/schemas/MintedSpan'
+          title: Tokens
+          type: array
+      required:
+      - tokens
+      title: MintResponse
+      type: object
+    MintedSpan:
+      properties:
+        entity_type:
+          $ref: '#/components/schemas/EntityType'
+        placeholder:
+          title: Placeholder
+          type: string
+        token:
+          title: Token
+          type: string
+      required:
+      - entity_type
+      - token
+      - placeholder
+      title: MintedSpan
       type: object
     OrgCreate:
       additionalProperties: false
@@ -297,6 +350,58 @@ components:
       - tier
       title: RbacGrantUpdate
       type: object
+    ResolveRequest:
+      properties:
+        reason:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Reason
+        tokens:
+          items:
+            type: string
+          maxItems: 100
+          minItems: 1
+          title: Tokens
+          type: array
+      required:
+      - tokens
+      title: ResolveRequest
+      type: object
+    ResolveResponse:
+      properties:
+        unresolved:
+          items:
+            type: string
+          title: Unresolved
+          type: array
+        values:
+          items:
+            $ref: '#/components/schemas/ResolvedValue'
+          title: Values
+          type: array
+      required:
+      - values
+      - unresolved
+      title: ResolveResponse
+      type: object
+    ResolvedValue:
+      properties:
+        entity_type:
+          $ref: '#/components/schemas/EntityType'
+        token:
+          title: Token
+          type: string
+        value:
+          title: Value
+          type: string
+      required:
+      - token
+      - entity_type
+      - value
+      title: ResolvedValue
+      type: object
     RoleTopicsResponse:
       description: '`GET /taxonomy/role-topics` response - the full role->topics map for one pinned
 
@@ -320,6 +425,20 @@ components:
       - version
       - roles
       title: RoleTopicsResponse
+      type: object
+    Span:
+      properties:
+        entity_type:
+          $ref: '#/components/schemas/EntityType'
+        value:
+          maxLength: 1024
+          minLength: 1
+          title: Value
+          type: string
+      required:
+      - entity_type
+      - value
+      title: Span
       type: object
     TeamRef:
       description: 'A team membership as it appears inside `UserContext.team`. Not the full `Team`
@@ -553,6 +672,12 @@ components:
         a path, query, body or client header.
       scheme: bearer
       type: http
+    MytheusServiceToken:
+      description: INTERNAL ONLY. Per-caller shared secret from MYTHEUS_PII_VAULT_CALLER_TOKENS, sent
+        with `X-Mytheus-Service` (caller name) and `X-Mytheus-Org` (tenant). Never routed by api-gateway.
+      in: header
+      name: X-Mytheus-Service-Token
+      type: apiKey
 info:
   title: identity-tenant-service
   version: 1.0.0
@@ -739,6 +864,95 @@ paths:
       summary: Provision Org
       tags:
       - orgs
+  /pii-tokens/mint:
+    post:
+      operationId: mint_tokens
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MintResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Mint Tokens
+      tags:
+      - pii-vault
+  /pii-tokens/resolve:
+    post:
+      operationId: resolve_tokens
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Resolve Tokens
+      tags:
+      - pii-vault
   /rbac/grants:
     get:
       description: Keyset page of the caller's tenant's grants, by `user_id`. RLS scopes it to the tenant.

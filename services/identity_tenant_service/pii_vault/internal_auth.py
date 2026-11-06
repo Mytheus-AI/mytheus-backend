@@ -23,8 +23,10 @@ import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Request, Security
+from fastapi.security import APIKeyHeader
 
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
@@ -37,6 +39,21 @@ ORG_HEADER = "x-mytheus-org"
 # ADR-0020 D2: the redaction boundaries, and nobody else.
 ALLOWED_CALLERS = frozenset(
     {"transcription-service", "ingestion-service", "agent-runtime-service", "rag-service"}
+)
+
+
+# Declared as a security scheme so the emitted OpenAPI document says how this route is really
+# authenticated (a service secret header), instead of inheriting the document-level Clerk bearer
+# default. `auto_error=False`: the checks below decide, and fail closed with the same 401.
+service_token_scheme = APIKeyHeader(
+    name="X-Mytheus-Service-Token",
+    scheme_name="MytheusServiceToken",
+    description=(
+        "INTERNAL ONLY. Per-caller shared secret from MYTHEUS_PII_VAULT_CALLER_TOKENS, sent with "
+        "`X-Mytheus-Service` (caller name) and `X-Mytheus-Org` (tenant). Never routed by "
+        "api-gateway."
+    ),
+    auto_error=False,
 )
 
 
@@ -76,7 +93,10 @@ def authenticate_service(headers: Mapping[str, str], tokens: Mapping[str, bytes]
     return service
 
 
-async def internal_caller(request: Request) -> InternalCaller:
+async def internal_caller(
+    request: Request,
+    _token: Annotated[str | None, Security(service_token_scheme)] = None,
+) -> InternalCaller:
     """FastAPI dependency: authenticated boundary service + active tenant, or refuse."""
     try:
         tokens = parse_caller_tokens(os.environ.get("MYTHEUS_PII_VAULT_CALLER_TOKENS", ""))

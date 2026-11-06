@@ -9,13 +9,13 @@ retried call returns the same tokens and needs no `Idempotency-Key`.
 `POST /pii-tokens/resolve` - USER-FACING, RBAC-gated and audited. Reversal is "in-region,
 in-tenant, for authorized members" (ADR-0020); the caller's Clerk JWT goes through the full
 `libs/shared/authz` chain, and every token requested writes an `audit_logs` row in the same
-transaction as the read. `RESOLVE_MIN_TIER` is `admin` as the conservative default; whether
-members may resolve is flagged for the user's decision (ADR-0024). POST rather than GET so
-tokens never land in access logs as query strings; `Cache-Control: no-store` on the answer.
+transaction as the read. `RESOLVE_MIN_TIER` is `admin`: DECIDED by the lead (2026-11-06),
+members may not resolve (ADR-0024). POST rather than GET so tokens never land in access logs as
+query strings; `Cache-Control: no-store` on the answer.
 
-NOT mounted on the service app yet: `services/identity_tenant_service/main.py` needs
-`app.include_router(pii_vault.routes.router)`, which also regenerates the committed OpenAPI
-document (ADR-0022). Left to the integrating change on purpose.
+Mounted in `services/identity_tenant_service/main.py`; the committed OpenAPI document is
+regenerated from it (ADR-0022). `api-gateway`'s ROUTE_MAP has no `/pii-tokens` entry, and
+`tests/test_gateway_edge.py` asserts it never will.
 """
 
 from __future__ import annotations
