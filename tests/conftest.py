@@ -1,6 +1,6 @@
 """Shared fixtures for the backend tests.
 
-Tests run against the local dev stack: an isolated test Postgres (default localhost:5433), the
+Tests run against the local dev stack: an isolated test Postgres (default localhost:5443), the
 compose Redpanda (localhost:9092 / :8081), and fakeredis for Redis-only unit tests. Env is set
 here BEFORE any app module imports. Tests that need a service they cannot reach skip gracefully.
 
@@ -25,11 +25,11 @@ import os
 import psycopg2
 import pytest
 
-_DEFAULT_BOOTSTRAP = "postgresql+asyncpg://postgres:postgres@localhost:5433/mytheus"
+_DEFAULT_BOOTSTRAP = "postgresql+asyncpg://postgres:postgres@localhost:5443/mytheus"
 
 os.environ.setdefault("REDPANDA_BROKERS", "localhost:9092")
-os.environ.setdefault("SCHEMA_REGISTRY_URL", "http://localhost:8081")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6380")
+os.environ.setdefault("SCHEMA_REGISTRY_URL", "http://localhost:8085")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6390")
 
 # The schema owner, read from BOOTSTRAP_DATABASE_URL and NOT from DATABASE_URL. Since
 # section 3.3, `DATABASE_URL` names `mytheus_app` in any correctly configured environment,
@@ -115,7 +115,7 @@ def migrated_db() -> str:
                 "Refusing to skip: skipped isolation tests report green without proving "
                 "anything, which is defect D7."
             )
-        pytest.skip("test Postgres not reachable (expected on localhost:5433)")
+        pytest.skip("test Postgres not reachable (expected on localhost:5443)")
 
     from alembic import command
     from alembic.config import Config

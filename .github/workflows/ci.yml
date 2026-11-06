@@ -14,7 +14,7 @@ on:
     branches: [main]
 
 env:
-  # Ports match docker-compose.yml and tests/conftest.py: 5433/6380, so a developer and CI
+  # Ports match docker-compose.yml and tests/conftest.py: 5443/6390, so a developer and CI
   # run the identical configuration. Disagreement here is what defect D7 was.
   #
   # Both URLs are set, and set to DIFFERENT roles on purpose. The suite seeds cross-tenant
@@ -22,9 +22,9 @@ env:
   # would make every isolation test pass while proving nothing, because the owner is not
   # subject to the policies. That is the shape defect D1 took, so CI must run the same split a
   # developer does.
-  BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/mytheus
-  DATABASE_URL: postgresql+asyncpg://mytheus_app:mytheus_app@localhost:5433/mytheus
-  REDIS_URL: redis://localhost:6380
+  BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5443/mytheus
+  DATABASE_URL: postgresql+asyncpg://mytheus_app:mytheus_app@localhost:5443/mytheus
+  REDIS_URL: redis://localhost:6390
   REDPANDA_BROKERS: localhost:9092
   SCHEMA_REGISTRY_URL: http://localhost:8081
 
@@ -48,7 +48,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: mytheus
         ports:
-          - 5433:5432
+          - 5443:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
@@ -57,7 +57,7 @@ jobs:
       redis:
         image: redis:7-alpine
         ports:
-          - 6380:6379
+          - 6390:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -112,7 +112,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: mytheus
         ports:
-          - 5433:5432
+          - 5443:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
@@ -136,12 +136,12 @@ jobs:
           uv run python -m scripts.bootstrap_roles
           # Grant BYPASSRLS deliberately and assert the script catches it. A guard nobody has
           # seen fail is a guard nobody knows works.
-          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d mytheus \
+          PGPASSWORD=postgres psql -h localhost -p 5443 -U postgres -d mytheus \
             -c "ALTER ROLE mytheus_app BYPASSRLS;"
           if uv run python -m scripts.bootstrap_roles; then
             echo "::error::bootstrap_roles accepted a role holding BYPASSRLS"; exit 1
           fi
-          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d mytheus \
+          PGPASSWORD=postgres psql -h localhost -p 5443 -U postgres -d mytheus \
             -c "ALTER ROLE mytheus_app NOBYPASSRLS;"
 
   authz-check:

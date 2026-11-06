@@ -89,7 +89,7 @@ def real_redis():
     passing if it is unreachable: a green run that never checked the mirror is worthless here."""
     import os
 
-    url = os.environ.get("REDIS_URL", "redis://localhost:6380")
+    url = os.environ.get("REDIS_URL", "redis://localhost:6390")
     r = redis_sync.from_url(url)
     try:
         r.ping()

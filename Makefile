@@ -89,7 +89,7 @@ run-core-api:
 	uv run uvicorn services.core_api.main:app --reload --port 8002
 
 run-identity:
-	uv run uvicorn services.identity_tenant_service.main:app --reload --port 8001
+	uv run uvicorn services.identity_tenant_service.main:app --reload --port 8011
 
 run-bff:
 	uv run uvicorn services.bff.main:app --reload --port 8000

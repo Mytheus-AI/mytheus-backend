@@ -135,7 +135,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     set_service("core-api-consumer")
     serve_metrics()  # no-op unless METRICS_PORT is set
     brokers = os.environ.get("REDPANDA_BROKERS", "localhost:9092")
-    sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
+    sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8085")
     redis: Redis[bytes] = redis_from_url(
         os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
     )

@@ -174,7 +174,7 @@ The Session-1 change (Clerk → Supabase Auth) contradicted the frozen program d
 
 ### Verification (Phase 0B/0C green)
 
-`make ci` is green end-to-end: **ruff + black** clean (59 files), **mypy strict** clean (49 source files), **11 pytest** pass — RLS isolation, outbox/inbox idempotency, idempotency-replay, relay real-bus round-trip, gRPC fail-closed, and the Clerk auth suite. Tests run against isolated dev engines (`mytheus-pg-test` on `:5433`, `mytheus-redis-test` on `:6380`) so they never disturb other local projects that hold `:5432`/`:6379`.
+`make ci` is green end-to-end: **ruff + black** clean (59 files), **mypy strict** clean (49 source files), **11 pytest** pass — RLS isolation, outbox/inbox idempotency, idempotency-replay, relay real-bus round-trip, gRPC fail-closed, and the Clerk auth suite. Tests run against isolated dev engines (`mytheus-pg-test` on `:5443`, `mytheus-redis-test` on `:6390`) so they never disturb other local projects that hold `:5432`/`:6379`.
 
 Two small typing decisions (documented so they are not "mysterious ignores"):
 - **`mypy exclude` adds `tests/` + root `conftest.py`.** Test bodies are not strict-typed (pytest fixtures/monkeypatch are dynamically typed); production code under `libs/` + `services/` remains fully `strict`. `identity_pb2*` and `migrations/` were already excluded.

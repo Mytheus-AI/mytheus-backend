@@ -2,7 +2,7 @@
 
 Mirrors `libs.shared.db.get_engine`/`get_sessionmaker`: lazy, process-wide, `lru_cache`d so
 importing this module never requires `REDIS_URL` to be set, and so every caller shares one
-connection pool rather than opening its own. `REDIS_URL` for local dev is `redis://localhost:6380`
+connection pool rather than opening its own. `REDIS_URL` for local dev is `redis://localhost:6390`
 (NOT the 6379 default - see `.env.example`).
 
 `redis_key` raises if `org_id` is falsy. A cache key missing its tenant is exactly how one
