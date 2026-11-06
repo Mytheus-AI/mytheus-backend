@@ -102,7 +102,11 @@ def make_s3_client(cfg: RecordingConfig) -> Any:
         region_name=cfg.region,
         aws_access_key_id=cfg.access_key_id,
         aws_secret_access_key=cfg.secret_access_key,
-        config=Config(s3={"addressing_style": "path" if cfg.force_path_style else "auto"}),
+        config=Config(
+            s3={"addressing_style": "path" if cfg.force_path_style else "auto"},
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
     )
 
 
