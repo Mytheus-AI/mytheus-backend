@@ -91,6 +91,84 @@ components:
       - scheduled_end
       title: MeetingRef
       type: object
+    OrgCreate:
+      additionalProperties: false
+      description: '`POST /orgs` body. There is no `org_id` field: the id is minted server-side.'
+      properties:
+        clerk_org_id:
+          pattern: ^org_[A-Za-z0-9]{1,64}$
+          title: Clerk Org Id
+          type: string
+        name:
+          maxLength: 200
+          minLength: 1
+          title: Name
+          type: string
+        owner:
+          $ref: '#/components/schemas/OrgOwner'
+        slug:
+          pattern: ^[a-z0-9][a-z0-9-]{1,62}$
+          title: Slug
+          type: string
+      required:
+      - name
+      - slug
+      - clerk_org_id
+      - owner
+      title: OrgCreate
+      type: object
+    OrgOwner:
+      additionalProperties: false
+      description: 'The tenant''s first owner. Becomes a `users` mirror row plus an `owner` `rbac_grants`
+
+        row in the provisioning transaction; Clerk''s later `user.*` webhook converges the mirror.'
+      properties:
+        clerk_user_id:
+          pattern: ^user_[A-Za-z0-9]{1,64}$
+          title: Clerk User Id
+          type: string
+        email:
+          maxLength: 320
+          minLength: 3
+          pattern: ^[^@\s]+@[^@\s]+$
+          title: Email
+          type: string
+      required:
+      - clerk_user_id
+      - email
+      title: OrgOwner
+      type: object
+    Organization:
+      description: 'The tenant root, restricted to the columns `mytheus_app` may read at all (migration
+
+        `a1c4e7f20b18` grants SELECT on `id, clerk_org_id, name, slug, status, deleted_at` only).'
+      properties:
+        clerk_org_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Clerk Org Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        slug:
+          title: Slug
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - name
+      - slug
+      - status
+      - clerk_org_id
+      title: Organization
+      type: object
     Problem:
       description: 'RFC 7807 problem detail. Every 4xx and 5xx this service emits has this shape, including
         the ones FastAPI would otherwise return in its own format: `libs/shared/errors.py` registers handlers
@@ -123,6 +201,101 @@ components:
       - title
       - status
       - code
+      type: object
+    ProvisionedOrganization:
+      properties:
+        clerk_org_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Clerk Org Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        owner_user_id:
+          format: uuid
+          title: Owner User Id
+          type: string
+        slug:
+          title: Slug
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - name
+      - slug
+      - status
+      - clerk_org_id
+      - owner_user_id
+      title: ProvisionedOrganization
+      type: object
+    RbacGrant:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        granted_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Granted By
+        tier:
+          enum:
+          - owner
+          - admin
+          - member
+          title: Tier
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - tier
+      - granted_by
+      - created_at
+      title: RbacGrant
+      type: object
+    RbacGrantPage:
+      description: Keyset page over `rbac_grants`, ordered by `user_id`. `next_cursor` is opaque.
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/RbacGrant'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - items
+      title: RbacGrantPage
+      type: object
+    RbacGrantUpdate:
+      additionalProperties: false
+      description: '`PUT /rbac/grants/{user_id}` body: set this user''s tier, creating the grant if absent.'
+      properties:
+        tier:
+          enum:
+          - owner
+          - admin
+          - member
+          title: Tier
+          type: string
+      required:
+      - tier
+      title: RbacGrantUpdate
       type: object
     RoleTopicsResponse:
       description: '`GET /taxonomy/role-topics` response - the full role->topics map for one pinned
@@ -487,6 +660,221 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /orgs:
+    get:
+      description: 'The organization the caller''s token is scoped to, and only that one.
+
+
+        A collection path returning one object, deliberately: `/orgs/{id}` would put a tenant
+
+        identifier in the path (`org-id-never-in-path` in `design/.spectral.yaml`), and a list
+
+        would only ever have one visible member anyway.'
+      operationId: read_own_org
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Read Own Org
+      tags:
+      - orgs
+    post:
+      description: 'Create a complete tenant: root, settings, residency, owner + grant, outbox, audit.
+
+
+        `Idempotency-Key` is honoured by the shared middleware (scoped to the OPERATOR''s tenant),
+
+        so a retried request replays the stored 201. Without a key, a repeat is a 409.'
+      operationId: provision_org
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisionedOrganization'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Provision Org
+      tags:
+      - orgs
+  /rbac/grants:
+    get:
+      description: Keyset page of the caller's tenant's grants, by `user_id`. RLS scopes it to the tenant.
+      operationId: list_grants
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RbacGrantPage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Grants
+      tags:
+      - rbac
+  /rbac/grants/{user_id}:
+    delete:
+      description: 'Remove `user_id`''s grant. A user with no grant is a 204 no-op (and writes no audit
+        row).
+
+
+        The user row is untouched: they stay a tenant member with no tier, which the authz chain
+
+        treats as satisfying nothing.'
+      operationId: revoke_grant
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Revoke Grant
+      tags:
+      - rbac
+    put:
+      description: Set `user_id`'s tier, creating the grant if absent. Idempotent in the value written.
+      operationId: set_grant
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RbacGrantUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RbacGrant'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Set Grant
+      tags:
+      - rbac
   /scim/v2/Groups:
     get:
       operationId: list_groups
