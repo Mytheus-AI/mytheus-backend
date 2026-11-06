@@ -20,7 +20,10 @@ from sqlalchemy import engine_from_config, pool
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the default disables every logger created before this
+    # runs, so any process that migrates in-process (the test session's `migrated_db`
+    # fixture) silently lost all application logging - and every caplog assertion after it.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Import every service's models so autogenerate sees all tables.
 # (later bands append their service model imports here)
