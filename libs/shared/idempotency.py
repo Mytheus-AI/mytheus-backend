@@ -36,8 +36,19 @@ has been in the frozen enum since Plan 0 with nothing emitting it; this is what 
 Rejecting is deliberate, rather than silently giving each route its own key space. A client
 reusing one key for two different operations has a bug, and splitting the namespace would
 hide it while quietly removing the guarantee the client thinks it has. The fingerprint covers
-method, path and query string, not the body: reading the body here would consume the ASGI
-receive stream that the route still has to read.
+method, path, query string AND a SHA-256 of the body (gap 3): the same key replayed against the
+same route with a different payload is a different operation and is rejected with the same 409,
+never answered with the first payload's response. Reading the body here is safe on Starlette's
+BaseHTTPMiddleware, which caches it and re-feeds it to the route (`_CachedRequest`); a test
+pins that the route still sees the full body.
+
+Concurrent duplicates (gap 3). Two requests carrying the same key that arrive before the first
+has finished used to both miss the cache and both run the handler - the double-execution the
+header exists to prevent. The first request now claims the key with an atomic `SET NX`
+in-progress marker; a duplicate that arrives while it is held gets 409
+`IDEMPOTENCY_KEY_REUSED` with `Retry-After`, and a retry after completion replays normally.
+The marker has a short TTL so a crashed worker cannot wedge a key for 24h, and it is released
+when the handler fails or returns a non-2xx, so the client's retry reaches the handler.
 
 Error caching. Every response was cached regardless of status, so a 500 from a transient
 dependency failure was pinned for the full 24h TTL and every retry with that key replayed the
@@ -47,8 +58,10 @@ with an idempotency key is trying to achieve. Only 2xx responses are stored now.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 from collections.abc import Awaitable, Callable
 from typing import cast
 from uuid import UUID
@@ -64,6 +77,10 @@ from libs.shared.errors import ErrorCode, problem_response
 logger = logging.getLogger(__name__)
 
 _TTL = 86_400  # 24 h
+# How long an in-progress claim survives without completing. Long enough to cover any handler
+# we run synchronously; short enough that a worker killed mid-request frees the key quickly.
+_IN_PROGRESS_TTL = 120
+_IN_PROGRESS = "in_progress"
 _MUTATING = ("POST", "PUT", "PATCH")
 
 # Resolves the tenant for a request, or None if there is not one. Injected rather than
@@ -83,16 +100,13 @@ def cache_key(org_id: UUID, idempotency_key: str) -> str:
     return f"nexus:{org_id}:idem:{idempotency_key}"
 
 
-def request_fingerprint(request: Request) -> str:
-    """Identifies the request a stored response belongs to.
-
-    Method, path and query string only. The body is excluded because reading it here would
-    consume the ASGI receive stream before the route can read it; that is a real failure mode,
-    whereas the case this misses (same key, same route, different body) still replays a
-    response for the same operation rather than a different one.
-    """
+def request_fingerprint(request: Request, body: bytes = b"") -> str:
+    """Identifies the request a stored response belongs to: method, path, query string and a
+    SHA-256 of the body. Two requests with the same key and any difference in these are two
+    operations, and the second is rejected rather than replayed."""
     query = request.url.query
-    return f"{request.method} {request.url.path}" + (f"?{query}" if query else "")
+    target = f"{request.method} {request.url.path}" + (f"?{query}" if query else "")
+    return f"{target} sha256={hashlib.sha256(body).hexdigest()}"
 
 
 async def resolve_tenant_from_token(request: Request) -> UUID | None:
@@ -149,36 +163,32 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         redis_key = cache_key(org_id, key)
-        fingerprint = request_fingerprint(request)
-        cached = await self.redis.get(redis_key)
-        if cached:
-            data = json.loads(cached)
-            stored = data.get("fingerprint")
-            # `stored is None` is an entry written before fingerprints existed. Replay it
-            # rather than 409-ing every in-flight key during a rollout; they age out with the
-            # 24h TTL.
-            if stored is not None and stored != fingerprint:
-                return problem_response(
-                    409,
-                    ErrorCode.IDEMPOTENCY_KEY_REUSED,
-                    detail=(
-                        "This Idempotency-Key was already used for a different request. "
-                        "Use a new key per operation."
-                    ),
-                    extra={"expected": stored, "received": fingerprint},
-                )
-            return Response(
-                content=data["body"],
-                status_code=data["status"],
-                media_type="application/json",
-                headers={"X-Idempotent-Replayed": "true"},
-            )
+        body_in = await request.body()  # cached by BaseHTTPMiddleware; the route re-reads it
+        fingerprint = request_fingerprint(request, body_in)
+        token = secrets.token_hex(16)
+        marker = json.dumps({"state": _IN_PROGRESS, "fingerprint": fingerprint, "token": token})
 
-        response = cast(StreamingResponse, await call_next(request))
+        # Atomic claim. Exactly one of N concurrent requests with this key wins the SET NX and
+        # runs the handler; every other one falls through to the stored-entry branch below.
+        claimed = await self.redis.set(redis_key, marker, nx=True, ex=_IN_PROGRESS_TTL)
+        if not claimed:
+            cached = await self.redis.get(redis_key)
+            if cached is None:
+                # The holder released between our SET and GET (it failed). One more attempt;
+                # losing again means another request claimed it, which is an in-flight dup.
+                claimed = await self.redis.set(redis_key, marker, nx=True, ex=_IN_PROGRESS_TTL)
+                cached = None if claimed else await self.redis.get(redis_key)
+            if not claimed:
+                return self._from_stored(cached, fingerprint)
 
-        body = b""
-        async for chunk in response.body_iterator:
-            body += chunk.encode() if isinstance(chunk, str) else chunk
+        try:
+            response = cast(StreamingResponse, await call_next(request))
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk.encode() if isinstance(chunk, str) else chunk
+        except BaseException:
+            await self._release(redis_key, token)
+            raise
 
         # Successes only. Caching an error pinned it for the full TTL, so a client retrying
         # after a transient 500 replayed that 500 without the handler ever running again.
@@ -194,6 +204,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 ),
                 ex=_TTL,
             )
+        else:
+            await self._release(redis_key, token)
 
         headers = dict(response.headers)
         headers.pop("content-length", None)  # recomputed by the new Response
@@ -202,4 +214,51 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             status_code=response.status_code,
             media_type=response.media_type,
             headers=headers,
+        )
+
+    async def _release(self, redis_key: str, token: str) -> None:
+        """Drop our in-progress claim, and only ours: if it expired and another request has
+        since claimed the key, deleting it would let a third request run concurrently."""
+        current = await self.redis.get(redis_key)
+        if current is None:
+            return
+        try:
+            data = json.loads(current)
+        except ValueError:
+            return
+        if data.get("state") == _IN_PROGRESS and data.get("token") == token:
+            await self.redis.delete(redis_key)
+
+    @staticmethod
+    def _from_stored(cached: bytes | None, fingerprint: str) -> Response:
+        data = json.loads(cached) if cached else {}
+        stored = data.get("fingerprint")
+        # `stored is None` on a completed entry is one written before fingerprints existed.
+        # Replay it rather than 409-ing every in-flight key during a rollout; they age out
+        # with the 24h TTL.
+        if stored is not None and stored != fingerprint:
+            return problem_response(
+                409,
+                ErrorCode.IDEMPOTENCY_KEY_REUSED,
+                detail=(
+                    "This Idempotency-Key was already used for a different request. "
+                    "Use a new key per operation."
+                ),
+            )
+        if not data or data.get("state") == _IN_PROGRESS:
+            response = problem_response(
+                409,
+                ErrorCode.IDEMPOTENCY_KEY_REUSED,
+                detail=(
+                    "A request with this Idempotency-Key is still in progress. "
+                    "Retry after it completes to receive its response."
+                ),
+            )
+            response.headers["Retry-After"] = "1"
+            return response
+        return Response(
+            content=data["body"],
+            status_code=data["status"],
+            media_type="application/json",
+            headers={"X-Idempotent-Replayed": "true"},
         )

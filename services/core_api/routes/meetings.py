@@ -45,6 +45,7 @@ from services.core_api.schemas import (
     Participant,
     ParticipantCheck,
 )
+from services.core_api.visibility import is_visible
 
 router = APIRouter(prefix="/api/v1", tags=["meetings"])
 
@@ -190,10 +191,7 @@ async def create_meeting(
         # caller's own. This comment previously asserted the opposite and was wrong: the route
         # returned 201 and persisted a row referencing another tenant's user. See
         # `test_another_tenants_user_cannot_be_named_as_a_participant`.
-        visible = (
-            await session.execute(text("SELECT 1 FROM users WHERE id = :id"), {"id": str(user_id)})
-        ).first()
-        if visible is None:
+        if not await is_visible(session, "users", user_id):
             # 404, not 422: whether a user id exists at all is tenant-confidential, and this
             # route must not become an oracle for user ids in other tenants. Raising rolls the
             # whole transaction back, so the meeting does not survive without its participant.

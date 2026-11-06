@@ -212,6 +212,31 @@ def test_unknown_user_id_is_a_422_not_a_500(client, tenant_a):
     assert resp.json()["code"] == "VALIDATION_FAILED"
 
 
+def test_another_tenants_user_cannot_be_pinned_to_a_speaker(client, tenant_a, tenant_b):
+    """Gap 31. The FK on `meeting_speakers.user_id` resolves another tenant's user (RI checks
+    bypass RLS), so before the visibility check this returned 200 and pinned tenant B's user
+    to tenant A's speaker. Same answer as a nonexistent id: not an oracle."""
+    sign_in(tenant_a)
+    meeting_id = seed_meeting(tenant_a.org_id)
+    control = client.patch(
+        f"/api/v1/meetings/{meeting_id}/speakers/0", json={"user_id": str(tenant_a.user_id)}
+    )
+    assert control.status_code == 200, "positive control: an own-tenant user is accepted"
+
+    resp = client.patch(
+        f"/api/v1/meetings/{meeting_id}/speakers/1", json={"user_id": str(tenant_b.user_id)}
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_FAILED"
+    assert (
+        _sql(
+            "SELECT 1 FROM meeting_speakers WHERE user_id = %(u)s",
+            {"u": str(tenant_b.user_id)},
+        )
+        == []
+    )
+
+
 # --- acceptance check 2: R7 - manual is structurally authoritative -------------------------------
 
 

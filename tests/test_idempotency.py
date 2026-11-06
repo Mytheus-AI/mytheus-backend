@@ -8,16 +8,20 @@ first one's full response body. No query is issued on that path, so RLS cannot m
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 
 import fakeredis.aioredis
+import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from starlette.testclient import TestClient
 
-from libs.shared.idempotency import IdempotencyMiddleware, cache_key
+from libs.shared.errors import ErrorCode
+from libs.shared.idempotency import IdempotencyMiddleware, cache_key, request_fingerprint
 
 ORG_A = uuid.uuid4()
 ORG_B = uuid.uuid4()
@@ -57,6 +61,18 @@ def _client(redis, tenant_header: str = "x-test-org") -> TestClient:
         if counter["n"] == 1:
             return JSONResponse(status_code=500, content={"error": "transient"})
         return JSONResponse(status_code=200, content={"ok": True})
+
+    # Echoes its body back, so a test can prove the route still receives the full payload
+    # after the middleware has read it for the fingerprint.
+    @app.post("/body")
+    async def body(request: Request) -> dict[str, object]:
+        counter["n"] += 1
+        return {"count": counter["n"], "got": await request.json()}
+
+    @app.post("/boom")
+    async def boom() -> dict[str, str]:
+        counter["n"] += 1
+        raise RuntimeError("handler crashed")
 
     return TestClient(app, raise_server_exceptions=False)
 
@@ -163,3 +179,150 @@ def test_cache_key_carries_the_frozen_tenant_prefix(key):
     purge expressible as one SCAN."""
     assert cache_key(ORG_A, key).startswith(f"nexus:{ORG_A}:")
     assert cache_key(ORG_A, key) != cache_key(ORG_B, key)
+
+
+def test_409_body_is_a_problem_document_with_the_frozen_code():
+    """The 409 path, asserted on its own: status, the frozen enum value, RFC 7807 shape."""
+    client = _client(fakeredis.aioredis.FakeRedis())
+    hdrs = {"Idempotency-Key": "k409", "x-test-org": str(ORG_A)}
+    assert client.post("/echo", headers=hdrs).status_code == 200
+
+    r = client.post("/other", headers=hdrs)
+    assert r.status_code == 409
+    body = r.json()
+    assert body["code"] == "IDEMPOTENCY_KEY_REUSED" == ErrorCode.IDEMPOTENCY_KEY_REUSED.value
+    assert body["status"] == 409
+    assert body["type"].endswith("/IDEMPOTENCY_KEY_REUSED")
+    assert "X-Idempotent-Replayed" not in r.headers
+
+
+def test_same_route_different_body_is_rejected_not_replayed():
+    """Gap 3: same key, same route, different payload. Replaying would answer the second
+    operation with the first one's result."""
+    client = _client(fakeredis.aioredis.FakeRedis())
+    hdrs = {"Idempotency-Key": "body-k", "x-test-org": str(ORG_A)}
+
+    first = client.post("/body", headers=hdrs, json={"title": "one"})
+    second = client.post("/body", headers=hdrs, json={"title": "two"})
+    assert first.status_code == 200 and first.json()["got"] == {"title": "one"}
+    assert second.status_code == 409
+    assert second.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert "got" not in second.json()
+
+    again = client.post("/body", headers=hdrs, json={"title": "one"})
+    assert again.headers.get("X-Idempotent-Replayed") == "true"
+    assert again.json() == first.json()
+
+
+def test_route_still_receives_the_body_the_middleware_hashed():
+    client = _client(fakeredis.aioredis.FakeRedis())
+    payload = {"title": "x" * 10_000, "n": [1, 2, 3]}
+    r = client.post(
+        "/body", headers={"Idempotency-Key": "big", "x-test-org": str(ORG_A)}, json=payload
+    )
+    assert r.status_code == 200 and r.json()["got"] == payload
+
+
+def test_fingerprint_covers_method_path_query_and_body():
+    def req(method: str, path: str, query: str = "") -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": method,
+                "path": path,
+                "query_string": query.encode(),
+                "headers": [],
+                "scheme": "http",
+                "server": ("t", 80),
+            }
+        )
+
+    base = request_fingerprint(req("POST", "/a"), b"{}")
+    assert base != request_fingerprint(req("PUT", "/a"), b"{}")
+    assert base != request_fingerprint(req("POST", "/b"), b"{}")
+    assert base != request_fingerprint(req("POST", "/a", "x=1"), b"{}")
+    assert base != request_fingerprint(req("POST", "/a"), b'{"a":1}')
+    assert base == request_fingerprint(req("POST", "/a"), b"{}")
+
+
+def test_stored_entries_use_the_frozen_tenant_prefix():
+    redis = fakeredis.aioredis.FakeRedis()
+    client = _client(redis)
+    client.post("/echo", headers={"Idempotency-Key": "pfx", "x-test-org": str(ORG_A)})
+
+    async def keys() -> list[bytes]:
+        return [k async for k in redis.scan_iter("*")]
+
+    found = asyncio.run(keys())
+    assert found == [f"nexus:{ORG_A}:idem:pfx".encode()]
+
+
+def test_concurrent_duplicate_runs_the_handler_once():
+    """Two in-flight requests with one key: exactly one runs the handler, the other gets a
+    409 with Retry-After rather than a second execution."""
+    redis = fakeredis.aioredis.FakeRedis()
+    gate = asyncio.Event()
+    runs = {"n": 0}
+
+    async def resolver(request):
+        return ORG_A
+
+    app = FastAPI()
+    app.add_middleware(IdempotencyMiddleware, redis=redis, tenant_resolver=resolver)
+
+    @app.post("/slow")
+    async def slow() -> dict[str, int]:
+        runs["n"] += 1
+        await gate.wait()
+        return {"runs": runs["n"]}
+
+    async def scenario() -> tuple[httpx.Response, httpx.Response, httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            hdrs = {"Idempotency-Key": "race"}
+            first = asyncio.create_task(c.post("/slow", headers=hdrs, json={}))
+            while runs["n"] == 0:  # wait until the first request is inside the handler
+                await asyncio.sleep(0)
+            dup = await c.post("/slow", headers=hdrs, json={})
+            gate.set()
+            done = await first
+            replay = await c.post("/slow", headers=hdrs, json={})
+            return done, dup, replay
+
+    done, dup, replay = asyncio.run(scenario())
+    assert runs["n"] == 1, "the handler ran twice for one idempotency key"
+    assert done.status_code == 200
+    assert dup.status_code == 409 and dup.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert dup.headers.get("Retry-After") == "1"
+    assert replay.headers.get("X-Idempotent-Replayed") == "true"
+    assert replay.json() == done.json()
+
+
+def test_in_progress_claim_is_released_when_the_handler_raises():
+    redis = fakeredis.aioredis.FakeRedis()
+    client = _client(redis)
+    hdrs = {"Idempotency-Key": "crash", "x-test-org": str(ORG_A)}
+
+    assert client.post("/boom", headers=hdrs).status_code == 500
+    assert asyncio.run(redis.get(cache_key(ORG_A, "crash"))) is None
+    # A retry reaches the handler again instead of a stuck in-progress 409.
+    assert client.post("/boom", headers=hdrs).status_code == 500
+
+
+def test_in_progress_claim_is_released_on_non_2xx():
+    redis = fakeredis.aioredis.FakeRedis()
+    client = _client(redis)
+    hdrs = {"Idempotency-Key": "flaky-lock", "x-test-org": str(ORG_A)}
+    assert client.post("/flaky", headers=hdrs).status_code == 500
+    assert asyncio.run(redis.get(cache_key(ORG_A, "flaky-lock"))) is None
+
+
+def test_legacy_entry_without_fingerprint_still_replays():
+    redis = fakeredis.aioredis.FakeRedis()
+    asyncio.run(
+        redis.set(cache_key(ORG_A, "old"), json.dumps({"body": '{"legacy":1}', "status": 201}))
+    )
+    client = _client(redis)
+    r = client.post("/echo", headers={"Idempotency-Key": "old", "x-test-org": str(ORG_A)})
+    assert r.status_code == 201 and r.json() == {"legacy": 1}
+    assert r.headers.get("X-Idempotent-Replayed") == "true"
