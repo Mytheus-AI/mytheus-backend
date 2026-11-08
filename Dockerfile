@@ -21,6 +21,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --python /usr/local/bin/python
+# identity_pb2 / identity_pb2_grpc are generated, never committed (`make proto`). Without them
+# the image cannot run `python -m services.identity_tenant_service.grpc_server`, the
+# get_user_context server the agent runtime calls. grpcio-tools is a runtime dependency, so the
+# generator version is the locked one and matches the protobuf runtime.
+RUN /app/.venv/bin/python -m grpc_tools.protoc -I proto \
+    --python_out=. --grpc_python_out=. proto/identity.proto
 
 
 FROM python:3.12-slim AS runtime
