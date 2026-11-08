@@ -341,6 +341,12 @@ async def test_rls_isolates_usage_and_budgets(env):
 # --- derived dimensions + rollup -----------------------------------------------------------
 
 
+def has_transcript_chunks() -> bool:
+    """`transcript_chunks` is created by mytheus-realtime's migrations. A developer database
+    shared with that repo has it; this repo's CI database does not."""
+    return bool(_sql("SELECT to_regclass('public.transcript_chunks') IS NOT NULL AS p")[0]["p"])
+
+
 def seed_ended_meeting(t: Tenant) -> uuid.UUID:
     meeting_id = uuid.uuid4()
     _sql(
@@ -360,12 +366,16 @@ def seed_ended_meeting(t: Tenant) -> uuid.UUID:
 async def test_meeting_usage_is_derived_once_and_rolled_up_with_the_tier_split(env):
     sm, redis = env
     t = seed_tenant()
-    seed_ended_meeting(t)
+    with_finals = has_transcript_chunks()
+    if with_finals:
+        seed_ended_meeting(t)
     await consumer.process(sm, redis, usage_value(t.org_id, 700, model_tier="haiku"))
     await consumer.process(sm, redis, usage_value(t.org_id, 300, model_tier="sonnet"))
 
     since = NOW - timedelta(days=1)
-    for expected in (2, 0):  # second run inserts nothing
+    # Without the transcription tier's table there is nothing to derive, and the job must still
+    # roll up agent tokens rather than fail.
+    for expected in (2, 0) if with_finals else (0, 0):  # second run inserts nothing
         async with sm() as session, session.begin():
             await session.execute(
                 text("SELECT set_config('app.current_org', :o, true)"), {"o": str(t.org_id)}
@@ -381,10 +391,13 @@ async def test_meeting_usage_is_derived_once_and_rolled_up_with_the_tier_split(e
             {"o": str(t.org_id), "p": PERIOD},
         )
     }
-    assert float(agg["meeting_minute"]["quantity"]) == 3
-    assert float(agg["transcription_second"]["quantity"]) == 160
     assert float(agg["agent_token"]["quantity"]) == 1_000
     assert agg["agent_token"]["tier_breakdown"] == {"haiku": 700, "sonnet": 300}
+    if not with_finals:
+        assert "meeting_minute" not in agg
+        return
+    assert float(agg["meeting_minute"]["quantity"]) == 3
+    assert float(agg["transcription_second"]["quantity"]) == 160
     quota = _sql(
         "SELECT quota, consumed, state FROM quotas WHERE org_id = %(o)s", {"o": str(t.org_id)}
     )[0]

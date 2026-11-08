@@ -60,7 +60,17 @@ _INSERT_DERIVED = text(
 async def derive_meeting_usage(session: AsyncSession, org_id: uuid.UUID, since: datetime) -> int:
     """Write `meeting_minute` + `transcription_second` rows for ended meetings whose finals
     landed on or after `since`. Returns the number of rows newly inserted. Caller has set RLS.
+
+    `transcript_chunks` belongs to `mytheus-realtime` and exists only where its migrations have
+    run. Where it does not (a deployment without the transcription tier, and this repo's CI),
+    there are no finals to derive from, so this derives nothing instead of failing the whole
+    nightly job.
     """
+    present = (
+        await session.execute(text("SELECT to_regclass('public.transcript_chunks') IS NOT NULL"))
+    ).scalar()
+    if not present:
+        return 0
     inserted = 0
     rows = (await session.execute(_ENDED_MEETING_TOTALS, {"since": since})).mappings().all()
     for row in rows:
