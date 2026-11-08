@@ -182,6 +182,14 @@ async def test_another_tenants_meeting_or_user_is_poison(migrated_db):
         await apply(bad)
 
 
+async def test_an_unknown_tenant_is_poison_not_a_crash(migrated_db):
+    """Found by the 2026-11-08 end-to-end run: a record for a tenant with no `organizations`
+    row raised IntegrityError from the inbox FK and crash-looped the consumer."""
+    ghost = Tenant(uuid.uuid4(), "org_ghost", uuid.uuid4(), "user_ghost")
+    with pytest.raises(PoisonMessage):
+        await apply(result(ghost, uuid.uuid4(), 0.9))
+
+
 async def test_a_failed_apply_does_not_poison_the_dedupe_cache(migrated_db):
     a, b = seed_tenant(), seed_tenant()
     redis = fakeredis.aioredis.FakeRedis()

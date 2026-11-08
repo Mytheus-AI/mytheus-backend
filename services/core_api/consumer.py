@@ -48,6 +48,7 @@ from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
@@ -192,16 +193,22 @@ async def _apply_agent_result(
     # NOTHING after the effect, which only dedupes the inbox row itself: once the Redis key
     # has expired, a redelivery would write a second note. Claiming first makes the inbox the
     # authority; a rollback releases the claim together with the note.
-    claimed = (
-        await session.execute(
-            text(
-                "INSERT INTO inbox (consumer_group, org_id, idempotency_key) "
-                "VALUES (:g, :o, :k) ON CONFLICT (consumer_group, org_id, idempotency_key) "
-                "DO NOTHING RETURNING 1"
-            ),
-            {"g": CONSUMER_GROUP, "o": str(org_id), "k": idempotency_key},
-        )
-    ).first()
+    try:
+        claimed = (
+            await session.execute(
+                text(
+                    "INSERT INTO inbox (consumer_group, org_id, idempotency_key) "
+                    "VALUES (:g, :o, :k) ON CONFLICT (consumer_group, org_id, idempotency_key) "
+                    "DO NOTHING RETURNING 1"
+                ),
+                {"g": CONSUMER_GROUP, "o": str(org_id), "k": idempotency_key},
+            )
+        ).first()
+    except IntegrityError as exc:
+        # `inbox.org_id` references `organizations`: a tenant that does not exist (deleted, or
+        # never real) can never apply, so it is poison. Raised as IntegrityError it would crash
+        # the loop and block the partition on every restart. Found by the 2026-11-08 run.
+        raise PoisonMessage(f"agent-results names unknown tenant {org_id}") from exc
     if claimed is None:
         return False
     agent, kind = str(value.get("agent")), str(value.get("kind"))
