@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from uuid import UUID
 
 import httpx
@@ -106,3 +107,71 @@ async def set_internal_org_id(clerk_org_id: str, org_id: UUID) -> bool:
 
     logger.info("published internal_org_id=%s to clerk_org_id=%s", org_id, clerk_org_id)
     return True
+
+
+# --- self-serve provisioning: ask Clerk, never the caller ------------------------------------
+
+
+class ClerkUnavailable(Exception):
+    """Clerk could not be asked (no key, network failure, 5xx). Callers answer 503."""
+
+
+@dataclass(frozen=True)
+class ClerkOrgForAdmin:
+    """What self-serve provisioning needs, read from Clerk rather than from the request."""
+
+    name: str
+    slug: str
+    owner_email: str
+
+
+async def org_for_admin(clerk_org_id: str, clerk_user_id: str) -> ClerkOrgForAdmin | None:
+    """The organization's name, slug and the caller's primary email, if the caller is an
+    `org:admin` member of it. None when they are not (or the org or user does not exist).
+
+    Authorization for self-serve provisioning rests on THIS answer, from Clerk's Backend API,
+    not on the session token's role claim: a token proves who the caller is and which org is
+    active, but whether they may create that org's tenant is checked at the source.
+    """
+    key = _secret_key()
+    if key is None:
+        raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
+    headers = {"Authorization": f"Bearer {key}"}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
+            org = await client.get(f"{_API_BASE}/organizations/{clerk_org_id}")
+            if org.status_code == 404:
+                return None
+            members = await client.get(
+                f"{_API_BASE}/organizations/{clerk_org_id}/memberships",
+                params={"user_id": clerk_user_id, "limit": 1},
+            )
+            user = await client.get(f"{_API_BASE}/users/{clerk_user_id}")
+    except httpx.HTTPError as exc:
+        raise ClerkUnavailable("Clerk request failed") from exc
+
+    for response in (org, members, user):
+        if response.status_code >= 500:
+            raise ClerkUnavailable(f"Clerk answered HTTP {response.status_code}")
+    if org.status_code >= 400 or members.status_code >= 400 or user.status_code >= 400:
+        return None
+
+    rows = members.json().get("data") or []
+    is_admin = any(
+        (m.get("public_user_data") or {}).get("user_id") == clerk_user_id
+        and m.get("role") == "org:admin"
+        for m in rows
+    )
+    if not is_admin:
+        return None
+
+    u = user.json()
+    primary = u.get("primary_email_address_id")
+    email = next(
+        (e.get("email_address") for e in u.get("email_addresses") or [] if e.get("id") == primary),
+        None,
+    )
+    o = org.json()
+    if not email or not o.get("name"):
+        return None
+    return ClerkOrgForAdmin(name=str(o["name"]), slug=str(o.get("slug") or ""), owner_email=email)

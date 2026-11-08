@@ -60,6 +60,14 @@ PUBLIC_PREFIXES = (
 # scrape, i.e. a GET that carries none of the ingress headers (`metrics.came_through_ingress`).
 METRICS_PATH = "/metrics"
 
+# Authenticated but tenant-exempt: the ONE route a signed-in user calls before their org has a
+# tenant (identity-tenant-service `POST /orgs/self-serve`, which creates it). The token is
+# still verified here, including that it carries an org claim; only `resolve_org_id` is
+# skipped, because it would refuse the very org being created. No internal headers are
+# attached, so nothing downstream can mistake this request for a tenant-scoped one; the route
+# re-verifies the token and checks with Clerk that the caller administers that org.
+SELF_SERVE_ORG_PATH = "/orgs/self-serve"
+
 
 def _signing_key() -> bytes:
     key = os.environ.get("GATEWAY_SIGNING_KEY")
@@ -113,6 +121,13 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
     # `X-Mytheus-Org` itself and, if anything downstream ever trusts the header without
     # checking the signature, it is a cross-tenant read with no exploit required.
     _strip_internal_headers(request)
+
+    if request.method == "POST" and request.url.path == SELF_SERVE_ORG_PATH:
+        try:
+            verify_token(_bearer(request))
+        except ProblemDetail as exc:
+            return problem_response(exc.status, exc.code, exc.detail)
+        return await call_next(request)
 
     try:
         credentials = _bearer(request)

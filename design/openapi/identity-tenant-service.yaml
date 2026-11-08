@@ -864,6 +864,50 @@ paths:
       summary: Provision Org
       tags:
       - orgs
+  /orgs/self-serve:
+    post:
+      description: 'authz: Clerk `org:admin` of the token''s active organization (checked against Clerk).
+
+
+        Creates the tenant for the caller''s active Clerk organization: root, settings, residency,
+
+        the caller as `owner`, outbox and audit, then publishes `internal_org_id` to Clerk.'
+      operationId: self_serve_provision
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: Already provisioned
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Self Serve Provision
+      tags:
+      - orgs
   /pii-tokens/mint:
     post:
       operationId: mint_tokens
