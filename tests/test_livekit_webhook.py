@@ -125,8 +125,8 @@ def _room(name: str, org_id: uuid.UUID | None, *, metadata: str | None = "__defa
     return SimpleNamespace(name=name, metadata=metadata)
 
 
-def _participant(sid: str | None) -> SimpleNamespace | None:
-    return SimpleNamespace(sid=sid) if sid is not None else None
+def _participant(sid: str | None, identity: str | None = None) -> SimpleNamespace | None:
+    return SimpleNamespace(sid=sid, identity=identity) if sid is not None else None
 
 
 def _egress_info(egress_id: str | None) -> SimpleNamespace | None:
@@ -387,7 +387,10 @@ def test_room_metadata_naming_a_soft_deleted_org_fails_closed(client):
 def test_participant_joined_emits_joined_and_activates_a_pending_room(client):
     org_id = seed_org()
     meeting_id, room = seed_meeting_room(org_id)
-    evt = _evt("participant_joined", room=_room(room, org_id), participant=_participant("PA_1"))
+    user_id = str(uuid.uuid4())
+    evt = _evt(
+        "participant_joined", room=_room(room, org_id), participant=_participant("PA_1", user_id)
+    )
     FAKE.verify_webhook_result = evt
 
     resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
@@ -403,7 +406,8 @@ def test_participant_joined_emits_joined_and_activates_a_pending_room(client):
     if isinstance(payload, str):
         payload = json.loads(payload)
     assert payload["event_type"] == "joined"
-    assert payload["participant_id"] == "PA_1"
+    # The user (LiveKit identity), not the per-connection SID: the agent tier keys on it.
+    assert payload["participant_id"] == user_id
 
 
 def test_participant_left_emits_left_without_reactivating_status(client):

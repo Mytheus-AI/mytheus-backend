@@ -323,6 +323,7 @@ async def _apply_participant_event(
     room_event_type: str,
     participant_sid: str,
     dedupe_key: str,
+    participant_identity: str | None = None,
 ) -> None:
     found = (
         (
@@ -361,7 +362,11 @@ async def _apply_participant_event(
                 "meeting_id": str(meeting_id),
                 "room": room,
                 "event_type": room_event_type,
-                "participant_id": participant_sid if participant_sid != "-" else None,
+                # The LiveKit identity, which for a human is `users.id` (mint_join_token sets
+                # it). `agent-runtime-service` spawns one PersonalListenerAgent per user from
+                # this, so it must be the user, not the per-connection participant SID (which
+                # changes on every reconnect and still keys the dedupe above).
+                "participant_id": participant_identity,
             },
             org_id=str(org_id),
             producer="meeting-service",
@@ -468,7 +473,13 @@ async def livekit_webhook(
             lifecycle = await _load_room_lifecycle(session, org_id, room, event_type)
         else:
             await _apply_participant_event(
-                session, org_id, room, _ROOM_EVENT_TYPE[event_type], participant_sid, dedupe_key
+                session,
+                org_id,
+                room,
+                _ROOM_EVENT_TYPE[event_type],
+                participant_sid,
+                dedupe_key,
+                participant_identity=_participant_identity(evt),
             )
 
         await record_consumed(session, CONSUMER_GROUP, str(org_id), dedupe_key)
