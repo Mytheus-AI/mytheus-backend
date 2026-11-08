@@ -19,8 +19,9 @@ from starlette.testclient import TestClient
 from libs.shared import auth as auth_mod
 from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
-from libs.shared.clerk_admin import ClerkOrgForAdmin, ClerkUnavailable
+from libs.shared.clerk_admin import ClerkMembership, ClerkOrgForAdmin, ClerkUnavailable
 from services.identity_tenant_service.routes import orgs as orgs_routes
+from services.identity_tenant_service.routes import users as users_routes
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
 pytestmark = pytest.mark.usefixtures("migrated_db")
@@ -77,6 +78,7 @@ def client():
 
     app = create_app("identity-tenant-service-self-serve-test")
     app.include_router(orgs_routes.router)
+    app.include_router(users_routes.router)
     app.dependency_overrides[auth_mod.verify_token] = lambda: {
         "sub": PRINCIPAL.clerk_user,
         "org_id": PRINCIPAL.clerk_org,
@@ -201,3 +203,93 @@ def test_clerk_unavailable_is_503_and_nothing_is_written(client, monkeypatch) ->
 )
 def test_self_serve_slug_fits_the_tenant_slug_rule(clerk_slug: str, expected: str) -> None:
     assert orgs_routes.self_serve_slug(clerk_slug, "org_ABC123") == expected
+
+
+# --- the join path: an existing workspace, a member who just accepted an invitation ------------
+
+
+def _existing_org() -> tuple[uuid.UUID, str]:
+    org_id = uuid.uuid4()
+    clerk_org = f"org_{uuid.uuid4().hex[:20]}"
+    _sql(
+        "INSERT INTO organizations (id, name, slug, clerk_org_id) "
+        "VALUES (%(i)s, 'Team', %(s)s, %(c)s)",
+        {"i": str(org_id), "s": f"t-{org_id}", "c": clerk_org},
+    )
+    return org_id, clerk_org
+
+
+def _membership_says(monkeypatch, answer: ClerkMembership | None | Exception) -> list[str]:
+    calls: list[str] = []
+
+    async def fake(clerk_org: str, clerk_user: str) -> ClerkMembership | None:
+        calls.append(clerk_user)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(orgs_routes, "membership_of", fake)
+    return calls
+
+
+def test_a_clerk_member_joining_an_existing_workspace_becomes_a_member(client, monkeypatch) -> None:
+    org_id, clerk_org = _existing_org()
+    PRINCIPAL.clerk_org, PRINCIPAL.clerk_user = clerk_org, f"user_{uuid.uuid4().hex[:20]}"
+    _membership_says(
+        monkeypatch, ClerkMembership(role="org:member", email="j@x.test", avatar_url=None)
+    )
+
+    r = client.post(PATH)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == str(org_id)
+    assert _sql(
+        "SELECT u.email, g.tier FROM users u JOIN rbac_grants g ON g.user_id = u.id "
+        "WHERE u.org_id = %(o)s AND u.clerk_user_id = %(c)s",
+        {"o": str(org_id), "c": PRINCIPAL.clerk_user},
+    ) == [{"email": "j@x.test", "tier": "member"}]
+
+    calls = _membership_says(monkeypatch, None)  # would 403 if consulted
+    assert client.post(PATH).status_code == 200
+    assert calls == [], "a caller already in the tenant costs no Clerk call"
+
+
+def test_someone_clerk_does_not_list_cannot_join(client, monkeypatch) -> None:
+    org_id, clerk_org = _existing_org()
+    PRINCIPAL.clerk_org, PRINCIPAL.clerk_user = clerk_org, f"user_{uuid.uuid4().hex[:20]}"
+    _membership_says(monkeypatch, None)
+
+    r = client.post(PATH)
+
+    assert r.status_code == 403
+    assert _sql("SELECT count(*) AS n FROM users WHERE org_id = %(o)s", {"o": str(org_id)}) == [
+        {"n": 0}
+    ]
+
+
+# --- GET /users: the members list --------------------------------------------------------------
+
+
+def test_members_lists_this_tenant_with_tiers_and_nothing_else(client, monkeypatch) -> None:
+    _new_principal()
+    _clerk_says(monkeypatch, ClerkOrgForAdmin(name="Mine", slug="", owner_email="me@x.test"))
+    mine = uuid.UUID(client.post(PATH).json()["id"])
+    _sql(
+        "INSERT INTO users (org_id, clerk_user_id, email) "
+        "VALUES (%(o)s, 'user_gone', 'gone@x.test')",
+        {"o": str(mine)},
+    )
+    _sql("UPDATE users SET deleted_at = now() WHERE clerk_user_id = 'user_gone'")
+    _, other_clerk = _existing_org()
+    _sql(
+        "INSERT INTO users (org_id, clerk_user_id, email) SELECT id, 'user_other', 'other@x.test' "
+        "FROM organizations WHERE clerk_org_id = %(c)s",
+        {"c": other_clerk},
+    )
+
+    r = client.get("/users")
+
+    assert r.status_code == 200, r.text
+    assert [(m["email"], m["tier"], m["clerk_user_id"]) for m in r.json()["items"]] == [
+        ("me@x.test", "owner", PRINCIPAL.clerk_user)
+    ]

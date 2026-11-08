@@ -26,7 +26,12 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.audit import ACTION_MEETING_CREATED, ACTION_MEETING_UPDATED, audit
+from libs.shared.audit import (
+    ACTION_MEETING_CREATED,
+    ACTION_MEETING_PARTICIPANTS_ADDED,
+    ACTION_MEETING_UPDATED,
+    audit,
+)
 from libs.shared.authz import (
     RequestContext,
     not_found,
@@ -44,6 +49,7 @@ from services.core_api.schemas import (
     MeetingUpdate,
     Participant,
     ParticipantCheck,
+    ParticipantsAdd,
 )
 from services.core_api.visibility import is_visible
 
@@ -309,6 +315,72 @@ async def get_meeting(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> Meeting:
+    row = await _fetch_meeting(session, meeting_id)
+    participants = await _load_participants(session, [meeting_id])
+    return _row_to_meeting(row, participants.get(meeting_id, []))
+
+
+@router.post("/meetings/{meeting_id}/participants", response_model=Meeting)
+async def add_participants(
+    meeting_id: uuid.UUID,
+    body: ParticipantsAdd,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> Meeting:
+    """Invite tenant users into an existing meeting. Only someone already in it may invite.
+
+    Existence before participation, as in `meeting-service`'s token route: a meeting in another
+    tenant is 404 (RLS hides it); a visible meeting the caller is not part of is 403. Each
+    invitee gets the same `is_visible` check `create_meeting` applies, for the same reason: the
+    foreign key alone would accept another tenant's user. Already-present users are a no-op, so
+    a repeated invite is harmless.
+    """
+    await _fetch_meeting(session, meeting_id)
+    if (
+        ctx.user_id is None
+        or not (
+            await session.execute(
+                text("SELECT 1 FROM meeting_participants WHERE meeting_id = :m AND user_id = :u"),
+                {"m": str(meeting_id), "u": str(ctx.user_id)},
+            )
+        ).first()
+    ):
+        raise ProblemDetail(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCode.FORBIDDEN_ROLE,
+            "Only someone in this meeting can invite others to it",
+        )
+
+    added: list[str] = []
+    for user_id in dict.fromkeys(body.user_ids):
+        if not await is_visible(session, "users", user_id):
+            raise ProblemDetail(
+                status.HTTP_404_NOT_FOUND, ErrorCode.NOT_FOUND, "No such user in this organization"
+            )
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO meeting_participants (meeting_id, user_id, org_id) "
+                    "VALUES (:m, :u, :org) ON CONFLICT DO NOTHING RETURNING user_id"
+                ),
+                {"m": str(meeting_id), "u": str(user_id), "org": str(ctx.org_id)},
+            )
+        ).first()
+        if inserted:
+            added.append(str(user_id))
+
+    if added:
+        await audit(
+            session,
+            org_id=ctx.org_id,
+            actor_id=ctx.user_id,
+            action=ACTION_MEETING_PARTICIPANTS_ADDED,
+            target_type="meeting",
+            target_id=meeting_id,
+            metadata={"user_ids": added},
+            ip=ctx.ip,
+        )
+
     row = await _fetch_meeting(session, meeting_id)
     participants = await _load_participants(session, [meeting_id])
     return _row_to_meeting(row, participants.get(meeting_id, []))

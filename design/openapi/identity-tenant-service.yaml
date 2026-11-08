@@ -104,6 +104,58 @@ components:
       - scheduled_end
       title: MeetingRef
       type: object
+    Member:
+      description: 'One person in the caller''s tenant: who to show in a members list or an invite picker.
+
+        Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.'
+      properties:
+        avatar_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Avatar Url
+        clerk_user_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Clerk User Id
+        email:
+          title: Email
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role
+        tier:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tier
+      required:
+      - id
+      - clerk_user_id
+      - email
+      - avatar_url
+      - role
+      - tier
+      title: Member
+      type: object
+    MemberList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Member'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MemberList
+      type: object
     MintRequest:
       properties:
         spans:
@@ -1394,6 +1446,33 @@ paths:
       summary: Update Tenant Settings
       tags:
       - tenant-settings
+  /users:
+    get:
+      description: 'authz: member. Everyone in the caller''s tenant, with their access tier. RLS scopes
+        both
+
+        tables to the tenant; there is no `org_id` predicate to forget.'
+      operationId: list_members
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Members
+      tags:
+      - users
   /users/{user_id}:
     patch:
       operationId: update_user_profile

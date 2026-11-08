@@ -41,6 +41,14 @@ class MeetingCreate(BaseModel):
         return self
 
 
+class ParticipantsAdd(BaseModel):
+    """`POST /meetings/:id/participants` body: tenant users to invite into an existing meeting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_ids: Annotated[list[uuid.UUID], Field(min_length=1, max_length=50)]
+
+
 class MeetingUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

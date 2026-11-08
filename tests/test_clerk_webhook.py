@@ -266,6 +266,93 @@ def test_an_unknown_organization_is_refused(client):
 # --- reconciliation ---------------------------------------------------------------------------
 
 
+# --- organization membership: invitations accepted, roles changed, members removed ----------------
+
+
+def _membership_event(clerk_org: str, clerk_user: str, event_type: str, role: str = "org:member"):
+    return {
+        "type": event_type,
+        "data": {
+            "id": f"orgmem_{uuid.uuid4().hex[:12]}",
+            "role": role,
+            "organization": {"id": clerk_org},
+            "public_user_data": {
+                "user_id": clerk_user,
+                "identifier": f"{clerk_user}@x.test",
+                "image_url": "https://img.clerk.com/m",
+            },
+        },
+    }
+
+
+def _member(org_id: uuid.UUID, clerk_user: str) -> list[dict[str, Any]]:
+    return _sql(
+        "SELECT u.email, u.deleted_at IS NULL AS active, g.tier FROM users u "
+        "LEFT JOIN rbac_grants g ON g.user_id = u.id "
+        "WHERE u.org_id = %(o)s AND u.clerk_user_id = %(c)s",
+        {"o": str(org_id), "c": clerk_user},
+    )
+
+
+def test_an_accepted_invitation_makes_a_member_of_that_tenant(client):
+    org_id, clerk_org = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:12]}"
+
+    r = _post(client, _membership_event(clerk_org, clerk_user, "organizationMembership.created"))
+
+    assert r.status_code == 200, r.text
+    assert _member(org_id, clerk_user) == [
+        {"email": f"{clerk_user}@x.test", "active": True, "tier": "member"}
+    ]
+
+
+def test_a_clerk_admin_becomes_an_admin_and_a_role_change_follows(client):
+    org_id, clerk_org = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:12]}"
+    _post(
+        client,
+        _membership_event(clerk_org, clerk_user, "organizationMembership.created", "org:admin"),
+    )
+    assert _member(org_id, clerk_user)[0]["tier"] == "admin"
+
+    _post(client, _membership_event(clerk_org, clerk_user, "organizationMembership.updated"))
+
+    assert _member(org_id, clerk_user)[0]["tier"] == "member"
+
+
+def test_a_removed_member_loses_access_to_that_tenant_only(client):
+    org_a, clerk_a = _seed_org()
+    org_b, clerk_b = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:12]}"
+    _post(client, _membership_event(clerk_a, clerk_user, "organizationMembership.created"))
+    _post(client, _membership_event(clerk_b, clerk_user, "organizationMembership.created"))
+
+    r = _post(client, _membership_event(clerk_a, clerk_user, "organizationMembership.deleted"))
+
+    assert r.status_code == 200
+    assert _member(org_a, clerk_user) == [
+        {"email": f"{clerk_user}@x.test", "active": False, "tier": None}
+    ]
+    assert _member(org_b, clerk_user)[0]["active"] is True
+
+
+def test_an_owner_is_never_lowered_or_removed_by_clerk(client):
+    org_id, clerk_org = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:12]}"
+    _post(
+        client,
+        _membership_event(clerk_org, clerk_user, "organizationMembership.created", "org:admin"),
+    )
+    _sql(
+        "UPDATE rbac_grants SET tier = 'owner' WHERE org_id = %(o)s",
+        {"o": str(org_id)},
+    )
+
+    _post(client, _membership_event(clerk_org, clerk_user, "organizationMembership.updated"))
+
+    assert _member(org_id, clerk_user)[0]["tier"] == "owner"
+
+
 async def test_reconciliation_creates_missing_and_soft_deletes_departed(migrated_db):
     """Plan 3.5 acceptance 3, both directions."""
     org_id, _clerk_org = _seed_org()

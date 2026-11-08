@@ -424,6 +424,22 @@ components:
       - org_id
       title: ParticipantCheck
       type: object
+    ParticipantsAdd:
+      additionalProperties: false
+      description: '`POST /meetings/:id/participants` body: tenant users to invite into an existing meeting.'
+      properties:
+        user_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 50
+          minItems: 1
+          title: User Ids
+          type: array
+      required:
+      - user_ids
+      title: ParticipantsAdd
+      type: object
     Problem:
       description: 'RFC 7807 problem detail. Every 4xx and 5xx this service emits has this shape, including
         the ones FastAPI would otherwise return in its own format: `libs/shared/errors.py` registers handlers
@@ -1023,6 +1039,68 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Update Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/participants:
+    post:
+      description: 'Invite tenant users into an existing meeting. Only someone already in it may invite.
+
+
+        Existence before participation, as in `meeting-service`''s token route: a meeting in another
+
+        tenant is 404 (RLS hides it); a visible meeting the caller is not part of is 403. Each
+
+        invitee gets the same `is_visible` check `create_meeting` applies, for the same reason: the
+
+        foreign key alone would accept another tenant''s user. Already-present users are a no-op, so
+
+        a repeated invite is harmless.'
+      operationId: add_participants
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParticipantsAdd'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Add Participants
       tags:
       - meetings
   /api/v1/meetings/{meeting_id}/participants/{clerk_user_id}:

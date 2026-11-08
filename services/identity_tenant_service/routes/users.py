@@ -41,7 +41,12 @@ from libs.shared.audit import ACTION_USER_PROFILE_UPDATED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.identity_tenant_service.context.service import invalidate_user_context
-from services.identity_tenant_service.schemas import UserProfile, UserProfileUpdate
+from services.identity_tenant_service.schemas import (
+    Member,
+    MemberList,
+    UserProfile,
+    UserProfileUpdate,
+)
 
 router = APIRouter(tags=["users"])
 
@@ -68,6 +73,35 @@ async def _fetch_user(session: AsyncSession, user_id: uuid.UUID) -> Any:
     if row is None:
         raise not_found()
     return row
+
+
+# Bounded rather than paged: a workspace in this product is a team, and the invite picker and
+# the workspace page want everyone at once. A tenant past this size needs paging, not a raise.
+_MEMBER_LIMIT = 500
+
+
+@router.get("/users", response_model=MemberList)
+async def list_members(
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> MemberList:
+    """authz: member. Everyone in the caller's tenant, with their access tier. RLS scopes both
+    tables to the tenant; there is no `org_id` predicate to forget."""
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT u.id, u.clerk_user_id, u.email, u.avatar_url, u.role, g.tier "
+                    "FROM users u LEFT JOIN rbac_grants g ON g.user_id = u.id "
+                    "WHERE u.deleted_at IS NULL ORDER BY lower(u.email), u.id LIMIT :n"
+                ),
+                {"n": _MEMBER_LIMIT},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return MemberList(items=[Member(**dict(r)) for r in rows])
 
 
 @router.patch("/users/{user_id}", response_model=UserProfile)

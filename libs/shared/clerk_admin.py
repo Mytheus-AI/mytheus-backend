@@ -117,12 +117,81 @@ class ClerkUnavailable(Exception):
 
 
 @dataclass(frozen=True)
+class ClerkMembership:
+    """One user's membership in one Clerk organization, as Clerk itself reports it."""
+
+    role: str  # "org:admin" or "org:member"
+    email: str
+    avatar_url: str | None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "org:admin"
+
+
+@dataclass(frozen=True)
 class ClerkOrgForAdmin:
     """What self-serve provisioning needs, read from Clerk rather than from the request."""
 
     name: str
     slug: str
     owner_email: str
+
+
+async def _membership(
+    client: httpx.AsyncClient, clerk_org_id: str, clerk_user_id: str
+) -> ClerkMembership | None:
+    members = await client.get(
+        f"{_API_BASE}/organizations/{clerk_org_id}/memberships",
+        params={"user_id": clerk_user_id, "limit": 1},
+    )
+    user = await client.get(f"{_API_BASE}/users/{clerk_user_id}")
+    for response in (members, user):
+        if response.status_code >= 500:
+            raise ClerkUnavailable(f"Clerk answered HTTP {response.status_code}")
+    if members.status_code >= 400 or user.status_code >= 400:
+        return None
+    row = next(
+        (
+            m
+            for m in members.json().get("data") or []
+            if (m.get("public_user_data") or {}).get("user_id") == clerk_user_id
+        ),
+        None,
+    )
+    if row is None:
+        return None
+    u = user.json()
+    primary = u.get("primary_email_address_id")
+    email = next(
+        (e.get("email_address") for e in u.get("email_addresses") or [] if e.get("id") == primary),
+        None,
+    )
+    if not email:
+        return None
+    return ClerkMembership(
+        role=str(row.get("role") or ""), email=email, avatar_url=u.get("image_url")
+    )
+
+
+def _client(key: str) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=_TIMEOUT, headers={"Authorization": f"Bearer {key}"})
+
+
+async def membership_of(clerk_org_id: str, clerk_user_id: str) -> ClerkMembership | None:
+    """The caller's membership in the organization, or None when Clerk has none.
+
+    Raises `ClerkUnavailable` when Clerk cannot be asked, so a caller never mistakes an outage
+    for "not a member".
+    """
+    key = _secret_key()
+    if key is None:
+        raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
+    try:
+        async with _client(key) as client:
+            return await _membership(client, clerk_org_id, clerk_user_id)
+    except httpx.HTTPError as exc:
+        raise ClerkUnavailable("Clerk request failed") from exc
 
 
 async def org_for_admin(clerk_org_id: str, clerk_user_id: str) -> ClerkOrgForAdmin | None:
@@ -136,42 +205,20 @@ async def org_for_admin(clerk_org_id: str, clerk_user_id: str) -> ClerkOrgForAdm
     key = _secret_key()
     if key is None:
         raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
-    headers = {"Authorization": f"Bearer {key}"}
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
+        async with _client(key) as client:
             org = await client.get(f"{_API_BASE}/organizations/{clerk_org_id}")
-            if org.status_code == 404:
+            if org.status_code >= 500:
+                raise ClerkUnavailable(f"Clerk answered HTTP {org.status_code}")
+            if org.status_code >= 400:
                 return None
-            members = await client.get(
-                f"{_API_BASE}/organizations/{clerk_org_id}/memberships",
-                params={"user_id": clerk_user_id, "limit": 1},
-            )
-            user = await client.get(f"{_API_BASE}/users/{clerk_user_id}")
+            membership = await _membership(client, clerk_org_id, clerk_user_id)
     except httpx.HTTPError as exc:
         raise ClerkUnavailable("Clerk request failed") from exc
 
-    for response in (org, members, user):
-        if response.status_code >= 500:
-            raise ClerkUnavailable(f"Clerk answered HTTP {response.status_code}")
-    if org.status_code >= 400 or members.status_code >= 400 or user.status_code >= 400:
-        return None
-
-    rows = members.json().get("data") or []
-    is_admin = any(
-        (m.get("public_user_data") or {}).get("user_id") == clerk_user_id
-        and m.get("role") == "org:admin"
-        for m in rows
-    )
-    if not is_admin:
-        return None
-
-    u = user.json()
-    primary = u.get("primary_email_address_id")
-    email = next(
-        (e.get("email_address") for e in u.get("email_addresses") or [] if e.get("id") == primary),
-        None,
-    )
     o = org.json()
-    if not email or not o.get("name"):
+    if membership is None or not membership.is_admin or not o.get("name"):
         return None
-    return ClerkOrgForAdmin(name=str(o["name"]), slug=str(o.get("slug") or ""), owner_email=email)
+    return ClerkOrgForAdmin(
+        name=str(o["name"]), slug=str(o.get("slug") or ""), owner_email=membership.email
+    )

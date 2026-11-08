@@ -457,3 +457,102 @@ def test_status_ended_emits_event_type_ended_not_updated(client, tenant_a):
     )
     assert len(updated_rows) == 1
     assert updated_rows[0]["payload"]["event_type"] == "updated"
+
+
+# --- inviting into an existing meeting ---------------------------------------------------------
+
+
+def _add_member(tenant: Tenant) -> uuid.UUID:
+    uid = uuid.uuid4()
+    _sql(
+        "INSERT INTO users (id, org_id, clerk_user_id, email) "
+        "VALUES (%(u)s, %(o)s, %(c)s, 'm@x.test')",
+        {"u": str(uid), "o": str(tenant.org_id), "c": f"user_{uid.hex[:16]}"},
+    )
+    _sql(
+        "INSERT INTO rbac_grants (org_id, user_id, tier) VALUES (%(o)s, %(u)s, 'member')",
+        {"o": str(tenant.org_id), "u": str(uid)},
+    )
+    return uid
+
+
+def test_a_participant_invites_a_member_and_it_is_audited(client, tenant_a):
+    meeting = client.post("/api/v1/meetings", json={"title": "Invite me"}).json()
+    invitee = _add_member(tenant_a)
+
+    r = client.post(
+        f"/api/v1/meetings/{meeting['id']}/participants", json={"user_ids": [str(invitee)]}
+    )
+
+    assert r.status_code == 200, r.text
+    assert {p["user_id"] for p in r.json()["participants"]} == {
+        str(tenant_a.user_id),
+        str(invitee),
+    }
+    assert _sql(
+        "SELECT count(*) AS n FROM audit_logs WHERE target_id = %(m)s "
+        "AND action = 'meeting.participants_added'",
+        {"m": meeting["id"]},
+    ) == [{"n": 1}]
+
+
+def test_inviting_someone_already_in_is_a_no_op(client, tenant_a):
+    invitee = _add_member(tenant_a)
+    meeting = client.post(
+        "/api/v1/meetings", json={"title": "Already in", "participant_ids": [str(invitee)]}
+    ).json()
+
+    r = client.post(
+        f"/api/v1/meetings/{meeting['id']}/participants", json={"user_ids": [str(invitee)]}
+    )
+
+    assert r.status_code == 200
+    assert len(r.json()["participants"]) == 2
+    assert _sql(
+        "SELECT count(*) AS n FROM audit_logs WHERE target_id = %(m)s "
+        "AND action = 'meeting.participants_added'",
+        {"m": meeting["id"]},
+    ) == [{"n": 0}]
+
+
+def test_someone_not_in_the_meeting_cannot_invite(client, tenant_a):
+    meeting = client.post("/api/v1/meetings", json={"title": "Closed"}).json()
+    outsider = _add_member(tenant_a)
+    _sql("UPDATE rbac_grants SET tier='member' WHERE user_id=%(u)s", {"u": str(outsider)})
+    clerk = _sql("SELECT clerk_user_id FROM users WHERE id=%(u)s", {"u": str(outsider)})[0]
+    PRINCIPAL.clerk_user = clerk["clerk_user_id"]
+
+    r = client.post(
+        f"/api/v1/meetings/{meeting['id']}/participants", json={"user_ids": [str(outsider)]}
+    )
+
+    assert r.status_code == 403
+    sign_in(tenant_a)
+
+
+def test_another_tenants_user_cannot_be_invited_into_an_existing_meeting(
+    client, tenant_a, tenant_b
+):
+    meeting = client.post("/api/v1/meetings", json={"title": "Mine"}).json()
+
+    r = client.post(
+        f"/api/v1/meetings/{meeting['id']}/participants", json={"user_ids": [str(tenant_b.user_id)]}
+    )
+
+    assert r.status_code == 404
+    assert _sql(
+        "SELECT count(*) AS n FROM meeting_participants WHERE meeting_id = %(m)s",
+        {"m": meeting["id"]},
+    ) == [{"n": 1}]
+
+
+def test_another_tenants_meeting_is_404_for_invites(client, tenant_a, tenant_b):
+    sign_in(tenant_b)
+    theirs = client.post("/api/v1/meetings", json={"title": "Theirs"}).json()
+    sign_in(tenant_a)
+
+    r = client.post(
+        f"/api/v1/meetings/{theirs['id']}/participants", json={"user_ids": [str(tenant_a.user_id)]}
+    )
+
+    assert r.status_code == 404
