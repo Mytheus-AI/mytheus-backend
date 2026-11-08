@@ -447,3 +447,75 @@ def test_plans_lists_the_catalog(client):
     r = client.get("/plans")
     assert r.status_code == 200
     assert [p["code"] for p in r.json()] == ["free", "pro", "enterprise"]
+
+
+# --- storage sweep -------------------------------------------------------------------------
+
+
+class _NoSuchBucket(Exception):
+    pass
+
+
+class FakeS3:
+    """Just enough of boto3's S3 client for `tenant_bytes`: list_objects_v2 pagination and
+    the NoSuchBucket exception. No network, no cost."""
+
+    class exceptions:  # noqa: N801 - mirrors boto3's attribute name
+        NoSuchBucket = _NoSuchBucket
+
+    def __init__(self, objects: dict[str, dict[str, int]]):
+        self.objects = objects  # bucket -> key -> size
+        self.calls = 0
+
+    def get_paginator(self, name: str) -> FakeS3:
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, *, Bucket: str, Prefix: str):  # noqa: N803 - boto3's casing
+        self.calls += 1
+        if Bucket not in self.objects:
+            raise _NoSuchBucket(Bucket)
+        keys = [(k, s) for k, s in self.objects[Bucket].items() if k.startswith(Prefix)]
+        yield {"Contents": [{"Key": k, "Size": s} for k, s in keys]} if keys else {}
+
+
+def test_tenant_bytes_counts_only_the_tenant_prefix_and_tolerates_a_missing_bucket():
+    org, other = uuid.uuid4(), uuid.uuid4()
+    s3 = FakeS3(
+        {
+            "mytheus-recordings": {f"{org}/m1/a.ogg": 600, f"{other}/m9/b.ogg": 10_000},
+            "mytheus-documents": {f"{org}/d1/spec.pdf": 400},
+            # mytheus-attachments does not exist
+        }
+    )
+    from services.billing_metering_service import storage
+
+    assert storage.tenant_bytes(s3, org) == 1_000
+    assert s3.calls == 3  # one listing per bucket, never an object read
+
+
+async def test_storage_is_snapshotted_once_a_day_and_rolled_up_as_the_latest_level(env):
+    from services.billing_metering_service import storage
+
+    sm, _redis = env
+    t = seed_tenant()
+    s3 = FakeS3({"mytheus-documents": {f"{t.org_id}/d/x.pdf": 2_500_000_000}})
+    today = NOW.date()
+    for expected in (True, False):  # the second sweep on the same day inserts nothing
+        async with sm() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.current_org', :o, true)"), {"o": str(t.org_id)}
+            )
+            assert await storage.sweep_storage(session, t.org_id, s3, today) is expected
+            await metering.rollup_period(session, t.org_id, PERIOD)
+    agg = _sql(
+        "SELECT quantity FROM usage_aggregates WHERE org_id = %(o)s AND dimension = 'storage_gb'",
+        {"o": str(t.org_id)},
+    )
+    assert float(agg[0]["quantity"]) == 2.5
+
+
+def test_no_s3_credentials_means_no_client():
+    from services.billing_metering_service import storage
+
+    assert storage.make_s3_client({"S3_ENDPOINT_URL": "http://localhost:9000"}) is None

@@ -18,8 +18,8 @@ its totals stop moving:
 Each row's idempotency key is `usage:{org_id}:{event_type}:{occurred_at}:{meeting_id}` with
 `occurred_at` = the meeting's last final, so re-running the job inserts nothing new.
 
-`storage_gb` is NOT derived yet. ADR-0029 D3 assigns it to a nightly object-storage sweep; that
-needs the R2 listing credentials in this service and is recorded as open in the band file.
+`storage_gb` comes from `storage.py`'s daily sweep. It is a level, not a flow, so the rollup
+reports the period's LATEST snapshot for it rather than a sum of daily snapshots.
 
 The rollup collapses a period's `usage_events` into `usage_aggregates` (upsert on
 `(org_id, dimension, billing_period)`, so it is idempotent) with the haiku/sonnet/opus split
@@ -88,7 +88,7 @@ _ROLLUP = text("""
     WITH tiers AS (
       SELECT event_type, model_tier, sum(quantity) AS qty
       FROM usage_events
-      WHERE occurred_at >= :start AND occurred_at < :end
+      WHERE occurred_at >= :start AND occurred_at < :end AND event_type <> 'storage_gb'
       GROUP BY event_type, model_tier
     )
     INSERT INTO usage_aggregates (org_id, dimension, billing_period, quantity, tier_breakdown)
@@ -104,14 +104,26 @@ _ROLLUP = text("""
     """)
 
 
+_ROLLUP_STORAGE = text("""
+    INSERT INTO usage_aggregates (org_id, dimension, billing_period, quantity)
+    SELECT :org, 'storage_gb', :period, quantity
+    FROM usage_events
+    WHERE event_type = 'storage_gb' AND occurred_at >= :start AND occurred_at < :end
+    ORDER BY occurred_at DESC
+    LIMIT 1
+    ON CONFLICT (org_id, dimension, billing_period) DO UPDATE
+      SET quantity = EXCLUDED.quantity, updated_at = now()
+    """)
+
+
 async def rollup_period(session: AsyncSession, org_id: uuid.UUID, period: str) -> None:
     """Recompute `usage_aggregates` and the `meeting_minute` quota for one tenant-month."""
     year, month = (int(p) for p in period.split("-"))
     start = datetime(year, month, 1, tzinfo=period_end(period).tzinfo)
     end = period_end(period)
-    await session.execute(
-        _ROLLUP, {"org": str(org_id), "period": period, "start": start, "end": end}
-    )
+    window = {"org": str(org_id), "period": period, "start": start, "end": end}
+    await session.execute(_ROLLUP, window)
+    await session.execute(_ROLLUP_STORAGE, window)
 
     plan = await plan_for_tenant(session, org_id)
     used = (

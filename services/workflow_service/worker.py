@@ -15,6 +15,7 @@ from services.workflow_service.workflows.action_followup import ActionFollowUpWo
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.rtbf import RTBFWorkflow
+from services.workflow_service.workflows.usage_rollup import UsageRollupWorkflow, ensure_schedule
 
 _TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 _TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -31,9 +32,12 @@ async def main() -> None:
             ActionFollowUpWorkflow,
             RTBFWorkflow,
             DunningSagaWorkflow,
+            UsageRollupWorkflow,
         ],
         activities=[],  # TODO: register activity functions
     )
+    if await ensure_schedule(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")
     print(f"Worker started on task queue: {_TASK_QUEUE}")
     await worker.run()
 
