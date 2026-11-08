@@ -47,6 +47,22 @@ class UserProfile(BaseModel):
     updated_at: datetime
 
 
+class Member(BaseModel):
+    """One person in the caller's tenant: who to show in a members list or an invite picker.
+    Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display."""
+
+    id: uuid.UUID
+    clerk_user_id: str | None
+    email: str
+    avatar_url: str | None
+    role: str | None
+    tier: str | None
+
+
+class MemberList(BaseModel):
+    items: list[Member]
+
+
 class TeamRef(BaseModel):
     """A team membership as it appears inside `UserContext.team`. Not the full `Team`
     resource `core-api` serves at `GET /api/v1/teams` - just enough to identify and label it."""

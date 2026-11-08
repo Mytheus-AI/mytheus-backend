@@ -39,6 +39,11 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.inbox import is_duplicate, record_consumed
 from libs.shared.org_resolver import resolve_org_id
 from libs.shared.tenancy import set_rls
+from services.identity_tenant_service.provisioning import (
+    ensure_member,
+    remove_member,
+    tier_for_clerk_role,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -63,6 +68,13 @@ def _primary_email(data: dict[str, Any]) -> str:
             return str(entry.get("email_address", ""))
     addresses = data.get("email_addresses") or []
     return str(addresses[0].get("email_address", "")) if addresses else ""
+
+
+_MEMBERSHIP_EVENTS = (
+    "organizationMembership.created",
+    "organizationMembership.updated",
+    "organizationMembership.deleted",
+)
 
 
 def _clerk_org_of(data: dict[str, Any]) -> str:
@@ -102,7 +114,11 @@ async def clerk_webhook(
     event_type = str(event.get("type", ""))
     data = event.get("data") or {}
 
-    clerk_org = _clerk_org_of(data)
+    clerk_org = (
+        str((data.get("organization") or {}).get("id") or "")
+        if event_type in _MEMBERSHIP_EVENTS
+        else _clerk_org_of(data)
+    )
     if not clerk_org:
         # A personal-account user with no organization. 200, because retrying will never
         # produce an organization and Clerk would redeliver forever.
@@ -161,6 +177,26 @@ async def clerk_webhook(
 
 async def _apply(session: Any, org_id: UUID, event_type: str, data: dict[str, Any]) -> bool:
     """Apply one Clerk event to the local mirror. Returns whether anything changed."""
+    if event_type in _MEMBERSHIP_EVENTS:
+        # Someone joined, changed role in, or left THIS organization. The user events below
+        # only ever sync a user into their first organization, so without these a teammate
+        # who accepts an invitation never becomes a member of the inviting tenant.
+        member = data.get("public_user_data") or {}
+        clerk_user = str(member.get("user_id") or "")
+        if not clerk_user:
+            return False
+        if event_type == "organizationMembership.deleted":
+            return await remove_member(session, org_id=org_id, clerk_user_id=clerk_user)
+        await ensure_member(
+            session,
+            org_id=org_id,
+            clerk_user_id=clerk_user,
+            email=str(member.get("identifier") or ""),
+            avatar_url=member.get("image_url"),
+            tier=tier_for_clerk_role(str(data.get("role") or "")),
+        )
+        return True
+
     clerk_user_id = str(data.get("id", ""))
     if not clerk_user_id:
         return False

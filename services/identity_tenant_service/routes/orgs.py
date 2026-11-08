@@ -49,7 +49,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from libs.shared.audit import ACTION_AUTHZ_DENY, ACTION_ORG_PROVISIONED, audit
 from libs.shared.auth import clerk_org_id_from, user_id_from, verify_token
 from libs.shared.authz import RequestContext, _client_ip, not_found, require_tier
-from libs.shared.clerk_admin import ClerkUnavailable, org_for_admin
+from libs.shared.clerk_admin import ClerkUnavailable, membership_of, org_for_admin
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
@@ -58,8 +58,10 @@ from services.identity_tenant_service.provisioning import (
     ProvisionResult,
     TenantConflict,
     TenantOwner,
+    ensure_member,
     provision_tenant,
     sync_internal_org_id_to_clerk,
+    tier_for_clerk_role,
 )
 from services.identity_tenant_service.schemas import (
     Organization,
@@ -275,6 +277,42 @@ def self_serve_slug(clerk_slug: str, clerk_org_id: str) -> str:
     return slug[:63].rstrip("-")
 
 
+_SELECT_CALLER = text("SELECT 1 FROM users WHERE clerk_user_id = :c AND deleted_at IS NULL")
+
+
+async def _ensure_caller_is_member(org_id: uuid.UUID, clerk_org: str, clerk_user: str) -> None:
+    """The join path. Someone who accepted an invitation to an existing workspace reaches it
+    before (or without) Clerk's membership webhook, so they have no mirror row or grant yet and
+    every tenant route would refuse them. Clerk is asked whether they are a member, and if so
+    they are added with the tier their Clerk role maps to. A caller already here costs one
+    indexed read and no Clerk call."""
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        if (await session.execute(_SELECT_CALLER, {"c": clerk_user})).first():
+            return
+    try:
+        membership = await membership_of(clerk_org, clerk_user)
+    except ClerkUnavailable:
+        logger.exception("self-serve join: Clerk unavailable for %s", clerk_org)
+        raise ProblemDetail(
+            503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Identity provider unavailable"
+        ) from None
+    if membership is None:
+        raise ProblemDetail(
+            403, ErrorCode.FORBIDDEN_ROLE, "You are not a member of this organization"
+        )
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        await ensure_member(
+            session,
+            org_id=org_id,
+            clerk_user_id=clerk_user,
+            email=membership.email,
+            avatar_url=membership.avatar_url,
+            tier=tier_for_clerk_role(membership.role),
+        )
+
+
 @router.post(
     SELF_SERVE_PATH,
     status_code=status.HTTP_201_CREATED,
@@ -297,6 +335,7 @@ async def self_serve_provision(
     async with get_sessionmaker()() as session, session.begin():
         row = (await session.execute(_SELECT_BY_CLERK_ORG, {"c": clerk_org})).mappings().first()
     if row is not None:
+        await _ensure_caller_is_member(uuid.UUID(str(row["id"])), clerk_org, clerk_user)
         response.status_code = status.HTTP_200_OK
         return Organization(**dict(row))
 

@@ -289,3 +289,65 @@ async def provision_tenant(
     await session.execute(_INSERT_OWNER_GRANT, {**params, "u": str(owner_user_id)})
 
     return TenantProvisioned(org_id=result.org_id, owner_user_id=owner_user_id)
+
+
+# --- workspace membership: one mirror row + one grant per Clerk membership -------------------
+
+_UPSERT_MEMBER = text(
+    "INSERT INTO users (org_id, clerk_user_id, email, avatar_url) "
+    "VALUES (:o, :cuid, :email, :avatar) "
+    "ON CONFLICT (org_id, clerk_user_id) DO UPDATE SET "
+    "  email = EXCLUDED.email, avatar_url = EXCLUDED.avatar_url, "
+    "  updated_at = now(), deleted_at = NULL "
+    "RETURNING id"
+)
+# Clerk's role decides admin vs member. An `owner` grant is never lowered from here: ownership
+# is this system's own fact (the tenant's creator, or a promotion through /rbac), not Clerk's.
+_UPSERT_MEMBER_GRANT = text(
+    "INSERT INTO rbac_grants (org_id, user_id, tier) VALUES (:o, :u, :t) "
+    "ON CONFLICT (org_id, user_id) DO UPDATE SET tier = EXCLUDED.tier "
+    "WHERE rbac_grants.tier <> 'owner'"
+)
+_SOFT_DELETE_MEMBER = text(
+    "UPDATE users SET deleted_at = now(), updated_at = now() "
+    "WHERE org_id = :o AND clerk_user_id = :cuid AND deleted_at IS NULL RETURNING id"
+)
+_REVOKE_MEMBER_GRANT = text(
+    "DELETE FROM rbac_grants WHERE org_id = :o AND user_id = :u AND tier <> 'owner'"
+)
+
+
+def tier_for_clerk_role(role: str) -> str:
+    return "admin" if role == "org:admin" else "member"
+
+
+async def ensure_member(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    clerk_user_id: str,
+    email: str,
+    avatar_url: str | None,
+    tier: str,
+) -> uuid.UUID:
+    """Make a Clerk member of this tenant's organization a member here too: the `users` mirror
+    row and an rbac grant. Idempotent; never lowers an `owner`. Caller has set RLS to `org_id`."""
+    params = {"o": str(org_id)}
+    user_id = (
+        await session.execute(
+            _UPSERT_MEMBER, {**params, "cuid": clerk_user_id, "email": email, "avatar": avatar_url}
+        )
+    ).scalar_one()
+    await session.execute(_UPSERT_MEMBER_GRANT, {**params, "u": str(user_id), "t": tier})
+    return uuid.UUID(str(user_id))
+
+
+async def remove_member(session: AsyncSession, *, org_id: uuid.UUID, clerk_user_id: str) -> bool:
+    """The member left (or was removed from) the Clerk organization: soft-delete the mirror row
+    in THIS tenant only and drop a non-owner grant. Returns whether anything changed."""
+    params = {"o": str(org_id)}
+    row = (await session.execute(_SOFT_DELETE_MEMBER, {**params, "cuid": clerk_user_id})).first()
+    if row is None:
+        return False
+    await session.execute(_REVOKE_MEMBER_GRANT, {**params, "u": str(row[0])})
+    return True
