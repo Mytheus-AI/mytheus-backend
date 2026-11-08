@@ -164,6 +164,51 @@ def test_create_persists_event_and_audit_in_one_transaction(client, tenant_a):
     assert str(audit_rows[0]["actor_id"]) == str(tenant_a.user_id)
 
 
+def test_creator_is_the_host_without_being_listed(client, tenant_a):
+    """The caller who creates a meeting can join it. The token route is deny-by-default and
+    admits only `meeting_participants` rows, so a creator who had to remember to list
+    themselves got NOT_A_PARTICIPANT from their own meeting."""
+    resp = client.post("/api/v1/meetings", json={"title": "Solo"})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert [(p["user_id"], p["role_in_meeting"]) for p in body["participants"]] == [
+        (str(tenant_a.user_id), "host")
+    ]
+    rows = _sql(
+        "SELECT user_id, role_in_meeting FROM meeting_participants WHERE meeting_id = %(m)s",
+        {"m": body["id"]},
+    )
+    assert [(str(r["user_id"]), r["role_in_meeting"]) for r in rows] == [
+        (str(tenant_a.user_id), "host")
+    ]
+
+
+def test_creator_listed_explicitly_is_not_duplicated(client, tenant_a):
+    resp = client.post(
+        "/api/v1/meetings",
+        json={"title": "Listed", "participant_ids": [str(tenant_a.user_id)]},
+    )
+    assert resp.status_code == 201, resp.text
+    participants = resp.json()["participants"]
+    assert [p["user_id"] for p in participants] == [str(tenant_a.user_id)]
+    assert participants[0]["role_in_meeting"] == "host"
+
+
+def test_creator_comes_first_and_invitees_follow(client, tenant_a):
+    invitee = uuid.uuid4()
+    _sql(
+        "INSERT INTO users (id, org_id, clerk_user_id, email) "
+        "VALUES (%(u)s, %(o)s, %(c)s, 'invitee@example.com')",
+        {"u": str(invitee), "o": str(tenant_a.org_id), "c": f"user_{uuid.uuid4().hex[:16]}"},
+    )
+    resp = client.post(
+        "/api/v1/meetings", json={"title": "Pair", "participant_ids": [str(invitee)]}
+    )
+    assert resp.status_code == 201, resp.text
+    got = [(p["user_id"], p["role_in_meeting"]) for p in resp.json()["participants"]]
+    assert got == [(str(tenant_a.user_id), "host"), (str(invitee), None)]
+
+
 def test_validation_failure_writes_nothing(client, tenant_a):
     """422 before any write, in the RFC 7807 shape with a machine-readable code."""
     resp = client.post(

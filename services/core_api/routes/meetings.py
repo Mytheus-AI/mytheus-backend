@@ -182,7 +182,24 @@ async def create_meeting(
     meeting_id = row["id"]
 
     participants: list[Participant] = []
-    for user_id in dict.fromkeys(body.participant_ids):  # de-duplicated, order preserved
+    if ctx.user_id is not None:
+        # The creator is the host. `meeting-service` mints a join token only for a
+        # `meeting_participants` row, so a creator who was not listed could not enter their own
+        # meeting. No visibility check: `ctx.user_id` is the verified caller, resolved from this
+        # tenant's `users` table already.
+        await session.execute(
+            text(
+                "INSERT INTO meeting_participants (meeting_id, user_id, org_id, role_in_meeting) "
+                "VALUES (:m, :u, :org, 'host') ON CONFLICT DO NOTHING"
+            ),
+            {"m": str(meeting_id), "u": str(ctx.user_id), "org": str(ctx.org_id)},
+        )
+        participants.append(Participant(user_id=ctx.user_id, role_in_meeting="host"))
+
+    # De-duplicated, order preserved; the creator is already in, so listing them is a no-op.
+    for user_id in dict.fromkeys(body.participant_ids):
+        if user_id == ctx.user_id:
+            continue
         # The existence check is what keeps a participant inside the tenant. The foreign key
         # does NOT: PostgreSQL runs referential-integrity checks as the referenced table's
         # owner with RLS bypassed, so `fk_meeting_participants_user_id_users` resolves another
