@@ -519,3 +519,58 @@ def test_no_s3_credentials_means_no_client():
     from services.billing_metering_service import storage
 
     assert storage.make_s3_client({"S3_ENDPOINT_URL": "http://localhost:9000"}) is None
+
+
+# --- internal budget read-through ----------------------------------------------------------
+
+_SECRET = "s" * 40
+
+
+@pytest.fixture
+def internal_client(migrated_db, monkeypatch):
+    from services.billing_metering_service import internal
+
+    monkeypatch.setenv("DATABASE_URL", APP_URL)
+    db_mod.get_engine.cache_clear()
+    db_mod.get_sessionmaker.cache_clear()
+    redis = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(internal, "get_redis", lambda: redis)
+    app = create_app("billing-internal-test")
+    app.include_router(internal.router)
+    with TestClient(app) as c:
+        yield c, redis
+    db_mod.get_engine.cache_clear()
+    db_mod.get_sessionmaker.cache_clear()
+
+
+def _headers(org_id: uuid.UUID, token: str = _SECRET) -> dict[str, str]:
+    return {
+        "X-Mytheus-Service": "agent-runtime-service",
+        "X-Mytheus-Service-Token": token,
+        "X-Mytheus-Org": str(org_id),
+    }
+
+
+def test_internal_budget_refuses_when_unconfigured_or_wrong(internal_client, monkeypatch):
+    c, _ = internal_client
+    t = seed_tenant()
+    monkeypatch.delenv("MYTHEUS_BILLING_CALLER_TOKENS", raising=False)
+    assert c.post("/billing/internal/budget", headers=_headers(t.org_id)).status_code == 401
+    monkeypatch.setenv("MYTHEUS_BILLING_CALLER_TOKENS", f"agent-runtime-service={_SECRET}")
+    wrong = _headers(t.org_id, token="x" * 40)
+    assert c.post("/billing/internal/budget", headers=wrong).status_code == 401
+    unknown = _headers(uuid.uuid4())
+    assert c.post("/billing/internal/budget", headers=unknown).status_code == 404
+
+
+async def test_internal_budget_provisions_and_publishes_the_mirror(internal_client, monkeypatch):
+    c, redis = internal_client
+    t = seed_tenant()
+    monkeypatch.setenv("MYTHEUS_BILLING_CALLER_TOKENS", f"agent-runtime-service={_SECRET}")
+    r = c.post("/billing/internal/budget", headers=_headers(t.org_id))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["token_quota"], body["tokens_consumed"], body["state"]) == (200_000, 0, "ok")
+    mirror = await redis.hgetall(budgets.mirror_key(t.org_id, PERIOD))
+    assert mirror[b"hard_cap"] == b"200000" and mirror[b"enforcement"] == b"alert_only"
+    assert budget_row(t.org_id)["token_quota"] == 200_000

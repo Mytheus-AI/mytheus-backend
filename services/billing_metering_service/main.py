@@ -4,7 +4,8 @@ Owns: plans, subscriptions, usage_events, usage_aggregates, quotas, invoices, ag
 Budget states: ok -> throttled -> blocked. Quota enforcement never sheds durable facts.
 
 Processes:
-- this app: `GET /usage`, `GET /plans`
+- this app: `GET /usage`, `GET /plans`, and `POST /billing/internal/budget` (the agent tier's
+  budget read-through, service-authenticated)
 - `python -m services.billing_metering_service.consumer`: the `usage-events` consumer
 - `python -m services.billing_metering_service.jobs`: the nightly derive + rollup
 
@@ -12,7 +13,8 @@ Stripe checkout, the `/stripe/webhook` and dunning land in their own band (Plan 
 """
 
 from libs.shared.app_factory import create_app
-from services.billing_metering_service import routes
+from services.billing_metering_service import internal, routes
 
 app = create_app("billing-metering-service")
 app.include_router(routes.router)
+app.include_router(internal.router)
