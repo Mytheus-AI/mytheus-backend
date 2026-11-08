@@ -238,3 +238,26 @@ class MeetingSpeakerList(BaseModel):
     """
 
     items: list[MeetingSpeaker]
+
+
+class Worklog(BaseModel):
+    """One `PersonalListenerAgent` note from `worklogs` (Plan 7-9 section 3.3).
+
+    Only `surfaced` notes are ever served; the 0.4-0.7 silent-log band stays in the table and
+    is not returned. `window_id` ties the note to the 30 s agent window it came from, and
+    `source_chunk_ids` to the transcript finals in that window.
+    """
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    user_id: uuid.UUID
+    window_id: str
+    content: str
+    relevance_score: float | None = None
+    confidence: float | None = None
+    source_chunk_ids: list[uuid.UUID]
+    created_at: datetime
+
+
+class WorklogList(BaseModel):
+    items: list[Worklog]

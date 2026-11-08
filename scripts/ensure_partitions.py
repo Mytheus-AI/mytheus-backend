@@ -64,6 +64,14 @@ BACKEND_PARTITIONED_TABLES: tuple[PartitionedTable, ...] = (
         key="occurred_at",
         indexes=("CREATE INDEX IF NOT EXISTS ix_{p}_org_occurred ON {p} (org_id, occurred_at)",),
     ),
+    PartitionedTable(
+        name="worklogs",
+        key="created_at",
+        indexes=(
+            "CREATE INDEX IF NOT EXISTS ix_{p}_org_meeting_user "
+            "ON {p} (org_id, meeting_id, user_id, created_at)",
+        ),
+    ),
 )
 
 _LOCKDOWN_ROLES = ("mytheus_app", "mytheus_admin", "mytheus_relay")
