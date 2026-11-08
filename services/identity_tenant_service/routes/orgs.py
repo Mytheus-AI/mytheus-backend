@@ -38,15 +38,18 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from libs.shared.audit import ACTION_AUTHZ_DENY, ACTION_ORG_PROVISIONED, audit
-from libs.shared.authz import RequestContext, not_found, require_tier
+from libs.shared.auth import clerk_org_id_from, user_id_from, verify_token
+from libs.shared.authz import RequestContext, _client_ip, not_found, require_tier
+from libs.shared.clerk_admin import ClerkUnavailable, org_for_admin
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
@@ -237,4 +240,118 @@ async def provision_org(
         status="active",
         clerk_org_id=body.clerk_org_id,
         owner_user_id=created.owner_user_id,
+    )
+
+
+# --- self-serve: the org's own Clerk admin provisions its first tenant -----------------------
+#
+# The third edge state the module docstring calls missing, authenticated-but-org-exempt, now
+# exists for exactly this one path. `api-gateway` verifies the token on it but skips tenant
+# resolution (there is no tenant yet); this route then re-verifies the token itself and asks
+# CLERK, not the caller, whether the caller is an `org:admin` of the org in their token. The
+# name, slug and owner email are read from Clerk too, so the body carries nothing at all.
+#
+# Idempotent: a second call for an org that already has a tenant returns it with 200. That is
+# what lets onboarding call this unconditionally after every org it creates or selects.
+
+SELF_SERVE_PATH = "/orgs/self-serve"
+
+_SELECT_BY_CLERK_ORG = text(
+    "SELECT id, name, slug, status, clerk_org_id FROM organizations "
+    "WHERE clerk_org_id = :c AND deleted_at IS NULL"
+)
+_SLUG_INVALID = re.compile(r"[^a-z0-9-]+")
+
+
+def self_serve_slug(clerk_slug: str, clerk_org_id: str) -> str:
+    """Clerk's slug, normalized to `OrgCreate`'s pattern `^[a-z0-9][a-z0-9-]{1,62}$`.
+
+    Clerk slugs may hold `_` and run past 63 characters; both are folded. An empty result
+    falls back to the opaque org id, which is unique by construction.
+    """
+    slug = _SLUG_INVALID.sub("-", clerk_slug.lower()).strip("-")
+    if len(slug) < 2:
+        slug = _SLUG_INVALID.sub("-", clerk_org_id.lower()).strip("-")
+    return slug[:63].rstrip("-")
+
+
+@router.post(
+    SELF_SERVE_PATH,
+    status_code=status.HTTP_201_CREATED,
+    response_model=Organization,
+    responses={200: {"model": Organization, "description": "Already provisioned"}},
+)
+async def self_serve_provision(
+    request: Request,
+    response: Response,
+    claims: Annotated[dict[str, Any], Depends(verify_token)],
+) -> Organization:
+    """authz: Clerk `org:admin` of the token's active organization (checked against Clerk).
+
+    Creates the tenant for the caller's active Clerk organization: root, settings, residency,
+    the caller as `owner`, outbox and audit, then publishes `internal_org_id` to Clerk.
+    """
+    clerk_org = clerk_org_id_from(claims)
+    clerk_user = user_id_from(claims)
+
+    async with get_sessionmaker()() as session, session.begin():
+        row = (await session.execute(_SELECT_BY_CLERK_ORG, {"c": clerk_org})).mappings().first()
+    if row is not None:
+        response.status_code = status.HTTP_200_OK
+        return Organization(**dict(row))
+
+    try:
+        clerk = await org_for_admin(clerk_org, clerk_user)
+    except ClerkUnavailable:
+        logger.exception("self-serve provisioning: Clerk unavailable for %s", clerk_org)
+        raise ProblemDetail(
+            503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Identity provider unavailable"
+        ) from None
+    if clerk is None:
+        raise ProblemDetail(
+            403, ErrorCode.FORBIDDEN_ROLE, "Only an admin of this organization can set it up"
+        )
+
+    slug = self_serve_slug(clerk.slug, clerk_org)
+    try:
+        async with get_sessionmaker()() as session, session.begin():
+            created = await provision_tenant(
+                session,
+                name=clerk.name[:200],
+                slug=slug,
+                clerk_org_id=clerk_org,
+                owner=TenantOwner(clerk_user_id=clerk_user, email=clerk.owner_email),
+            )
+            await audit(
+                session,
+                org_id=created.org_id,
+                actor_id=created.owner_user_id,
+                action=ACTION_ORG_PROVISIONED,
+                target_type="organization",
+                target_id=created.org_id,
+                metadata={
+                    "slug": slug,
+                    "side": "tenant",
+                    "mode": "self_serve",
+                    "producer": PRODUCER,
+                },
+                ip=_client_ip(request),
+            )
+    except (TenantConflict, IntegrityError):
+        # Lost a race with a concurrent call for the same org (or the slug is taken): answer
+        # with whatever now holds this Clerk org, or 409 when nothing does.
+        async with get_sessionmaker()() as session, session.begin():
+            row = (await session.execute(_SELECT_BY_CLERK_ORG, {"c": clerk_org})).mappings().first()
+        if row is not None:
+            response.status_code = status.HTTP_200_OK
+            return Organization(**dict(row))
+        raise ProblemDetail(
+            409, ErrorCode.VERSION_CONFLICT, "Organization already exists"
+        ) from None
+
+    await sync_internal_org_id_to_clerk(
+        ProvisionResult(org_id=created.org_id, created=True), clerk_org
+    )
+    return Organization(
+        id=created.org_id, name=clerk.name[:200], slug=slug, status="active", clerk_org_id=clerk_org
     )

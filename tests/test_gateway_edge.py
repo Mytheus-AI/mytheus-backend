@@ -97,6 +97,15 @@ def client(migrated_db, keys):
             "sig": request.headers.get(edge.SIGNATURE_HEADER),
         }
 
+    @app.post(edge.SELF_SERVE_ORG_PATH)
+    async def self_serve_echo(request: Request) -> dict[str, str | None]:
+        # authz: public - observes what the edge forwards on the tenant-exempt path.
+        return {
+            "org": request.headers.get(edge.ORG_HEADER),
+            "user": request.headers.get(edge.USER_HEADER),
+            "sig": request.headers.get(edge.SIGNATURE_HEADER),
+        }
+
     with TestClient(app) as c:
         yield c
 
@@ -300,3 +309,46 @@ def test_the_gateway_never_routes_the_pii_vault(path):
     assert not any(
         p.startswith("/pii") or path.startswith(p) for p in edge.ROUTE_MAP
     ), "a ROUTE_MAP prefix captures the pii vault"
+
+
+# --- the one authenticated-but-tenant-exempt path ----------------------------------------------
+
+
+def test_self_serve_passes_a_valid_token_for_an_unprovisioned_org_without_tenant_headers(
+    client, keys
+):
+    priv, _pub = keys
+    token = _token(priv, f"org_{uuid.uuid4().hex}")
+    resp = client.post(
+        edge.SELF_SERVE_ORG_PATH,
+        headers={"Authorization": f"Bearer {token}", edge.ORG_HEADER: str(uuid.uuid4())},
+    )
+    assert resp.status_code == 200, resp.text
+    # No tenant was resolved, so none is asserted downstream - and a client-sent copy is gone.
+    assert resp.json() == {"org": None, "user": None, "sig": None}
+
+
+def test_self_serve_still_requires_a_token(client):
+    resp = client.post(edge.SELF_SERVE_ORG_PATH)
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "AUTH_REQUIRED"
+
+
+def test_self_serve_still_requires_an_org_claim(client, keys):
+    priv, _pub = keys
+    token = pyjwt.encode(
+        {"sub": "user_abc", "iss": _ISSUER, "iat": int(time.time()), "exp": int(time.time()) + 600},
+        priv,
+        algorithm="RS256",
+    )
+    resp = client.post(edge.SELF_SERVE_ORG_PATH, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+def test_the_exemption_is_post_only(client, keys):
+    """Any other method on the same path goes through normal tenant resolution."""
+    priv, _pub = keys
+    token = _token(priv, f"org_{uuid.uuid4().hex}")
+    resp = client.get(edge.SELF_SERVE_ORG_PATH, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Token carries no usable organization"
