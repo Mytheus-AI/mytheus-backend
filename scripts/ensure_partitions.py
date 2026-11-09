@@ -77,6 +77,8 @@ BACKEND_PARTITIONED_TABLES: tuple[PartitionedTable, ...] = (
         key="created_at",
         indexes=(
             "CREATE INDEX IF NOT EXISTS ix_{p}_org_user_status ON {p} (org_id, user_id, status)",
+            "CREATE INDEX IF NOT EXISTS ix_{p}_org_user_meeting_status "
+            "ON {p} (org_id, user_id, meeting_id, status)",
         ),
     ),
 )

@@ -938,6 +938,136 @@ components:
       - user_id
       title: SpeakerAssign
       type: object
+    Suggestion:
+      description: One `agent_suggestions` row, as its owner sees it. Never served to anyone else.
+      properties:
+        citations:
+          items:
+            $ref: '#/components/schemas/SuggestionCitation'
+          title: Citations
+          type: array
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        priority:
+          maximum: 3.0
+          minimum: 1.0
+          title: Priority
+          type: integer
+        question:
+          title: Question
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          enum:
+          - open
+          - asked
+          - dismissed
+          - saved
+          title: Status
+          type: string
+      required:
+      - id
+      - meeting_id
+      - question
+      - priority
+      - status
+      - created_at
+      title: Suggestion
+      type: object
+    SuggestionCitation:
+      description: 'One grounding source of a suggestion, in the four ADR-0033 D3 kinds. A transcript
+
+        citation opens the meeting at `start_ms`; a document one opens the document; a decision or
+
+        action one opens the decision lineage page or the meeting.'
+      properties:
+        action_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action Id
+        chunk_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Chunk Id
+        decision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decision Id
+        document_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Document Id
+        kind:
+          enum:
+          - transcript
+          - document
+          - decision
+          - action
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Id
+        start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Start Ms
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - kind
+      title: SuggestionCitation
+      type: object
+    SuggestionList:
+      description: '`GET /suggestions?meeting_id=`: the caller''s open, surfaced suggestions for that
+        meeting
+
+        (oldest first) and every suggestion they saved for later, from any meeting (newest first).'
+      properties:
+        open:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          title: Open
+          type: array
+        saved:
+          items:
+            $ref: '#/components/schemas/Suggestion'
+          title: Saved
+          type: array
+      required:
+      - open
+      - saved
+      title: SuggestionList
+      type: object
     Team:
       properties:
         created_at:
@@ -2352,6 +2482,185 @@ paths:
       summary: List My Worklogs
       tags:
       - worklogs
+  /api/v1/suggestions:
+    get:
+      description: 'The caller''s open, surfaced suggestions for `meeting_id`, plus their saved ones from
+        any
+
+        meeting. Re-hydrates the sidebar on every socket (re)connect. The 0.4-0.7 silent band is
+
+        stored but never served; the surface threshold is the tenant''s.'
+      operationId: list_suggestions
+      parameters:
+      - description: The meeting the sidebar is open on
+        in: query
+        name: meeting_id
+        required: true
+        schema:
+          description: The meeting the sidebar is open on
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestionList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Suggestions
+      tags:
+      - suggestions
+  /api/v1/suggestions/{suggestion_id}/ask:
+    post:
+      description: open or saved -> asked. Owner only.
+      operationId: ask_suggestion
+      parameters:
+      - in: path
+        name: suggestion_id
+        required: true
+        schema:
+          format: uuid
+          title: Suggestion Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask Suggestion
+      tags:
+      - suggestions
+  /api/v1/suggestions/{suggestion_id}/dismiss:
+    post:
+      description: open or saved -> dismissed. Owner only.
+      operationId: dismiss_suggestion
+      parameters:
+      - in: path
+        name: suggestion_id
+        required: true
+        schema:
+          format: uuid
+          title: Suggestion Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss Suggestion
+      tags:
+      - suggestions
+  /api/v1/suggestions/{suggestion_id}/save:
+    post:
+      description: 'open -> saved: it reappears in the owner''s next meeting. Owner only.'
+      operationId: save_suggestion
+      parameters:
+      - in: path
+        name: suggestion_id
+        required: true
+        schema:
+          format: uuid
+          title: Suggestion Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Suggestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Save Suggestion
+      tags:
+      - suggestions
   /api/v1/teams:
     get:
       description: 'Deliberately `/teams`, not the plan''s `/orgs/{id}/teams`.

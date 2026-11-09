@@ -103,3 +103,8 @@ ACTION_ACTION_CONFIRMED = "action.confirmed"
 ACTION_ACTION_DISMISSED = "action.dismissed"
 # My Tasks: an assignee (or an admin) closing a confirmed action item (ADR-0031 D3).
 ACTION_ACTION_COMPLETED = "action.completed"
+# P9: the owner acting on a QuestionAgent suggestion (ADR-0034 D7). No event is published; the
+# audit row is the only durable trace of who asked, saved or dismissed what.
+ACTION_SUGGESTION_ASKED = "suggestion.asked"
+ACTION_SUGGESTION_DISMISSED = "suggestion.dismissed"
+ACTION_SUGGESTION_SAVED = "suggestion.saved"

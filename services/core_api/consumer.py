@@ -80,6 +80,12 @@ SURFACE_ABOVE = _SURFACE_ABOVE
 SILENT_FROM = _SILENT_FROM
 _thresholds = thresholds
 
+# P9 (ADR-0034 D3): QuestionAgent suggestions, one `agent_suggestions` row each, for `user_id`.
+_SUGGESTION = ("QuestionAgent", "suggestion")
+MAX_SUGGESTION_CHARS = 1000
+MAX_CITATIONS = 8
+_CITATION_KINDS = frozenset({"transcript", "document", "decision", "action"})
+
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
     ("DecisionAgent", "decision_candidate"): "decisions",
@@ -166,8 +172,10 @@ async def handle_agent_result(
 
     `PersonalListenerAgent` notes go to `worklogs` (P7). `DecisionAgent`/`decision_candidate`
     and `ActionAgent`/`action_candidate` go to `decisions` / `action_items` as `proposed` rows
-    (P8 Part A; True if any candidate row was new), never to the outbox. Other kinds
-    (suggestions) are recorded in the inbox and otherwise ignored until their band.
+    (P8 Part A; True if any candidate row was new), never to the outbox.
+    `QuestionAgent`/`suggestion` goes to `agent_suggestions` as `open` rows for the result's
+    `user_id` (P9, ADR-0034; True if any row was new). Other kinds are recorded in the inbox
+    and otherwise ignored.
 
     `surfaced` is decided HERE, not trusted from the payload (ADR-0030 D3): `core-api` can read
     the tenant's `agent_confidence_overrides`, the AI tier cannot. Below `silent` nothing is
@@ -220,7 +228,12 @@ async def _apply_agent_result(
         return False
     agent, kind = str(value.get("agent")), str(value.get("kind"))
     candidate_table = _CANDIDATE_TABLES.get((agent, kind))
-    if candidate_table is None and (agent != "PersonalListenerAgent" or kind != "note"):
+    is_suggestion = (agent, kind) == _SUGGESTION
+    if (
+        candidate_table is None
+        and not is_suggestion
+        and (agent != "PersonalListenerAgent" or kind != "note")
+    ):
         return False
 
     meeting_id = _uuid(value.get("meeting_id"), "meeting_id")
@@ -242,6 +255,10 @@ async def _apply_agent_result(
             f"meeting={meeting_id} user={user_id}"
         )
     surface, silent = _thresholds(visible[2], agent)
+    if is_suggestion:
+        return await _persist_suggestions(
+            session, org_id, meeting_id, user_id, silent, value.get("payload_json")
+        )
     if candidate_table is not None:
         return await _persist_candidates(
             session, org_id, meeting_id, candidate_table, silent, value.get("payload_json")
@@ -367,6 +384,104 @@ async def _persist_candidates(
             )
         if (await session.execute(text(sql), params)).first() is not None:
             written = True
+    return written
+
+
+def _payload_list(payload_json: Any, key: str) -> list[Any] | None:
+    """`payload_json[key]` as a list; poison if the payload is not a JSON string."""
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError as exc:
+        raise PoisonMessage("agent-results payload_json is not JSON") from exc
+    if payload is None:
+        raise PoisonMessage(f"agent-results {key} result has no payload_json string")
+    items = payload.get(key) if isinstance(payload, dict) else None
+    return items if isinstance(items, list) else None
+
+
+def _priority(raw: Any) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None
+    return raw if 1 <= raw <= 3 else None
+
+
+def _citations(raw: Any) -> list[dict[str, Any]]:
+    """Only the four ADR-0033 D3 kinds, scalar values only, at most `MAX_CITATIONS`."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for c in raw:
+        if isinstance(c, dict) and c.get("kind") in _CITATION_KINDS:
+            out.append(
+                {str(k): v for k, v in c.items() if isinstance(v, (str, int)) and len(str(v)) < 200}
+            )
+        if len(out) == MAX_CITATIONS:
+            break
+    return out
+
+
+async def _persist_suggestions(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    user_id: uuid.UUID,
+    silent: float,
+    payload_json: Any,
+) -> bool:
+    """Insert each QuestionAgent suggestion as an `open` `agent_suggestions` row for `user_id`
+    (the participant the agent ran for). True if any row is new. ADR-0034 D3-D5.
+
+    The suggestion's deterministic id is the row id. The table is partitioned, so its primary
+    key is `(id, created_at)` and `ON CONFLICT (id)` is impossible: the inbox claim made by the
+    caller in this same transaction is what makes a redelivery a no-op, and the `NOT EXISTS`
+    guards a replay whose inbox row was lost. Below the tenant's `silent` threshold nothing is
+    written; the surface band is applied when the route reads (`confidence` is stored). A bad
+    suggestion is skipped, the rest are applied. Nothing is published, ever.
+    """
+    suggestions = _payload_list(payload_json, "suggestions")
+    if suggestions is None:
+        return False
+    written = False
+    for s in suggestions:
+        if not isinstance(s, dict):
+            continue
+        sid = _optional_uuid(s.get("id"))
+        question = s.get("question")
+        confidence = _candidate_confidence(s.get("confidence"))
+        priority = _priority(s.get("priority"))
+        if sid is None or not isinstance(question, str) or confidence is None or priority is None:
+            continue
+        question = question.strip()[:MAX_SUGGESTION_CHARS]
+        if not question or confidence < silent:
+            continue
+        rationale = s.get("rationale")
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO agent_suggestions (id, org_id, user_id, meeting_id, question, "
+                    "priority, status, confidence, rationale, citations) "
+                    "SELECT :id, :o, :u, :m, :q, :p, 'open', :c, :r, CAST(:cit AS jsonb) "
+                    "WHERE NOT EXISTS (SELECT 1 FROM agent_suggestions WHERE id = :id) "
+                    "ON CONFLICT DO NOTHING RETURNING 1"
+                ),
+                {
+                    "id": str(sid),
+                    "o": str(org_id),
+                    "u": str(user_id),
+                    "m": str(meeting_id),
+                    "q": question,
+                    "p": priority,
+                    "c": confidence,
+                    "r": (
+                        (rationale.strip()[:MAX_SUGGESTION_CHARS] or None)
+                        if isinstance(rationale, str)
+                        else None
+                    ),
+                    "cit": json.dumps(_citations(s.get("citations"))),
+                },
+            )
+        ).first()
+        written = written or inserted is not None
     return written
 
 

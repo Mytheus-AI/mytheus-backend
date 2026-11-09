@@ -19,6 +19,7 @@ from services.core_api.routes import (
     my_tasks,
     org_hierarchy,
     speakers,
+    suggestions,
     transcript,
     worklogs,
 )
@@ -34,7 +35,8 @@ app.include_router(candidates.router)
 app.include_router(internal_meetings.router)
 app.include_router(internal_retrieval.router)
 app.include_router(my_tasks.router)
+app.include_router(suggestions.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
-# my_tasks. /suggestions lands with P9.
+# my_tasks. /suggestions (QuestionAgent, P9, owner-only, ADR-0034) is in suggestions.

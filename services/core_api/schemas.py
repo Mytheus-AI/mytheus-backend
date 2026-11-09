@@ -361,3 +361,48 @@ class ActionItemUpdate(BaseModel):
             raise ValueError("PATCH requires at least one field")
         _reject_null_content(self)
         return self
+
+
+# --- P9: QuestionAgent suggestions (ADR-0034) ---------------------------------------------
+
+SuggestionStatus = Literal["open", "asked", "dismissed", "saved"]
+CitationKind = Literal["transcript", "document", "decision", "action"]
+
+
+class SuggestionCitation(BaseModel):
+    """One grounding source of a suggestion, in the four ADR-0033 D3 kinds. A transcript
+    citation opens the meeting at `start_ms`; a document one opens the document; a decision or
+    action one opens the decision lineage page or the meeting."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: CitationKind
+    meeting_id: str | None = None
+    chunk_id: str | None = None
+    start_ms: int | None = None
+    document_id: str | None = None
+    decision_id: str | None = None
+    action_id: str | None = None
+    title: str | None = None
+
+
+class Suggestion(BaseModel):
+    """One `agent_suggestions` row, as its owner sees it. Never served to anyone else."""
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    question: str
+    priority: Annotated[int, Field(ge=1, le=3)]
+    status: SuggestionStatus
+    confidence: float | None = None
+    rationale: str | None = None
+    citations: list[SuggestionCitation] = Field(default_factory=list)
+    created_at: datetime
+
+
+class SuggestionList(BaseModel):
+    """`GET /suggestions?meeting_id=`: the caller's open, surfaced suggestions for that meeting
+    (oldest first) and every suggestion they saved for later, from any meeting (newest first)."""
+
+    open: list[Suggestion]
+    saved: list[Suggestion]
