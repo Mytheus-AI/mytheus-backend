@@ -15,6 +15,7 @@ from services.core_api.routes import (
     chat,
     internal_meetings,
     meetings,
+    my_tasks,
     org_hierarchy,
     speakers,
     transcript,
@@ -30,5 +31,8 @@ app.include_router(transcript.router)
 app.include_router(worklogs.router)
 app.include_router(candidates.router)
 app.include_router(internal_meetings.router)
+app.include_router(my_tasks.router)
 
-# TODO: /suggestions lands with P9; GET /actions (My Tasks) with P8 Part B.
+# Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
+# candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
+# my_tasks. /suggestions lands with P9.

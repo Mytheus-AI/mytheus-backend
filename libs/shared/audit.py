@@ -101,3 +101,5 @@ ACTION_DECISION_CONFIRMED = "decision.confirmed"
 ACTION_DECISION_DISMISSED = "decision.dismissed"
 ACTION_ACTION_CONFIRMED = "action.confirmed"
 ACTION_ACTION_DISMISSED = "action.dismissed"
+# My Tasks: an assignee (or an admin) closing a confirmed action item (ADR-0031 D3).
+ACTION_ACTION_COMPLETED = "action.completed"

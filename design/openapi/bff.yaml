@@ -109,6 +109,27 @@ components:
       - created_at
       title: DashboardNote
       type: object
+    DecisionLineage:
+      properties:
+        chain:
+          items:
+            $ref: '#/components/schemas/LineageDecision'
+          title: Chain
+          type: array
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - decision_id
+      - meeting_id
+      - chain
+      title: DecisionLineage
+      type: object
     DepartmentNode:
       properties:
         children:
@@ -182,6 +203,54 @@ components:
           title: Detail
           type: array
       title: HTTPValidationError
+      type: object
+    LineageDecision:
+      properties:
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        confirmed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirmed At
+        content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content
+        depth:
+          title: Depth
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        role:
+          enum:
+          - ancestor
+          - subject
+          - descendant
+          title: Role
+          type: string
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      required:
+      - id
+      - role
+      - depth
+      title: LineageDecision
       type: object
     MeetingRef:
       description: 'A recent meeting as it appears inside `UserContext.recent_meetings` - same
@@ -583,6 +652,49 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Dashboard
+      tags:
+      - bff
+  /bff/meetings/{meeting_id}/decisions/{decision_id}/lineage:
+    get:
+      operationId: decision_lineage
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionLineage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decision Lineage
       tags:
       - bff
   /bff/org/chart:
