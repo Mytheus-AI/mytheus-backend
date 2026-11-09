@@ -95,5 +95,11 @@ ACTION_TEAM_MEMBER_REMOVED = "team.member_removed"
 # An RBAC tier change is a privilege change: `PUT/DELETE /rbac/grants/{user_id}`.
 ACTION_RBAC_GRANTED = "rbac.granted"
 ACTION_RBAC_REVOKED = "rbac.revoked"
+# Phase 8 Part A: a participant confirming or dismissing an agent candidate. Confirm is what
+# puts a decision/action into the knowledge graph, so who pressed it is a compliance fact.
+ACTION_DECISION_CONFIRMED = "decision.confirmed"
+ACTION_DECISION_DISMISSED = "decision.dismissed"
+ACTION_ACTION_CONFIRMED = "action.confirmed"
+ACTION_ACTION_DISMISSED = "action.dismissed"
 # My Tasks: an assignee (or an admin) closing a confirmed action item (ADR-0031 D3).
 ACTION_ACTION_COMPLETED = "action.completed"

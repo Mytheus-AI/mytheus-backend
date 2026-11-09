@@ -26,6 +26,10 @@ UNMODELLED_TABLES = frozenset(
         "meeting_rooms",
         "meeting_speakers",
         "chat_messages",
+        # Phase 8 Part A (e7a3c9d14b52): raw-SQL DDL, read and written with `text()`.
+        "decisions",
+        "action_items",
+        "agent_suggestions",
         # NOT this repo's. `mytheus-realtime` owns and migrates `transcript_chunks` in the
         # same physical Postgres (migrations/_grants.py:20-24). Dropping another repo's table
         # from this repo's autogenerate is the worst version of this bug.
@@ -39,7 +43,9 @@ UNMODELLED_TABLES = frozenset(
 # Declarative partitions: `audit_logs_2026_07` … `audit_logs_2027_06`, `audit_logs_default`,
 # `chat_messages_2026_08`. Matched by shape rather than listed, because the set grows every
 # month and a list would go stale exactly when it starts mattering.
-PARTITION_RE = re.compile(r"^(audit_logs|chat_messages)_(\d{4}_\d{2}|default)$")
+PARTITION_RE = re.compile(
+    r"^(audit_logs|chat_messages|worklogs|agent_suggestions)_(\d{4}_\d{2}|default)$"
+)
 
 
 def _parent_table_name(obj: Any) -> str | None:

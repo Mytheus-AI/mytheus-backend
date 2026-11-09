@@ -72,6 +72,13 @@ BACKEND_PARTITIONED_TABLES: tuple[PartitionedTable, ...] = (
             "ON {p} (org_id, meeting_id, user_id, created_at)",
         ),
     ),
+    PartitionedTable(
+        name="agent_suggestions",
+        key="created_at",
+        indexes=(
+            "CREATE INDEX IF NOT EXISTS ix_{p}_org_user_status ON {p} (org_id, user_id, status)",
+        ),
+    ),
 )
 
 _LOCKDOWN_ROLES = ("mytheus_app", "mytheus_admin", "mytheus_relay")

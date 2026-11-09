@@ -6,6 +6,108 @@
 # regeneration and blocks the build until then.
 components:
   schemas:
+    ActionItem:
+      description: One `action_items` row. `proposed` until a participant confirms or dismisses it.
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        confidence:
+          title: Confidence
+          type: number
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        status:
+          enum:
+          - proposed
+          - confirmed
+          - done
+          - dismissed
+          title: Status
+          type: string
+      required:
+      - id
+      - meeting_id
+      - content
+      - confidence
+      - status
+      - created_at
+      title: ActionItem
+      type: object
+    ActionItemUpdate:
+      additionalProperties: false
+      description: 'PATCH body: edit a proposed action before confirming it. At least one field.
+
+
+        `assignee_id` and `due_date` may be set to null to clear them.'
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          anyOf:
+          - maxLength: 4000
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Content
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+      title: ActionItemUpdate
+      type: object
+    CandidateList:
+      description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first.'
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/ActionItem'
+          title: Actions
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/Decision'
+          title: Decisions
+          type: array
+      required:
+      - decisions
+      - actions
+      title: CandidateList
+      type: object
     ChatMessage:
       properties:
         content:
@@ -56,6 +158,92 @@ components:
       - meeting_id
       - content
       title: ChatMessageCreate
+      type: object
+    Decision:
+      description: One `decisions` row. `proposed` until a participant confirms or dismisses it.
+      properties:
+        confidence:
+          title: Confidence
+          type: number
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          enum:
+          - proposed
+          - confirmed
+          - superseded
+          - dismissed
+          title: Status
+          type: string
+        supersedes:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Supersedes
+      required:
+      - id
+      - meeting_id
+      - content
+      - confidence
+      - status
+      - created_at
+      title: Decision
+      type: object
+    DecisionConfirm:
+      additionalProperties: false
+      description: Confirm body. `supersedes` names an earlier confirmed decision (FOLLOWS_FROM lineage).
+      properties:
+        supersedes:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Supersedes
+      title: DecisionConfirm
+      type: object
+    DecisionUpdate:
+      additionalProperties: false
+      description: 'PATCH body: edit a proposed decision before confirming it. At least one field.'
+      properties:
+        content:
+          anyOf:
+          - maxLength: 4000
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Content
+        rationale:
+          anyOf:
+          - maxLength: 4000
+            type: string
+          - type: 'null'
+          title: Rationale
+      title: DecisionUpdate
       type: object
     Department:
       properties:
@@ -895,6 +1083,146 @@ paths:
       summary: List My Tasks
       tags:
       - actions
+  /api/v1/actions/{action_id}:
+    patch:
+      operationId: update_action
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionItemUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionItem'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Action
+      tags:
+      - actions
+  /api/v1/actions/{action_id}/confirm:
+    post:
+      description: proposed -> confirmed, and the ONE `actions` outbox row. Idempotent on re-confirm.
+      operationId: confirm_action
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionItem'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Confirm Action
+      tags:
+      - actions
+  /api/v1/actions/{action_id}/dismiss:
+    post:
+      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      operationId: dismiss_action
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionItem'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss Action
+      tags:
+      - actions
   /api/v1/actions/{action_id}/done:
     post:
       operationId: mark_done
@@ -982,6 +1310,154 @@ paths:
       summary: Post Chat
       tags:
       - chat
+  /api/v1/decisions/{decision_id}:
+    patch:
+      operationId: update_decision
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Decision
+      tags:
+      - decisions
+  /api/v1/decisions/{decision_id}/confirm:
+    post:
+      description: proposed -> confirmed, and the ONE `decisions` outbox row. Idempotent on re-confirm.
+      operationId: confirm_decision
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/DecisionConfirm'
+              - type: 'null'
+              title: Body
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Confirm Decision
+      tags:
+      - decisions
+  /api/v1/decisions/{decision_id}/dismiss:
+    post:
+      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      operationId: dismiss_decision
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss Decision
+      tags:
+      - decisions
   /api/v1/departments:
     get:
       operationId: list_departments
@@ -1233,6 +1709,48 @@ paths:
       summary: Update Meeting
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/candidates:
+    get:
+      description: 'Proposed, surfaced decision and action candidates for one meeting, oldest first.
+
+
+        Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
+
+        stored but never served; the surface threshold is the tenant''s, per agent.'
+      operationId: list_candidates
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Candidates
+      tags:
+      - candidates
   /api/v1/meetings/{meeting_id}/participants:
     post:
       description: 'Invite tenant users into an existing meeting. Only someone already in it may invite.
