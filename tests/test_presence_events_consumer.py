@@ -134,3 +134,23 @@ async def test_a_missing_header_field_is_a_poison_message():
 
     with pytest.raises(PoisonMessage):
         await handle_presence_event(None, redis, value)
+
+
+async def test_an_unknown_tenant_is_a_poison_message_not_a_crash(migrated_db):
+    """`inbox.org_id` references `organizations`; a tenant that does not exist used to raise
+    IntegrityError, which the loop does not catch, so the consumer died on every restart."""
+    redis = fakeredis.aioredis.FakeRedis()
+    app_engine = create_async_engine(APP_URL)
+    value = _envelope(
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        meeting_id=str(uuid.uuid4()),
+        user_id=str(uuid.uuid4()),
+        event_type="join",
+    )
+    try:
+        with pytest.raises(PoisonMessage):
+            async with app_engine.connect() as conn, conn.begin():
+                await handle_presence_event(conn, redis, value)
+    finally:
+        await app_engine.dispose()

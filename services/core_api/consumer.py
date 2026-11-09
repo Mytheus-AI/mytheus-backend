@@ -130,7 +130,13 @@ async def handle_presence_event(
             "event_type": value.get("event_type"),
         },
     )
-    await record_consumed(session, CONSUMER_GROUP, str(org_id), idempotency_key)
+    try:
+        await record_consumed(session, CONSUMER_GROUP, str(org_id), idempotency_key)
+    except IntegrityError as exc:
+        # `inbox.org_id` references `organizations`: a tenant that does not exist can never
+        # apply. Raised as IntegrityError it crashed the loop and blocked the partition on
+        # every restart; as poison it is dead-lettered (same fix as agent-results, 97f2709).
+        raise PoisonMessage(f"presence-events names unknown tenant {org_id}") from exc
     return True
 
 

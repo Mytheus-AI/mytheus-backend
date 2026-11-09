@@ -9,9 +9,10 @@ Two properties matter more than the payload itself:
 - **Every arm degrades independently.** A slow or failing arm returns its `status` and an
   empty list; it never fails the screen. A dashboard that 500s because the decisions panel is
   down is worse than one that renders four panels and an apology in the fifth.
-- **The unbuilt arms are shaped, not absent.** `action_items`, `worklogs` and `decisions`
-  return `[]` with a settled status today. The frontend renders its empty states against the
-  real shape now, so the band that populates them is a data change rather than a UI change.
+- **The unbuilt arms are shaped, not absent.** `action_items` and `decisions` return `[]`
+  with a settled status today (`worklogs` is real since Plan 7: the caller's own notes).
+  The frontend renders its empty states against the real shape now, so the band that
+  populates them is a data change rather than a UI change.
 
 An arm that HAS data declares its item type, and that is load-bearing rather than tidiness.
 This module is the source the OpenAPI document is emitted from (ADR-0022), so the models here
@@ -91,6 +92,21 @@ class MeetingsArm(_ArmBase[DashboardMeeting]):
     pass
 
 
+class DashboardNote(BaseModel):
+    """One of the caller's own notes (a surfaced `worklogs` row, PersonalListenerAgent output)
+    with the meeting it came from, for the dashboard's My notes panel."""
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    meeting_title: str | None
+    content: str
+    created_at: datetime
+
+
+class WorklogsArm(_ArmBase[DashboardNote]):
+    pass
+
+
 class UnbuiltArm(_ArmBase[dict[str, Any]]):
     """A panel whose read model does not exist yet, so its item type stays open.
 
@@ -113,7 +129,7 @@ class UnbuiltArm(_ArmBase[dict[str, Any]]):
 class Dashboard(BaseModel):
     upcoming_meetings: MeetingsArm
     action_items: UnbuiltArm
-    worklogs: UnbuiltArm
+    worklogs: WorklogsArm
     decisions: UnbuiltArm
 
     @property
@@ -191,6 +207,29 @@ async def dashboard(
             for r in rows
         ]
 
+    async def my_notes() -> list[DashboardNote]:
+        """The caller's most recent surfaced notes across meetings. Their own only: a note is
+        private to the person whose agent wrote it (ADR-0030), so `user_id` is the caller."""
+        if ctx.user_id is None:
+            return []
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT w.id, w.meeting_id, m.title AS meeting_title, w.content, "
+                        "w.created_at FROM worklogs w JOIN meetings m ON m.id = w.meeting_id "
+                        "WHERE w.user_id = :u AND w.surfaced AND w.deleted_at IS NULL "
+                        "AND m.deleted_at IS NULL "
+                        "ORDER BY w.created_at DESC, w.id DESC LIMIT :limit"
+                    ),
+                    {"u": str(ctx.user_id), "limit": limit},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [DashboardNote(**dict(r)) for r in rows]
+
     async def not_yet_built() -> list[Any]:
         """Shaped and settled, not degraded.
 
@@ -204,7 +243,7 @@ async def dashboard(
     meetings_arm, actions_arm, worklogs_arm, decisions_arm = await asyncio.gather(
         _arm("upcoming_meetings", MeetingsArm, upcoming_meetings),
         _arm("action_items", UnbuiltArm, not_yet_built),
-        _arm("worklogs", UnbuiltArm, not_yet_built),
+        _arm("worklogs", WorklogsArm, my_notes),
         _arm("decisions", UnbuiltArm, not_yet_built),
     )
 

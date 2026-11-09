@@ -15,7 +15,7 @@ components:
         upcoming_meetings:
           $ref: '#/components/schemas/MeetingsArm'
         worklogs:
-          $ref: '#/components/schemas/UnbuiltArm'
+          $ref: '#/components/schemas/WorklogsArm'
       required:
       - upcoming_meetings
       - action_items
@@ -75,6 +75,39 @@ components:
       - scheduled_end
       - livekit_room
       title: DashboardMeeting
+      type: object
+    DashboardNote:
+      description: 'One of the caller''s own notes (a surfaced `worklogs` row, PersonalListenerAgent output)
+
+        with the meeting it came from, for the dashboard''s My notes panel.'
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - id
+      - meeting_id
+      - meeting_title
+      - content
+      - created_at
+      title: DashboardNote
       type: object
     DepartmentNode:
       properties:
@@ -479,6 +512,25 @@ components:
       - msg
       - type
       title: ValidationError
+      type: object
+    WorklogsArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardNote'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: WorklogsArm
       type: object
   securitySchemes:
     HTTPBearer:
