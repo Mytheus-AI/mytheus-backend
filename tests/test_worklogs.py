@@ -7,7 +7,7 @@ Consumer (`handle_agent_result`, the testable core of `core-api`'s `agent-result
 3. the tenant's `agent_confidence_overrides` decide the band, not the payload (ADR-0030 D3);
 4. a message naming another tenant's meeting is poison, never a row (gap 31: an FK alone
    would have accepted it);
-5. other agent kinds are consumed without a row until their band.
+5. kinds with no read model yet (suggestions) are consumed without a row.
 
 Route (`GET /api/v1/meetings/:id/worklogs?user_id=me`):
 6. the caller sees only their own surfaced notes, oldest first;
@@ -202,9 +202,9 @@ async def test_a_failed_apply_does_not_poison_the_dedupe_cache(migrated_db):
 async def test_other_agent_kinds_are_consumed_without_a_row(migrated_db):
     t = seed_tenant()
     m = seed_meeting(t.org_id)
-    assert (
-        await apply(result(t, m, 0.95, agent="DecisionAgent", kind="decision_candidate")) is False
-    )
+    # Decision/action candidates have their own tables since P8 (tests/test_candidates.py);
+    # QuestionAgent suggestions are still consumed without a row until P9.
+    assert await apply(result(t, m, 0.95, agent="QuestionAgent", kind="suggestion")) is False
     assert notes(m) == []
 
 

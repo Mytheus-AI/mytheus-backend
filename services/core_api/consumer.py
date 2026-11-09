@@ -1,8 +1,9 @@
 """Kafka consumer for core-api.
 
 Consumes: `agent-results` (Plan 7-9 section 3.3 step 3: `PersonalListenerAgent` notes into
-`worklogs`, see `handle_agent_result`) and presence-events (analytics read model only; no
-domain write - Plan 3-4 section 3.3 step 5). Presence itself stays owned by
+`worklogs`; section 3.6 step 3: decision/action candidates into `decisions`/`action_items` as
+`proposed`, with no event; see `handle_agent_result`) and presence-events (analytics read
+model only; no domain write - Plan 3-4 section 3.3 step 5). Presence itself stays owned by
 `realtime-gateway`/Redis; this consumer never writes `meeting_participants` or any table
 `core-api` treats as domain source of truth from this path.
 
@@ -44,6 +45,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import date
 from typing import Any
 
 from redis.asyncio import Redis
@@ -60,6 +62,10 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
+from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
+from services.core_api.confidence import thresholds
+from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +74,17 @@ AGENT_RESULTS = "agent-results"
 TOPICS = [TOPIC, AGENT_RESULTS]
 CONSUMER_GROUP = "core-api"
 
-# doc 08 section 6, the uniform confidence policy. Per tenant via
-# tenant_settings.agent_confidence_overrides, shaped
-# {"PersonalListenerAgent": {"surface": x, "silent": y}} (mytheus-docs ADR-0030 D3).
-SURFACE_ABOVE = 0.7
-SILENT_FROM = 0.4
+# doc 08 section 6, the uniform confidence policy (see `services/core_api/confidence.py`).
+# Re-exported under their historical names.
+SURFACE_ABOVE = _SURFACE_ABOVE
+SILENT_FROM = _SILENT_FROM
+_thresholds = thresholds
+
+# Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
+_CANDIDATE_TABLES = {
+    ("DecisionAgent", "decision_candidate"): "decisions",
+    ("ActionAgent", "action_candidate"): "action_items",
+}
 
 
 class PoisonMessage(Exception):
@@ -147,26 +159,15 @@ def _uuid(raw: Any, what: str) -> uuid.UUID:
         raise PoisonMessage(f"agent-results {what} is not a UUID: {raw!r}") from exc
 
 
-def _thresholds(overrides: Any, agent: str) -> tuple[float, float]:
-    """(surface_above, silent_from) for this agent, from the tenant's overrides if valid."""
-    surface, silent = SURFACE_ABOVE, SILENT_FROM
-    entry = overrides.get(agent) if isinstance(overrides, dict) else None
-    if isinstance(entry, dict):
-        try:
-            surface = float(entry.get("surface", surface))
-            silent = float(entry.get("silent", silent))
-        except (TypeError, ValueError):
-            return SURFACE_ABOVE, SILENT_FROM
-    return surface, silent
-
-
 async def handle_agent_result(
     session: AsyncSession, redis: Redis[bytes], value: dict[str, Any]
 ) -> bool:
     """Apply one decoded `agent-results` message. True if a `worklogs` row was written.
 
-    Only `PersonalListenerAgent` notes have a read model in P7; other kinds (decision/action
-    candidates, suggestions) are recorded in the inbox and otherwise ignored until their band.
+    `PersonalListenerAgent` notes go to `worklogs` (P7). `DecisionAgent`/`decision_candidate`
+    and `ActionAgent`/`action_candidate` go to `decisions` / `action_items` as `proposed` rows
+    (P8 Part A; True if any candidate row was new), never to the outbox. Other kinds
+    (suggestions) are recorded in the inbox and otherwise ignored until their band.
 
     `surfaced` is decided HERE, not trusted from the payload (ADR-0030 D3): `core-api` can read
     the tenant's `agent_confidence_overrides`, the AI tier cannot. Below `silent` nothing is
@@ -218,7 +219,8 @@ async def _apply_agent_result(
     if claimed is None:
         return False
     agent, kind = str(value.get("agent")), str(value.get("kind"))
-    if agent != "PersonalListenerAgent" or kind != "note":
+    candidate_table = _CANDIDATE_TABLES.get((agent, kind))
+    if candidate_table is None and (agent != "PersonalListenerAgent" or kind != "note"):
         return False
 
     meeting_id = _uuid(value.get("meeting_id"), "meeting_id")
@@ -240,6 +242,10 @@ async def _apply_agent_result(
             f"meeting={meeting_id} user={user_id}"
         )
     surface, silent = _thresholds(visible[2], agent)
+    if candidate_table is not None:
+        return await _persist_candidates(
+            session, org_id, meeting_id, candidate_table, silent, value.get("payload_json")
+        )
     confidence = float(value.get("confidence") or 0.0)
     content = str(value.get("content") or "").strip()
     written = False
@@ -263,6 +269,104 @@ async def _apply_agent_result(
             },
         )
         written = True
+    return written
+
+
+def _candidate_confidence(raw: Any) -> float | None:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    c = float(raw)
+    return c if 0.0 <= c <= 1.0 else None
+
+
+def _optional_uuid(raw: Any) -> uuid.UUID | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        return None
+
+
+def _optional_date(raw: Any) -> date | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+async def _persist_candidates(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    table: str,
+    silent: float,
+    payload_json: Any,
+) -> bool:
+    """Insert each decision/action candidate as `status = 'proposed'`. True if any row is new.
+
+    Phase 8 Part A contract section 2. NO outbox row and NO topic event, ever: a candidate is
+    unconfirmed until a participant presses Confirm (`routes/candidates.py`, the only producer
+    of `decisions` / `actions`). The candidate's own deterministic `id` is the primary key, so
+    a replayed window that slipped past the inbox is `ON CONFLICT (id) DO NOTHING`.
+
+    A payload that is not JSON is poison (the producer is broken); a candidate with a bad
+    shape is skipped and the rest are applied. The band is re-derived from the tenant's
+    thresholds here, never trusted from the payload's `surfaced`.
+    """
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError as exc:
+        raise PoisonMessage("agent-results payload_json is not JSON") from exc
+    if payload is None:
+        raise PoisonMessage("agent-results candidate result has no payload_json string")
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    if not isinstance(candidates, list):
+        return False
+    written = False
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        cand_id = _optional_uuid(cand.get("id"))
+        content = cand.get("content")
+        confidence = _candidate_confidence(cand.get("confidence"))
+        if cand_id is None or not isinstance(content, str) or confidence is None:
+            continue
+        content = content.strip()
+        if not content or confidence < silent:
+            continue
+        params: dict[str, Any] = {
+            "id": str(cand_id),
+            "o": str(org_id),
+            "m": str(meeting_id),
+            "c": content,
+            "conf": confidence,
+        }
+        if table == "decisions":
+            rationale = cand.get("rationale")
+            params["r"] = (rationale.strip() or None) if isinstance(rationale, str) else None
+            sql = (
+                "INSERT INTO decisions (id, org_id, meeting_id, content, rationale, confidence, "
+                "status) VALUES (:id, :o, :m, :c, :r, :conf, 'proposed') "
+                "ON CONFLICT (id) DO NOTHING RETURNING 1"
+            )
+        else:
+            # A foreign key resolves another tenant's user with RLS bypassed (gap 31): an
+            # assignee this tenant cannot see is dropped, never stored.
+            assignee = _optional_uuid(cand.get("assignee_id"))
+            if assignee is not None and not await is_visible(session, "users", assignee):
+                assignee = None
+            params["a"] = str(assignee) if assignee else None
+            params["d"] = _optional_date(cand.get("due_date"))
+            sql = (
+                "INSERT INTO action_items (id, org_id, meeting_id, content, assignee_id, "
+                "due_date, confidence, status) VALUES (:id, :o, :m, :c, :a, :d, :conf, "
+                "'proposed') ON CONFLICT (id) DO NOTHING RETURNING 1"
+            )
+        if (await session.execute(text(sql), params)).first() is not None:
+            written = True
     return written
 
 
