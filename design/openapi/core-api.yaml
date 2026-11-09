@@ -726,6 +726,141 @@ components:
       - status
       - code
       type: object
+    RecordsRequest:
+      additionalProperties: false
+      properties:
+        action_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 100
+          title: Action Ids
+          type: array
+        decision_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 100
+          title: Decision Ids
+          type: array
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      title: RecordsRequest
+      type: object
+    RetrievalScope:
+      properties:
+        meetings:
+          items:
+            $ref: '#/components/schemas/ScopeMeeting'
+          title: Meetings
+          type: array
+        people:
+          items:
+            $ref: '#/components/schemas/ScopePerson'
+          title: People
+          type: array
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - meetings
+      - people
+      title: RetrievalScope
+      type: object
+    RetrievedAction:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - meeting_id
+      - content
+      - assignee_id
+      - due_date
+      - status
+      title: RetrievedAction
+      type: object
+    RetrievedDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - meeting_id
+      - content
+      - rationale
+      - status
+      - created_at
+      title: RetrievedDecision
+      type: object
+    RetrievedRecords:
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/RetrievedAction'
+          title: Actions
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/RetrievedDecision'
+          title: Decisions
+          type: array
+      required:
+      - decisions
+      - actions
+      title: RetrievedRecords
+      type: object
     RoomState:
       additionalProperties: false
       properties:
@@ -756,6 +891,41 @@ components:
       - status
       - changed
       title: RoomStateResult
+      type: object
+    ScopeMeeting:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      - started_at
+      title: ScopeMeeting
+      type: object
+    ScopePerson:
+      properties:
+        email:
+          title: Email
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - email
+      title: ScopePerson
       type: object
     SpeakerAssign:
       additionalProperties: false
@@ -2482,6 +2652,102 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Report Room State
+      tags:
+      - core-internal
+  /internal/retrieval/records:
+    post:
+      operationId: retrieval_records
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievedRecords'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Retrieval Records
+      tags:
+      - core-internal
+  /internal/retrieval/scope:
+    get:
+      operationId: retrieval_scope
+      parameters:
+      - in: query
+        name: user_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+      - in: query
+        name: clerk_user_id
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 256
+            type: string
+          - type: 'null'
+          title: Clerk User Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalScope'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Retrieval Scope
       tags:
       - core-internal
 security:

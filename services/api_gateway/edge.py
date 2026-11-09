@@ -188,6 +188,9 @@ ROUTE_MAP: dict[str, str] = {
     # with core-api's `/api/v1/meetings` (meeting CRUD): the two differ by the version segment,
     # and longest-prefix matching keeps them apart because neither string prefixes the other.
     "/api/meetings": "meeting-service",
+    # rag-service owns `POST /api/rag/query` (canon service catalog section 6); it re-verifies
+    # the token itself and reads the asker's meeting scope from core-api (ADR-0033 D1).
+    "/api/rag": "rag-service",
     "/livekit/webhook": "meeting-service",
     "/orgs": "identity-tenant-service",
     "/rbac": "identity-tenant-service",

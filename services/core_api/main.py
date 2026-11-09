@@ -14,6 +14,7 @@ from services.core_api.routes import (
     candidates,
     chat,
     internal_meetings,
+    internal_retrieval,
     meetings,
     my_tasks,
     org_hierarchy,
@@ -31,6 +32,7 @@ app.include_router(transcript.router)
 app.include_router(worklogs.router)
 app.include_router(candidates.router)
 app.include_router(internal_meetings.router)
+app.include_router(internal_retrieval.router)
 app.include_router(my_tasks.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in

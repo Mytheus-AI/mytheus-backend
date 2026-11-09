@@ -40,6 +40,10 @@ from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 
 ALLOWED_CALLERS = frozenset({"meeting-service"})
+# Every service that may hold a secret in MYTHEUS_CORE_CALLER_TOKENS. Each route still names
+# its own allowed set (`core_caller_for`): rag-service can read retrieval scope
+# (`internal_retrieval.py`) but cannot report a room's state here.
+KNOWN_CALLERS = frozenset({"meeting-service", "rag-service"})
 TOKENS_ENV = "MYTHEUS_CORE_CALLER_TOKENS"
 SERVICE_HEADER = "x-mytheus-service"
 SERVICE_TOKEN_HEADER = "x-mytheus-service-token"
@@ -78,7 +82,7 @@ def parse_caller_tokens(raw: str) -> dict[str, bytes]:
         name, secret = name.strip(), secret.strip()
         if not sep or not name or not secret:
             raise ValueError(f"{TOKENS_ENV} entries must be service=secret")
-        if name not in ALLOWED_CALLERS:
+        if name not in KNOWN_CALLERS:
             raise ValueError(f"{name!r} is not an allowed core-api caller")
         if len(secret) < 32:
             raise ValueError(f"the secret for {name!r} must be at least 32 characters")
@@ -90,10 +94,7 @@ def _unauthenticated() -> ProblemDetail:
     return ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Service authentication required")
 
 
-async def core_caller(
-    request: Request,
-    _token: Annotated[str | None, Security(service_token_scheme)] = None,
-) -> uuid.UUID:
+async def authenticate_caller(request: Request, allowed: frozenset[str]) -> uuid.UUID:
     """An allowed service with its secret, for an active tenant; otherwise refuse."""
     try:
         tokens = parse_caller_tokens(os.environ.get(TOKENS_ENV, ""))
@@ -105,7 +106,7 @@ async def core_caller(
         raise _unauthenticated()
     service = request.headers.get(SERVICE_HEADER, "")
     presented = request.headers.get(SERVICE_TOKEN_HEADER, "").encode("utf-8")
-    expected = tokens.get(service)
+    expected = tokens.get(service) if service in allowed else None
     # Compare against a dummy on a miss so timing does not reveal which services exist.
     if not hmac.compare_digest(presented, expected or b"\x00" * 32) or expected is None:
         raise _unauthenticated()
@@ -118,6 +119,14 @@ async def core_caller(
     if resolved is None:
         raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
     return resolved
+
+
+async def core_caller(
+    request: Request,
+    _token: Annotated[str | None, Security(service_token_scheme)] = None,
+) -> uuid.UUID:
+    """meeting-service only: the room-state route."""
+    return await authenticate_caller(request, ALLOWED_CALLERS)
 
 
 _TRANSITION = {
