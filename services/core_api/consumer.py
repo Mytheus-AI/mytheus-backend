@@ -370,6 +370,21 @@ async def _persist_candidates(
     return written
 
 
+def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:
+    """Decode one record, turning a record that can never decode into `PoisonMessage`.
+
+    A malformed value (a non-UUID string in a `uuid` field, a truncated or foreign payload) raises
+    `ValueError`/`TypeError`/`EOFError`/`IndexError` from the Avro reader on every attempt. Left
+    uncaught it killed the process, and every restart re-read the same offset, so one bad record
+    stopped this consumer for every tenant. Transient failures (the Schema Registry unreachable)
+    are other exception types and still propagate, so the record is retried, not dead-lettered.
+    """
+    try:
+        return deserializer(raw_value, ctx)
+    except (ValueError, TypeError, EOFError, IndexError) as exc:
+        raise PoisonMessage(f"undecodable record: {exc}") from exc
+
+
 async def run_consumer() -> None:  # pragma: no cover - thin harness, see module docstring
     from confluent_kafka import Consumer
     from confluent_kafka import Producer as KafkaProducer
@@ -418,8 +433,8 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
             observe_consumer_lag(CONSUMER_GROUP, topic_name, _ts if _ts_type else None)
             handler = handle_agent_result if topic_name == AGENT_RESULTS else handle_presence_event
             try:
-                value = deserializer(
-                    raw_value, SerializationContext(topic_name, MessageField.VALUE)
+                value = decode(
+                    deserializer, raw_value, SerializationContext(topic_name, MessageField.VALUE)
                 )
                 async with session_factory() as session, session.begin():
                     applied = await handler(session, redis, value)

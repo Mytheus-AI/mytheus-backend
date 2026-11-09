@@ -655,3 +655,24 @@ def test_only_the_confirm_routes_enqueue_decisions_or_actions() -> None:
     assert raw_outbox == {"libs/shared/outbox.py"}, raw_outbox
     consumer = (_REPO / "services/core_api/consumer.py").read_text(encoding="utf-8")
     assert "enqueue" not in consumer and "EventEnvelope" not in consumer
+
+
+def test_an_undecodable_record_is_poison_not_a_crash():
+    """A record the Avro reader can never decode (a non-UUID in a `uuid` field) is dead-lettered.
+    Before, the ValueError escaped the loop, the consumer died, and every restart re-read it."""
+    from services.core_api.consumer import decode
+
+    def bad(_raw: object, _ctx: object) -> object:
+        raise ValueError("badly formed hexadecimal UUID string")
+
+    with pytest.raises(PoisonMessage):
+        decode(bad, b"\x00", None)
+
+    class RegistryDown(Exception):
+        pass
+
+    def transient(_raw: object, _ctx: object) -> object:
+        raise RegistryDown("schema registry unreachable")
+
+    with pytest.raises(RegistryDown):
+        decode(transient, b"\x00", None)
