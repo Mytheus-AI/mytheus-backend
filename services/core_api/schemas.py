@@ -12,7 +12,7 @@ from a caller, so there is nothing here for a caller to set.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -269,3 +269,95 @@ class Worklog(BaseModel):
 
 class WorklogList(BaseModel):
     items: list[Worklog]
+
+
+# --- Phase 8 Part A: decision / action candidates (Plan 7-9 section 3.6) --------------------
+
+DecisionStatus = Literal["proposed", "confirmed", "superseded", "dismissed"]
+ActionStatus = Literal["proposed", "confirmed", "done", "dismissed"]
+
+_CANDIDATE_TEXT_MAX = 4000
+
+
+class Decision(BaseModel):
+    """One `decisions` row. `proposed` until a participant confirms or dismisses it."""
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    content: str
+    rationale: str | None = None
+    confidence: float
+    status: DecisionStatus
+    confirmed_by: uuid.UUID | None = None
+    supersedes: uuid.UUID | None = None
+    created_at: datetime
+
+
+class ActionItem(BaseModel):
+    """One `action_items` row. `proposed` until a participant confirms or dismisses it."""
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    content: str
+    assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
+    confidence: float
+    status: ActionStatus
+    confirmed_by: uuid.UUID | None = None
+    created_at: datetime
+
+
+class CandidateList(BaseModel):
+    """`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first."""
+
+    decisions: list[Decision]
+    actions: list[ActionItem]
+
+
+def _reject_null_content(model: DecisionUpdate | ActionItemUpdate) -> None:
+    if "content" in model.model_fields_set and model.content is None:
+        raise ValueError("content cannot be null")
+
+
+class DecisionUpdate(BaseModel):
+    """PATCH body: edit a proposed decision before confirming it. At least one field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: Annotated[str, Field(min_length=1, max_length=_CANDIDATE_TEXT_MAX)] | None = None
+    rationale: Annotated[str, Field(max_length=_CANDIDATE_TEXT_MAX)] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> DecisionUpdate:
+        if not self.model_fields_set:
+            raise ValueError("PATCH requires at least one field")
+        _reject_null_content(self)
+        return self
+
+
+class DecisionConfirm(BaseModel):
+    """Confirm body. `supersedes` names an earlier confirmed decision (FOLLOWS_FROM lineage)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supersedes: uuid.UUID | None = None
+
+
+class ActionItemUpdate(BaseModel):
+    """PATCH body: edit a proposed action before confirming it. At least one field.
+
+    `assignee_id` and `due_date` may be set to null to clear them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: Annotated[str, Field(min_length=1, max_length=_CANDIDATE_TEXT_MAX)] | None = None
+    assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> ActionItemUpdate:
+        if not self.model_fields_set:
+            raise ValueError("PATCH requires at least one field")
+        _reject_null_content(self)
+        return self

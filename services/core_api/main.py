@@ -4,13 +4,14 @@ Owns: meetings, participants, speakers, worklogs, decisions, action_items, agent
 agent_collaborations, chat_messages, teams, team_members, departments.
 
 Confirmation rule: decisions/actions events are ONLY emitted by this service's transactional
-outbox, ONLY on POST /decisions/:id/confirm or /actions/:id/confirm. Neither route exists yet,
-and neither topic is wired, which is deliberate: there is no confirmation flow to produce them
-and a speculative producer here would put unconfirmed edges into the knowledge graph.
+outbox, ONLY on POST /decisions/:id/confirm or /actions/:id/confirm (`routes/candidates.py`,
+Plan 7-9 section 3.6). The agent-results consumer stores candidates as `proposed` rows and
+never produces either topic.
 """
 
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
+    candidates,
     chat,
     internal_meetings,
     meetings,
@@ -27,6 +28,7 @@ app.include_router(chat.router)
 app.include_router(speakers.router)
 app.include_router(transcript.router)
 app.include_router(worklogs.router)
+app.include_router(candidates.router)
 app.include_router(internal_meetings.router)
 
-# TODO: /decisions /actions /suggestions land with their own bands.
+# TODO: /suggestions lands with P9; GET /actions (My Tasks) with P8 Part B.
