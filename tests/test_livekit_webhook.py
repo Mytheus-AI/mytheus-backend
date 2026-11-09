@@ -614,3 +614,24 @@ def test_egress_ended_never_stores_a_key_outside_the_meeting_prefix(client):
     assert meeting_room_row(org_id, meeting_id)["recording_ref"] == (
         f"{org_id}/{meeting_id}/EG_bad"
     )
+
+
+def test_room_lifecycle_reports_the_meeting_live_then_ended(client, _recording_env, monkeypatch):
+    """core-api owns `meetings.status`; meeting-service reports what the room did."""
+    reported: list[tuple[str, str]] = []
+
+    async def fake_report(*, org_id, meeting_id, state):  # type: ignore[no-untyped-def]
+        reported.append((str(meeting_id), state))
+        return True
+
+    monkeypatch.setattr(webhook, "report_room_state", fake_report)
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+
+    FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_S"))
+    client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+    client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})  # redelivery
+    FAKE.verify_webhook_result = _evt("room_finished", room=_room_with_sid(room, org_id, "RM_S"))
+    client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert reported == [(str(meeting_id), "live"), (str(meeting_id), "ended")]

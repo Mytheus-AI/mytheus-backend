@@ -90,6 +90,7 @@ from services.meeting_service.audio_tap_worker import (
     clear_tap_wanted,
     record_tap_wanted,
 )
+from services.meeting_service.meeting_status import report_room_state
 from services.meeting_service.room_lifecycle import (
     RoomStarted,
     load_consent_gate,
@@ -498,6 +499,13 @@ async def livekit_webhook(
                 room_sid=room_sid,
                 started=True,
             )
+        # The call is live: core-api owns `meetings.status` (see meeting_status.py).
+        background_tasks.add_task(
+            report_room_state,
+            org_id=lifecycle.org_id,
+            meeting_id=lifecycle.meeting_id,
+            state="live",
+        )
         background_tasks.add_task(
             on_room_started,
             sessionmaker,
@@ -517,6 +525,14 @@ async def livekit_webhook(
                 room_sid=room_sid,
                 started=False,
             )
+        # LiveKit closed the room: nobody has been in it for the departure timeout (five
+        # minutes, set in transport.ensure_room), so the meeting is over.
+        background_tasks.add_task(
+            report_room_state,
+            org_id=lifecycle.org_id,
+            meeting_id=lifecycle.meeting_id,
+            state="ended",
+        )
         background_tasks.add_task(
             on_room_finished,
             transport,

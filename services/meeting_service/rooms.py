@@ -74,6 +74,18 @@ async def meeting_is_visible(session: AsyncSession, meeting_id: UUID) -> bool:
     return row is not None
 
 
+async def meeting_has_ended(session: AsyncSession, meeting_id: UUID) -> bool:
+    """True when the (visible) meeting is `ended` or `cancelled`. Same RLS scoping as
+    `meeting_is_visible`; call it after that check."""
+    row = (
+        await session.execute(
+            text("SELECT status FROM meetings WHERE id = :id AND deleted_at IS NULL"),
+            {"id": str(meeting_id)},
+        )
+    ).first()
+    return row is not None and row[0] in ("ended", "cancelled")
+
+
 @dataclass(frozen=True)
 class RoomUpsertResult:
     room: str

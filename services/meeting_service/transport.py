@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 # ensure_room calls). ensure_room now only ever runs out-of-band (see its docstring), but a
 # short explicit bound still matters: it is what makes a LiveKit outage fail fast instead of
 # tying up a background task for up to two minutes per attempt.
+# A meeting nobody has been in for this long is over (see ensure_room).
+ROOM_EMPTY_TIMEOUT_SECONDS = 300
 _ENSURE_ROOM_TIMEOUT_SECONDS = 5.0
 _EGRESS_TIMEOUT_SECONDS = 10.0
 _TAP_TOKEN_TTL = timedelta(minutes=10)
@@ -144,7 +146,17 @@ class LiveKitTransport:
         timeout = aiohttp.ClientTimeout(total=_ENSURE_ROOM_TIMEOUT_SECONDS)
         lkapi = api.LiveKitAPI(self._url, self._key, self._secret, timeout=timeout)
         try:
-            await lkapi.room.create_room(api.CreateRoomRequest(name=room, metadata=metadata))
+            await lkapi.room.create_room(
+                api.CreateRoomRequest(
+                    name=room,
+                    metadata=metadata,
+                    # LiveKit closes the room (and sends room_finished, which ends the meeting)
+                    # once nobody has been in it this long: before anyone joins, and after the
+                    # last person leaves. Five minutes leaves room to rejoin after a drop.
+                    empty_timeout=ROOM_EMPTY_TIMEOUT_SECONDS,
+                    departure_timeout=ROOM_EMPTY_TIMEOUT_SECONDS,
+                )
+            )
             await lkapi.room.update_room_metadata(
                 api.UpdateRoomMetadataRequest(room=room, metadata=metadata)
             )

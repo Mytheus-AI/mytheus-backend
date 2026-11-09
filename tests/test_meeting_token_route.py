@@ -393,3 +393,21 @@ async def test_statement_timeout_is_bound_and_enforced_on_the_token_mint_session
             assert "statement timeout" in str(exc_info.value).lower()
     finally:
         await engine.dispose()
+
+
+# --- an ended meeting stays ended ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", ["ended", "cancelled"])
+def test_an_ended_meeting_cannot_be_joined_again(client, tenant_a, status):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id, role="host")
+    _sql("UPDATE meetings SET status = %(s)s WHERE id = %(m)s", {"s": status, "m": str(meeting_id)})
+
+    resp = client.post(f"/api/meetings/{meeting_id}/token")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "This meeting has ended"
+    assert _sql(
+        "SELECT count(*) AS n FROM meeting_rooms WHERE meeting_id = %(m)s", {"m": str(meeting_id)}
+    ) == [{"n": 0}], "no room is opened for an ended meeting"
