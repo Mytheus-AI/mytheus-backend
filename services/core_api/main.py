@@ -12,6 +12,7 @@ and a speculative producer here would put unconfirmed edges into the knowledge g
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     chat,
+    internal_meetings,
     meetings,
     org_hierarchy,
     speakers,
@@ -26,5 +27,6 @@ app.include_router(chat.router)
 app.include_router(speakers.router)
 app.include_router(transcript.router)
 app.include_router(worklogs.router)
+app.include_router(internal_meetings.router)
 
 # TODO: /decisions /actions /suggestions land with their own bands.

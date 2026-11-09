@@ -68,6 +68,7 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
+    meeting_has_ended,
     meeting_is_visible,
     sync_livekit_metadata,
 )
@@ -170,6 +171,13 @@ async def mint_token(
 
         # Existence (tenant-scoped) before participation: see the module docstring.
         await _fetch_meeting_or_404(session, meeting_id)
+
+        # An ended meeting stays ended: its old Join link must not open a fresh room (which
+        # would also report it live again). 409 with the frozen VERSION_CONFLICT code.
+        if await meeting_has_ended(session, meeting_id):
+            raise ProblemDetail(
+                status.HTTP_409_CONFLICT, ErrorCode.VERSION_CONFLICT, "This meeting has ended"
+            )
 
         if ctx.user_id is None:
             # A verified Clerk user with no local `users` mirror row cannot be a participant
