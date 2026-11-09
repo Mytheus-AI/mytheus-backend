@@ -238,3 +238,84 @@ def test_claim_ttl_must_exceed_the_heartbeat_interval() -> None:
     assert w.claim_ttl_seconds({"TAP_CLAIM_TTL_SECONDS": "12"}) == 12.0
     with pytest.raises(ValueError):
         w.claim_ttl_seconds({"TAP_CLAIM_TTL_SECONDS": "1"})
+
+
+# --- rejoin within the same room instance --------------------------------------------------
+# LiveKit keeps an emptied room for its departure timeout (five minutes), so people who leave
+# and come back get the SAME room sid and no new `room_started`. The tap had left with the last
+# person and nothing brought it back: no audio reached transcription for the rest of the call.
+# A human `participant_joined` now re-records the want with a fresh `generation`.
+
+
+def _rejoin(want: w.TapWant) -> w.TapWant:
+    return w.TapWant(
+        org_id=want.org_id,
+        meeting_id=want.meeting_id,
+        room=want.room,
+        room_sid=want.room_sid,
+        generation=uuid.uuid4().hex,
+    )
+
+
+async def test_rejoin_after_the_worker_dropped_the_want_restarts_the_tap(redis: Any) -> None:
+    want = _want()
+    await w.record_tap_wanted(redis, want)
+    t = Transport()
+    a = _worker(redis, t, "a")
+    await a.tick()
+    t.handles[0][2].ended = True  # everyone left; the tap left with them
+    await a.tick()  # want dropped
+
+    await w.record_tap_wanted(redis, _rejoin(want))  # someone joins the same room again
+    await a.tick()
+    assert len(t.handles) == 2 and t.live() == ["meeting-x"]
+
+
+async def test_rejoin_before_the_worker_noticed_the_tap_ended_restarts_it(redis: Any) -> None:
+    want = _want()
+    await w.record_tap_wanted(redis, want)
+    t = Transport()
+    a = _worker(redis, t, "a")
+    await a.tick()
+    t.handles[0][2].ended = True
+    await w.record_tap_wanted(redis, _rejoin(want))  # the join lands before the next poll
+
+    await a.tick()
+    assert len(t.handles) == 2 and t.live() == ["meeting-x"]
+    assert await redis.get(w.want_key(want.org_id, want.meeting_id)) is not None
+
+
+async def test_a_join_while_the_tap_runs_does_not_restart_it(redis: Any) -> None:
+    want = _want()
+    await w.record_tap_wanted(redis, want)
+    t = Transport()
+    a = _worker(redis, t, "a")
+    await a.tick()
+    await w.record_tap_wanted(redis, _rejoin(want))  # a second person joins
+
+    await a.tick()
+    await a.tick()
+    assert len(t.handles) == 1 and t.live() == ["meeting-x"]
+
+
+async def test_dropping_an_old_want_never_deletes_a_newer_rejoin(redis: Any) -> None:
+    want = _want()
+    await w.record_tap_wanted(redis, _rejoin(want))
+    cleared = await w.clear_tap_wanted(
+        redis,
+        org_id=want.org_id,
+        meeting_id=want.meeting_id,
+        room_sid=want.room_sid,
+        generation=want.generation,
+    )
+    assert cleared is False
+    assert await redis.get(w.want_key(want.org_id, want.meeting_id)) is not None
+
+
+def test_a_want_without_generation_still_decodes() -> None:
+    raw = (
+        f'{{"org_id": "{uuid.uuid4()}", "meeting_id": "{uuid.uuid4()}", '
+        '"room": "r", "room_sid": "RM_1"}'
+    )
+    decoded = w.TapWant.decode(raw)
+    assert decoded is not None and decoded.generation == ""

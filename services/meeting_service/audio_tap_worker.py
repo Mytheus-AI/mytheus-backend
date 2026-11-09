@@ -113,6 +113,11 @@ class TapWant:
     meeting_id: UUID
     room: str
     room_sid: str
+    # Bumped by every human `participant_joined`. LiveKit keeps an emptied room (same sid) for
+    # its departure timeout, and the tap leaves when the room empties, so a rejoin within that
+    # window brings no new `room_started`. A new generation tells the worker "someone is back":
+    # it restarts a tap that has ended, and leaves a running one alone.
+    generation: str = ""
 
     def encode(self) -> str:
         return json.dumps(
@@ -121,6 +126,7 @@ class TapWant:
                 "meeting_id": str(self.meeting_id),
                 "room": self.room,
                 "room_sid": self.room_sid,
+                "generation": self.generation,
             }
         )
 
@@ -133,6 +139,7 @@ class TapWant:
                 meeting_id=UUID(str(data["meeting_id"])),
                 room=str(data["room"]),
                 room_sid=str(data["room_sid"]),
+                generation=str(data.get("generation") or ""),
             )
         except (ValueError, KeyError, TypeError):
             return None
@@ -146,16 +153,27 @@ async def record_tap_wanted(redis: Redis[bytes], want: TapWant) -> None:
 
 
 async def clear_tap_wanted(
-    redis: Redis[bytes], *, org_id: UUID, meeting_id: UUID, room_sid: str | None
+    redis: Redis[bytes],
+    *,
+    org_id: UUID,
+    meeting_id: UUID,
+    room_sid: str | None,
+    generation: str | None = None,
 ) -> bool:
-    """Delete the want if it still names `room_sid` (any want when `room_sid` is None)."""
+    """Delete the want if it still names `room_sid` (any want when `room_sid` is None) and,
+    when `generation` is given, that generation: a worker dropping the want of a tap that ended
+    must not delete the newer want a rejoin recorded in the meantime."""
     key = want_key(org_id, meeting_id)
     async with redis.pipeline(transaction=True) as pipe:
         try:
             await pipe.watch(key)
             raw = await pipe.get(key)
             current = TapWant.decode(raw) if raw is not None else None
-            if current is None or (room_sid is not None and current.room_sid != room_sid):
+            if (
+                current is None
+                or (room_sid is not None and current.room_sid != room_sid)
+                or (generation is not None and current.generation != generation)
+            ):
                 await pipe.unwatch()
                 return False
             pipe.multi()
@@ -251,7 +269,11 @@ class AudioTapWorker:
         """Release AND forget the want: the tap ended or was refused, so no worker retries."""
         await self._release(want)
         await clear_tap_wanted(
-            self._redis, org_id=want.org_id, meeting_id=want.meeting_id, room_sid=want.room_sid
+            self._redis,
+            org_id=want.org_id,
+            meeting_id=want.meeting_id,
+            room_sid=want.room_sid,
+            generation=want.generation,
         )
 
     async def _start(self, want: TapWant) -> bool:
@@ -282,7 +304,16 @@ class AudioTapWorker:
             if want is None or want.room_sid != owned.room_sid:
                 await self._release(owned)  # room_finished, or a new room instance
                 continue
-            if not self.taps.is_running(org_id=owned.org_id, room=owned.room):
+            running = self.taps.is_running(org_id=owned.org_id, room=owned.room)
+            if want.generation != owned.generation:
+                if running:
+                    self.owned[key] = owned = want  # someone joined; the tap is already there
+                else:
+                    # Someone came back after the tap left: release so the claim loop below
+                    # takes the want again and starts a fresh tap this same tick.
+                    await self._release(owned)
+                    continue
+            elif not running:
                 await self._drop(owned)  # the tap ended on its own (room emptied)
                 dropped.add(key)
                 continue

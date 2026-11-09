@@ -73,7 +73,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from redis.asyncio import from_url
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
@@ -92,10 +92,12 @@ from services.meeting_service.audio_tap_worker import (
 )
 from services.meeting_service.meeting_status import report_room_state
 from services.meeting_service.room_lifecycle import (
+    TAPS,
     RoomStarted,
     load_consent_gate,
     on_room_finished,
     on_room_started,
+    start_audio_tap,
 )
 from services.meeting_service.routes import get_transport
 from services.meeting_service.storage import DEFAULT_STORAGE, RecordingConfig, recording_prefix
@@ -325,7 +327,7 @@ async def _apply_participant_event(
     participant_sid: str,
     dedupe_key: str,
     participant_identity: str | None = None,
-) -> None:
+) -> uuid.UUID | None:
     found = (
         (
             await session.execute(
@@ -343,7 +345,7 @@ async def _apply_participant_event(
         logger.warning(
             "livekit webhook: %s for unknown room (org=%s room=%s)", room_event_type, org_id, room
         )
-        return
+        return None
     meeting_id = found["meeting_id"]
 
     if room_event_type == "joined":
@@ -374,10 +376,17 @@ async def _apply_participant_event(
             idempotency_key=dedupe_key,
         ),
     )
+    return uuid.UUID(str(meeting_id))
 
 
 async def _tap_trigger(
-    *, org_id: uuid.UUID, meeting_id: uuid.UUID, room: str, room_sid: str, started: bool
+    *,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    room: str,
+    room_sid: str,
+    started: bool,
+    generation: str = "",
 ) -> None:
     """Worker mode: record (room_started) or clear (room_finished) the tap want. Runs after the
     response like the in-process tap does, and likewise never raises into the webhook."""
@@ -385,7 +394,14 @@ async def _tap_trigger(
     try:
         if started:
             await record_tap_wanted(
-                redis, TapWant(org_id=org_id, meeting_id=meeting_id, room=room, room_sid=room_sid)
+                redis,
+                TapWant(
+                    org_id=org_id,
+                    meeting_id=meeting_id,
+                    room=room,
+                    room_sid=room_sid,
+                    generation=generation,
+                ),
             )
         else:
             await clear_tap_wanted(redis, org_id=org_id, meeting_id=meeting_id, room_sid=room_sid)
@@ -398,6 +414,30 @@ async def _tap_trigger(
         )
     finally:
         await redis.aclose()  # type: ignore[attr-defined]
+
+
+async def _ensure_tap_in_process(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    transport: MeetingTransport,
+    *,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    room: str,
+) -> None:
+    """In-process mode's rejoin leg: start the tap unless one is running (`TapManager.start`
+    is idempotent and replaces a tap that ended). Never raises into the webhook."""
+    try:
+        async with sessionmaker() as session, session.begin():
+            await set_rls(session, org_id)
+            gate = await load_consent_gate(session, org_id, meeting_id)
+        await start_audio_tap(
+            transport,
+            TAPS,
+            RoomStarted(org_id=org_id, meeting_id=meeting_id, room=room, gate=gate),
+            tap_config=AudioTapConfig.from_env(),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("audio tap: rejoin start failed (org=%s meeting=%s)", org_id, meeting_id)
 
 
 @router.post("/livekit/webhook", status_code=status.HTTP_200_OK)
@@ -443,6 +483,7 @@ async def livekit_webhook(
     else:
         dedupe_key = f"{room}:{event_type}:{participant_sid}"
     lifecycle: RoomStarted | _RoomFinished | None = None
+    joined_meeting: uuid.UUID | None = None
 
     # Step 3a: Redis dedupe, fast path.
     redis = from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False)
@@ -473,7 +514,7 @@ async def livekit_webhook(
         elif event_type in _ROOM_LIFECYCLE_EVENTS:
             lifecycle = await _load_room_lifecycle(session, org_id, room, event_type)
         else:
-            await _apply_participant_event(
+            applied = await _apply_participant_event(
                 session,
                 org_id,
                 room,
@@ -482,6 +523,8 @@ async def livekit_webhook(
                 dedupe_key,
                 participant_identity=_participant_identity(evt),
             )
+            if _ROOM_EVENT_TYPE[event_type] == "joined":
+                joined_meeting = applied
 
         await record_consumed(session, CONSUMER_GROUP, str(org_id), dedupe_key)
 
@@ -489,6 +532,30 @@ async def livekit_webhook(
     # worker mode the tap leg is only a Redis trigger; the audio tap worker runs the tap.
     in_process = audio_tap_mode() == MODE_IN_PROCESS
     room_sid = _room_sid(evt) or "-"
+    if joined_meeting is not None:
+        # Someone (back) in the room. LiveKit keeps an emptied room, same sid, for its
+        # departure timeout, and the tap leaves when the room empties, so a rejoin inside that
+        # window brings no `room_started` and transcription stayed silent for the rest of the
+        # call. Re-arm the tap on every human join; a running tap is left alone.
+        if in_process:
+            background_tasks.add_task(
+                _ensure_tap_in_process,
+                sessionmaker,
+                transport,
+                org_id=org_id,
+                meeting_id=joined_meeting,
+                room=room,
+            )
+        else:
+            background_tasks.add_task(
+                _tap_trigger,
+                org_id=org_id,
+                meeting_id=joined_meeting,
+                room=room,
+                room_sid=room_sid,
+                started=True,
+                generation=uuid.uuid4().hex,
+            )
     if isinstance(lifecycle, RoomStarted):
         if not in_process:
             background_tasks.add_task(

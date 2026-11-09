@@ -635,3 +635,61 @@ def test_room_lifecycle_reports_the_meeting_live_then_ended(client, _recording_e
     client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
 
     assert reported == [(str(meeting_id), "live"), (str(meeting_id), "ended")]
+
+
+# --- rejoin within the same room instance -----------------------------------------------------
+# LiveKit keeps an emptied room (same sid) for its departure timeout and the tap leaves when
+# the room empties, so a rejoin inside that window brings no `room_started`. A human join
+# re-arms the tap.
+
+
+def test_worker_mode_human_join_rearms_the_tap_want(client, _recording_env, monkeypatch):
+    import asyncio
+
+    from redis.asyncio import from_url
+
+    from services.meeting_service.audio_tap_worker import TapWant, want_key
+
+    monkeypatch.setenv("AUDIO_TAP_MODE", "worker")
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+
+    async def _get() -> TapWant | None:
+        r = from_url(os.environ["REDIS_URL"], decode_responses=False)
+        try:
+            raw = await r.get(want_key(org_id, meeting_id))
+            return TapWant.decode(raw) if raw is not None else None
+        finally:
+            await r.aclose()
+
+    generations = []
+    for sid in ("PA_r1", "PA_r2"):
+        FAKE.verify_webhook_result = _evt(
+            "participant_joined",
+            room=_room_with_sid(room, org_id, "RM_R"),
+            participant=_participant(sid, uuid.uuid4()),
+        )
+        resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+        assert resp.status_code == 200, resp.text
+        want = asyncio.run(_get())
+        assert want is not None and want.room_sid == "RM_R" and want.room == room
+        generations.append(want.generation)
+
+    assert all(generations) and generations[0] != generations[1]
+    assert "subscribe_room_audio" not in [c.method for c in FAKE.calls]
+
+
+def test_in_process_human_join_starts_the_tap(client, _recording_env):
+    org_id = seed_org()
+    meeting_id, room = seed_meeting_room(org_id)
+    FAKE.calls.clear()
+    FAKE.verify_webhook_result = _evt(
+        "participant_joined",
+        room=_room_with_sid(room, org_id, "RM_P"),
+        participant=_participant("PA_p1", uuid.uuid4()),
+    )
+
+    resp = client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
+
+    assert resp.status_code == 200, resp.text
+    assert "subscribe_room_audio" in [c.method for c in FAKE.calls]
