@@ -256,9 +256,10 @@ def test_every_arm_marks_items_required() -> None:
 def test_the_unbuilt_arms_do_not_invent_an_item_type() -> None:
     """The other direction, and it matters as much as the first.
 
-    `action_items`, `worklogs` and `decisions` have no read model until Plan 7-9. Emitting a
-    fabricated record type for them would ship an invention to every generated client as
-    though it were the contract, so their item type stays the open object map it is today.
+    `action_items` and `decisions` have no read model until Plan 8. Emitting a fabricated
+    record type for them would ship an invention to every generated client as though it were
+    the contract, so their item type stays the open object map it is today. `worklogs` has a
+    real read model since Plan 7 (the caller's surfaced notes), so it is typed.
     """
     schemas = _bff_dashboard_schemas()
     unbuilt_items = schemas["UnbuiltArm"]["properties"]["items"]["items"]
@@ -267,9 +268,11 @@ def test_the_unbuilt_arms_do_not_invent_an_item_type() -> None:
     ), f"an item type was invented for the unbuilt arms: {unbuilt_items!r}"
 
     dashboard = schemas["Dashboard"]["properties"]
-    for arm in ("action_items", "worklogs", "decisions"):
+    for arm in ("action_items", "decisions"):
         assert dashboard[arm]["$ref"].endswith("/UnbuiltArm"), arm
     assert dashboard["upcoming_meetings"]["$ref"].endswith("/MeetingsArm")
+    assert dashboard["worklogs"]["$ref"].endswith("/WorklogsArm")
+    assert schemas["WorklogsArm"]["properties"]["items"]["items"]["$ref"].endswith("/DashboardNote")
 
 
 def test_the_dashboard_and_core_api_serialize_the_same_column_identically() -> None:

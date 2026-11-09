@@ -207,3 +207,49 @@ def test_bff_exposes_no_mutating_routes(client):
     for route in routes:
         if str(getattr(route, "path", "")).startswith("/bff"):
             assert route.methods <= {"GET", "HEAD", "OPTIONS"}, f"{route.path} mutates"
+
+
+def test_my_notes_shows_only_my_surfaced_notes_newest_first(client):
+    """The worklogs arm is real since Plan 7: the caller's own surfaced notes, with the meeting
+    each came from. A silent note, or anyone else's note, never appears."""
+    org_id, me = _seed_tenant()
+    other = uuid.uuid4()
+    _sql(
+        "INSERT INTO users (id, org_id, clerk_user_id, email) "
+        "VALUES (%(u)s, %(o)s, %(c)s, 'x@y.z')",
+        {"u": str(other), "o": str(org_id), "c": f"user_{other.hex[:16]}"},
+    )
+    meeting = _sql(
+        "INSERT INTO meetings (org_id, title, status, created_by) "
+        "VALUES (%(o)s, 'Design review', 'ended', %(u)s) RETURNING id",
+        {"o": str(org_id), "u": str(me)},
+    )[0]["id"]
+
+    def note(user, content, surfaced, minutes_ago):
+        _sql(
+            "INSERT INTO worklogs (org_id, meeting_id, user_id, window_id, content, surfaced, "
+            "created_at) VALUES (%(o)s, %(m)s, %(u)s, %(w)s, %(c)s, %(s)s, "
+            "now() - make_interval(mins => %(a)s))",
+            {
+                "o": str(org_id),
+                "m": str(meeting),
+                "u": str(user),
+                "w": f"{meeting}:{minutes_ago}",
+                "c": content,
+                "s": surfaced,
+                "a": minutes_ago,
+            },
+        )
+
+    note(me, "- You own the migration.", True, 10)
+    note(me, "- Ship by Friday.", True, 2)
+    note(me, "- maybe relevant", False, 1)
+    note(other, "- someone else's note", True, 1)
+
+    body = client.get("/bff/dashboard").json()
+
+    assert body["worklogs"]["status"] == "ok"
+    assert [(n["content"], n["meeting_title"]) for n in body["worklogs"]["items"]] == [
+        ("- Ship by Friday.", "Design review"),
+        ("- You own the migration.", "Design review"),
+    ]
