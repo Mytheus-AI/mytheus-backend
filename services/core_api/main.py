@@ -14,6 +14,7 @@ from services.core_api.routes import (
     chat,
     internal_meetings,
     meetings,
+    my_tasks,
     org_hierarchy,
     speakers,
     transcript,
@@ -28,5 +29,8 @@ app.include_router(speakers.router)
 app.include_router(transcript.router)
 app.include_router(worklogs.router)
 app.include_router(internal_meetings.router)
+app.include_router(my_tasks.router)
 
-# TODO: /decisions /actions /suggestions land with their own bands.
+# My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in my_tasks.
+# The confirm/edit/dismiss routes for /decisions and /actions (the only producers of those
+# topics) and /suggestions land with the Plan 8 confirmation work, in their own module.

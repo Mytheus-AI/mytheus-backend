@@ -95,3 +95,5 @@ ACTION_TEAM_MEMBER_REMOVED = "team.member_removed"
 # An RBAC tier change is a privilege change: `PUT/DELETE /rbac/grants/{user_id}`.
 ACTION_RBAC_GRANTED = "rbac.granted"
 ACTION_RBAC_REVOKED = "rbac.revoked"
+# My Tasks: an assignee (or an admin) closing a confirmed action item (ADR-0031 D3).
+ACTION_ACTION_COMPLETED = "action.completed"
