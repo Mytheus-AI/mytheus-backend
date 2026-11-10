@@ -240,6 +240,16 @@ def test_the_meetings_arm_item_type_is_fully_specified() -> None:
     assert target["properties"]["status"]["enum"] == ["scheduled", "live", "ended", "cancelled"]
 
 
+_ARMS = {
+    "upcoming_meetings": ("MeetingsArm", "DashboardMeeting"),
+    "action_items": ("TasksArm", "DashboardTask"),
+    "worklogs": ("WorklogsArm", "DashboardNote"),
+    "decisions": ("DecisionsArm", "DashboardDecision"),
+    "recent_meetings": ("RecentMeetingsArm", "DashboardRecentMeeting"),
+    "needs_review": ("NeedsReviewArm", "DashboardReviewItem"),
+}
+
+
 def test_every_arm_marks_items_required() -> None:
     """The server always sends `items`, so the schema has to say so.
 
@@ -248,31 +258,26 @@ def test_every_arm_marks_items_required() -> None:
     a contract that understates itself, and callers write dead null-handling against it.
     """
     schemas = _bff_dashboard_schemas()
-    for arm in ("MeetingsArm", "UnbuiltArm"):
+    for arm, _item in _ARMS.values():
         assert "items" in schemas[arm]["required"], arm
         assert "status" in schemas[arm]["required"], arm
 
 
-def test_the_unbuilt_arms_do_not_invent_an_item_type() -> None:
-    """The other direction, and it matters as much as the first.
-
-    `action_items` and `decisions` have no read model until Plan 8. Emitting a fabricated
-    record type for them would ship an invention to every generated client as though it were
-    the contract, so their item type stays the open object map it is today. `worklogs` has a
-    real read model since Plan 7 (the caller's surfaced notes), so it is typed.
-    """
+def test_every_arm_has_a_typed_item() -> None:
+    """Every panel has a read model now (the real-data pass of 2026-11-10 typed `action_items`
+    and `decisions` and added `recent_meetings` and `needs_review`), so no arm may fall back to
+    an open object map: a generated client would get `Record<string, unknown>[]` for it, which
+    is weaker than the types the client exists to provide. `UnbuiltArm` is gone, and its
+    absence is asserted so it cannot quietly come back."""
     schemas = _bff_dashboard_schemas()
-    unbuilt_items = schemas["UnbuiltArm"]["properties"]["items"]["items"]
-    assert (
-        "$ref" not in unbuilt_items
-    ), f"an item type was invented for the unbuilt arms: {unbuilt_items!r}"
-
+    assert "UnbuiltArm" not in schemas
     dashboard = schemas["Dashboard"]["properties"]
-    for arm in ("action_items", "decisions"):
-        assert dashboard[arm]["$ref"].endswith("/UnbuiltArm"), arm
-    assert dashboard["upcoming_meetings"]["$ref"].endswith("/MeetingsArm")
-    assert dashboard["worklogs"]["$ref"].endswith("/WorklogsArm")
-    assert schemas["WorklogsArm"]["properties"]["items"]["items"]["$ref"].endswith("/DashboardNote")
+    assert set(dashboard) == set(_ARMS)
+    for field, (arm, item) in _ARMS.items():
+        assert dashboard[field]["$ref"].endswith(f"/{arm}"), field
+        ref = schemas[arm]["properties"]["items"]["items"]["$ref"]
+        assert ref.endswith(f"/{item}"), field
+        assert schemas[item].get("additionalProperties") is not True, item
 
 
 def test_the_dashboard_and_core_api_serialize_the_same_column_identically() -> None:

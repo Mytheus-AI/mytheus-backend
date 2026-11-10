@@ -14,6 +14,7 @@ from services.core_api.routes import (
     candidates,
     chat,
     collaborations,
+    decision_log,
     internal_agents,
     internal_lifecycle,
     internal_meetings,
@@ -34,6 +35,7 @@ app.include_router(chat.router)
 app.include_router(speakers.router)
 app.include_router(transcript.router)
 app.include_router(worklogs.router)
+app.include_router(decision_log.router)
 app.include_router(candidates.router)
 app.include_router(internal_meetings.router)
 app.include_router(internal_retrieval.router)
