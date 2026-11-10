@@ -11,11 +11,13 @@ Covered:
   write lands in `audit_logs` (identity's rows for members/settings, this service's for support
   grants and export requests);
 - member tier changes reuse identity's rules (an admin cannot mint an owner);
-- the data-export request records `admin-events` `erasure_requested` (`kind: export`), 202
-  pending;
+- the data-export request is audited and 202 pending, and emits no `admin-events` (above all
+  no `erasure_requested`);
 - RLS on `support_grants` and `feature_flags`, and `ops_audit_log` is append-only;
 - ops routes deny non-staff (deny by default when `MYTHEUS_STAFF_USER_IDS` is unset) and every
   call, reads and denials included, is in `ops_audit_log`;
+- the audit viewer needs an active support grant from the tenant being read;
+- `set_organization_status` has one grantee and one call site;
 - suspend flips `organizations.status` through identity (its `tenant-events` and audit row) and
   emits `admin-events` `tenant_suspended`; reinstate flips it back;
 - a flag change emits `admin-events` `flag_changed`;
@@ -122,6 +124,22 @@ def new_tenant(name: str = "Org") -> Tenant:
         {"i": str(org_id), "n": name, "s": f"ao-{org_id}", "c": clerk_org},
     )
     return Tenant(org_id, clerk_org)
+
+
+def grant_support(
+    org_id: uuid.UUID,
+    staff_user_id: uuid.UUID,
+    *,
+    expires: str = "now() + interval '1 day'",
+    created: str = "now()",
+    revoked: bool = False,
+) -> None:
+    _sql(
+        "INSERT INTO support_grants (org_id, granted_by, staff_user_id, scope, expires_at, "
+        f"created_at, revoked_at) VALUES (%(o)s, %(g)s, %(s)s, 'read_only', {expires}, "
+        f"{created}, {'now()' if revoked else 'NULL'})",
+        {"o": str(org_id), "g": str(uuid.uuid4()), "s": str(staff_user_id)},
+    )
 
 
 def audit_rows(org_id: uuid.UUID, action: str) -> list[dict[str, Any]]:
@@ -347,7 +365,7 @@ def test_support_grants_are_time_boxed_staff_only_and_audited(client, monkeypatc
     assert listed[0]["revoked_at"] is not None
 
 
-def test_data_export_request_records_an_admin_event_and_is_pending(client):
+def test_data_export_request_is_audited_pending_and_emits_no_erasure(client):
     t = new_tenant()
     admin = t.add_user("owner").sign_in()
     resp = client.post("/admin/tenant/data-export", json={})
@@ -357,13 +375,17 @@ def test_data_export_request_records_an_admin_event_and_is_pending(client):
 
     audited = audit_rows(t.org_id, tenant_routes.ACTION_DATA_EXPORT_REQUESTED)
     assert len(audited) == 1 and audited[0]["target_id"] == export["id"]
-    events = outbox_rows(t.org_id, "admin-events")
-    assert len(events) == 1
-    payload = events[0]["payload"]
-    assert payload["event_type"] == "erasure_requested"
-    assert payload["target_id"] == export["id"] and payload["actor_id"] == str(admin.user_id)
-    assert '"kind": "export"' in payload["detail_json"]
-    assert payload["header"]["org_id"] == str(t.org_id)
+    assert str(audited[0]["actor_id"]) == str(admin.user_id)
+    assert audited[0]["metadata"] == {"kind": "export", "status": "pending"}
+    # `erasure_requested` means "delete this tenant" to the RTBF saga: an export must never
+    # produce one, nor any other admin-events record (the schema has no export type).
+    assert outbox_rows(t.org_id, "admin-events") == []
+    erasures = _sql(
+        "SELECT 1 FROM outbox WHERE topic = 'admin-events' "
+        "AND payload->>'event_type' = 'erasure_requested' AND org_id = %(o)s",
+        {"o": str(t.org_id)},
+    )
+    assert erasures == []
 
     listed = client.get("/admin/tenant/data-export").json()["items"]
     assert [(e["id"], e["status"]) for e in listed] == [(export["id"], "pending")]
@@ -403,14 +425,25 @@ async def test_support_grants_and_feature_flags_are_tenant_isolated():
             flags = (await conn.execute(text("SELECT key, org_id FROM feature_flags"))).all()
             assert {o for _, o in flags} == {a.org_id, None}
             assert global_key in {k for k, _ in flags}
-            # a tenant session can neither write another tenant's row nor a global one
-            for org in (str(b.org_id), None):
+            # a tenant session can write no flag at all: not another tenant's, not a global
+            # one, not even its own (the tenant policy is SELECT-only)
+            for org in (str(b.org_id), None, str(a.org_id)):
                 with pytest.raises(Exception, match="row-level security"):
                     async with conn.begin_nested():
                         await conn.execute(
                             text("INSERT INTO feature_flags (key, org_id) VALUES ('x', :o)"),
                             {"o": org},
                         )
+            own = f"flag-{a.org_id.hex[:8]}"
+            changed = await conn.execute(
+                text("UPDATE feature_flags SET enabled = false WHERE key = :k"), {"k": own}
+            )
+            assert changed.rowcount == 0
+            removed = await conn.execute(text("DELETE FROM feature_flags"))
+            assert removed.rowcount == 0
+        assert _sql(
+            "SELECT enabled FROM feature_flags WHERE org_id = %(o)s", {"o": str(a.org_id)}
+        ) == [{"enabled": True}]
         async with engine.begin() as conn:
             await conn.execute(text("SELECT set_config('app.ops_console', 'on', true)"))
             orgs = set((await conn.execute(text("SELECT org_id FROM feature_flags"))).scalars())
@@ -489,6 +522,7 @@ def test_staff_reads_are_logged_too(client, staff):
 
     assert client.get("/admin/ops/flags").status_code == 200
     assert client.get("/admin/ops/costs").status_code == 200
+    grant_support(target.org_id, staff.user_id)
     search = client.post("/admin/ops/audit/search", json={"org_id": str(target.org_id)})
     assert search.status_code == 200, search.text
 
@@ -669,7 +703,7 @@ def test_cost_dashboard_reads_only_aggregate_tables(client, staff):
     assert {"usage_aggregates", "agent_budgets"} <= touched
 
 
-def test_audit_search_reads_one_tenant_pages_and_is_logged(client, staff):
+def test_audit_search_needs_an_active_support_grant_and_every_read_is_logged(client, staff):
     target, other = new_tenant(), new_tenant()
     for i in range(3):
         _sql(
@@ -681,18 +715,71 @@ def test_audit_search_reads_one_tenant_pages_and_is_logged(client, staff):
         "INSERT INTO audit_logs (org_id, actor_type, action) VALUES (%(o)s, 'system', 'other')",
         {"o": str(other.org_id)},
     )
-    first = client.post("/admin/ops/audit/search", json={"org_id": str(target.org_id), "limit": 2})
+    body = {"org_id": str(target.org_id), "limit": 2}
+
+    # no consent yet: revoked, expired, another staff member's, or another tenant's grant
+    grant_support(target.org_id, staff.user_id, revoked=True)
+    grant_support(
+        target.org_id,
+        staff.user_id,
+        created="now() - interval '3 days'",
+        expires="now() - interval '1 day'",
+    )
+    grant_support(target.org_id, uuid.uuid4())
+    grant_support(other.org_id, staff.user_id)
+    denied = client.post("/admin/ops/audit/search", json=body)
+    assert denied.status_code == 403 and denied.json()["code"] == "FORBIDDEN_ROLE"
+
+    grant_support(target.org_id, staff.user_id)  # the tenant consents
+    first = client.post("/admin/ops/audit/search", json=body)
     assert first.status_code == 200, first.text
     page = first.json()
     assert [i["action"] for i in page["items"]] == ["probe.0", "probe.1"]
     assert all(i["org_id"] == str(target.org_id) for i in page["items"])
     second = client.post(
-        "/admin/ops/audit/search",
-        json={"org_id": str(target.org_id), "limit": 2, "cursor": page["next_cursor"]},
+        "/admin/ops/audit/search", json=body | {"cursor": page["next_cursor"]}
     ).json()
     assert [i["action"] for i in second["items"]] == ["probe.2"] and second["next_cursor"] is None
     bad = {"org_id": str(target.org_id), "cursor": "!!"}
     assert client.post("/admin/ops/audit/search", json=bad).status_code == 400
+
     reads = ops_rows(staff.user_id, "audit.read")
-    assert [r["target_org_id"] for r in reads] == [target.org_id] * 3
+    assert [r["target_org_id"] for r in reads] == [target.org_id] * 4
+    assert reads[0]["details"] == {"outcome": "no_support_grant"}
+    assert reads[1]["details"]["support_grant_id"] and reads[1]["details"]["returned"] == 2
     assert reads[-1]["details"] == {"outcome": "bad_cursor"}
+
+
+async def test_set_organization_status_is_reachable_only_through_identity():
+    """The residual risk recorded in migration e2b6c4a8f913: the SECURITY DEFINER function is
+    executable by `mytheus_app` (there is no identity-only role), so its single call site must
+    stay identity's caller-token-checked route and no other role may hold EXECUTE."""
+    engine = create_async_engine(BOOTSTRAP_URL)
+    try:
+        async with engine.connect() as conn:
+            grantees = set(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT COALESCE(pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC') "
+                            "FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a "
+                            "WHERE p.proname = 'set_organization_status' "
+                            "  AND a.grantee <> p.proowner AND a.privilege_type = 'EXECUTE'"
+                        )
+                    )
+                ).scalars()
+            )
+    finally:
+        await engine.dispose()
+    assert grantees == {"mytheus_app"}
+
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    callers = sorted(
+        str(path.relative_to(root))
+        for folder in ("services", "libs", "scripts")
+        for path in (root / folder).rglob("*.py")
+        if "set_organization_status(" in path.read_text(encoding="utf-8")
+    )
+    assert callers == ["services/identity_tenant_service/routes/internal_status.py"]

@@ -11,9 +11,10 @@ Every route is `require_tier("admin")` (which admits `owner`); a lower tier is a
   same transaction.
 
 Data export: `POST /admin/tenant/data-export` records the request as an `audit_logs` row
-(`data_export.requested`) and an `admin-events` `erasure_requested` record whose detail says
-`{"kind": "export"}`, then answers 202 `pending`. The RTBF/export workflow in workflow-service is
-still a stub, so nothing completes the export yet (no manifest in `mytheus-exports`);
+(`data_export.requested`) and answers 202 `pending`. It emits NO `admin-events` record:
+`AdminEventType` has no export symbol, and its `erasure_requested` is what the RTBF saga treats
+as "delete this tenant", so reusing it for an export would be dangerous. The export workflow
+does not exist yet, so nothing completes the request (no manifest in `mytheus-exports`);
 `GET /admin/tenant/data-export` lists the recorded requests from `audit_logs`.
 """
 
@@ -35,7 +36,6 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.admin_ops_service.common import (
     IdentityTransport,
-    emit_admin_event,
     forward_to_identity,
     staff_user_ids,
 )
@@ -280,8 +280,8 @@ async def request_data_export(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> DataExport:
-    """authz: admin. Records the request (audit row + `admin-events` `erasure_requested` with
-    `kind: export`) and answers 202 `pending`; see the module docstring."""
+    """authz: admin. Records the request in `audit_logs` and answers 202 `pending`; no
+    `admin-events` record (see the module docstring)."""
     export_id = uuid.uuid4()
     requested_at = datetime.now(UTC)
     await audit(
@@ -293,15 +293,6 @@ async def request_data_export(
         target_id=export_id,
         metadata={"kind": "export", "status": "pending"},
         ip=ctx.ip,
-    )
-    await emit_admin_event(
-        session,
-        org_id=ctx.org_id,
-        event_type="erasure_requested",
-        actor_id=ctx.user_id,
-        target_type="data_export",
-        target_id=str(export_id),
-        detail={"kind": "export", "scope": "tenant", "requested_at": requested_at.isoformat()},
     )
     return DataExport(id=export_id, status="pending", requested_at=requested_at)
 

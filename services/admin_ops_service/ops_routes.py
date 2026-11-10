@@ -11,7 +11,10 @@ control-plane tables, read one tenant at a time with `app.current_org` bound to 
 of `users`, the plan code from `subscriptions`/`plans`, and for costs only the aggregate tables
 `usage_aggregates` and `agent_budgets` (`COST_TABLES`). Tenant content (meetings, transcripts,
 decisions, actions) is never selected. The audit viewer reads one tenant's `audit_logs` per call,
-named in the body (never a path or query parameter), and logs the read with that tenant.
+named in the body (never a path or query parameter), and only with that tenant's consent: an
+active (unrevoked, unexpired) `support_grants` row for this staff user and that tenant, of any
+scope. Without one it is a 403 (logged with `outcome: no_support_grant`); with one the rows are
+returned as stored, the grant being the consent. Every read is logged with that tenant.
 
 Suspend/reinstate: identity-tenant-service flips `organizations.status` (it is the sole
 `tenant-events` producer); this service then logs the call and, for a suspension that changed
@@ -97,6 +100,12 @@ _TOKENS = text(
 )
 _QUOTA = text("SELECT token_quota FROM agent_budgets WHERE period = :p LIMIT 1")
 COST_TABLES = frozenset({"organizations", "usage_aggregates", "agent_budgets"})
+
+# Bound to the target tenant (RLS), so only that tenant's grants are visible.
+_ACTIVE_GRANT = text(
+    "SELECT id FROM support_grants WHERE staff_user_id = :s AND revoked_at IS NULL "
+    "AND expires_at > now() ORDER BY expires_at DESC LIMIT 1"
+)
 
 _FLAG_COLUMNS = "id, key, org_id, enabled, rules, updated_by, updated_at"
 
@@ -504,8 +513,9 @@ async def search_audit(
     ctx: Annotated[RequestContext, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> AuditPage:
-    """authz: staff. Read-only page of one tenant's `audit_logs`, newest first; the read is
-    itself logged with that tenant as the target. A POST so the tenant id rides in the body."""
+    """authz: staff with an active support grant from that tenant. Read-only page of one
+    tenant's `audit_logs`, newest first; the read is itself logged with that tenant as the
+    target. A POST so the tenant id rides in the body."""
     params: dict[str, Any] = {"n": body.limit + 1}
     where = ""
     if body.cursor:
@@ -522,6 +532,19 @@ async def search_audit(
         where = "WHERE (occurred_at, id) < (:at, :rid)"
         params.update(at=at, rid=str(row_id))
     await set_rls(session, body.org_id)
+    grant = (await session.execute(_ACTIVE_GRANT, {"s": str(ctx.user_id)})).scalar()
+    if grant is None:
+        await ops_log_now(
+            staff_user_id=ctx.user_id,
+            action="audit.read",
+            target_org_id=body.org_id,
+            details={"outcome": "no_support_grant"},
+        )
+        raise ProblemDetail(
+            403,
+            ErrorCode.FORBIDDEN_ROLE,
+            "Reading a tenant's audit log needs an active support grant from that tenant",
+        )
     rows = (
         (
             await session.execute(
@@ -542,7 +565,11 @@ async def search_audit(
         staff_user_id=ctx.user_id,
         action="audit.read",
         target_org_id=body.org_id,
-        details={"returned": len(page), "cursor": bool(body.cursor)},
+        details={
+            "returned": len(page),
+            "cursor": bool(body.cursor),
+            "support_grant_id": str(grant),
+        },
     )
     next_cursor = (
         _encode_cursor(page[-1]["occurred_at"], page[-1]["id"])

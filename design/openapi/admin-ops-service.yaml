@@ -744,10 +744,11 @@ openapi: 3.1.0
 paths:
   /admin/ops/audit/search:
     post:
-      description: 'authz: staff. Read-only page of one tenant''s `audit_logs`, newest first; the read
-        is
+      description: 'authz: staff with an active support grant from that tenant. Read-only page of one
 
-        itself logged with that tenant as the target. A POST so the tenant id rides in the body.'
+        tenant''s `audit_logs`, newest first; the read is itself logged with that tenant as the
+
+        target. A POST so the tenant id rides in the body.'
       operationId: search_audit
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key
@@ -1173,10 +1174,9 @@ paths:
       tags:
       - admin-tenant
     post:
-      description: 'authz: admin. Records the request (audit row + `admin-events` `erasure_requested`
-        with
+      description: 'authz: admin. Records the request in `audit_logs` and answers 202 `pending`; no
 
-        `kind: export`) and answers 202 `pending`; see the module docstring.'
+        `admin-events` record (see the module docstring).'
       operationId: request_data_export
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key
