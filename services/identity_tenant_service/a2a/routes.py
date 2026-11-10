@@ -17,10 +17,11 @@ it; the UI's "Off" is "no grants", reached by revoking.
 
 Every change writes one `a2a.grant.create` / `a2a.grant.revoke` audit row per row changed, in the
 same transaction, and then, after the commit, deletes the PEP's cached decisions
-(`nexus:{org_id}:a2a:grant:*`). The commit comes first on purpose: invalidating before it would
-let a PEP miss re-read the old grant and cache it again. A Redis failure after the commit is
-logged, not raised: the grant is already in effect for every uncached decision and the 60 s TTL
-bounds a stale cached one.
+(`nexus:{org_id}:a2a:grant:*`) and then INCRs `nexus:{org_id}:a2a:grant:version`, which the
+PEP reads to avoid caching a decision that raced the change. The commit comes first on
+purpose: invalidating before it would let a PEP miss re-read the old grant and cache it again.
+A Redis failure after the commit is logged, not raised: the grant is already in effect for
+every uncached decision and the 60 s TTL bounds a stale cached one.
 """
 
 from __future__ import annotations

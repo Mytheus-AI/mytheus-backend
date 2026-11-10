@@ -86,15 +86,33 @@ def cache_pattern(org_id: UUID) -> str:
     return redis_key(org_id, "a2a", "grant", "*")
 
 
+def version_key(org_id: UUID) -> str:
+    return redis_key(org_id, "a2a", "grant", "version")
+
+
 async def invalidate_decision_cache(redis: Redis[bytes], org_id: UUID) -> int:
-    """Delete every cached decision for this tenant. Returns how many keys were removed."""
+    """Delete every cached decision for this tenant, then bump the grant version. Returns how
+    many decision keys were removed.
+
+    `nexus:{org_id}:a2a:grant:version` is the PEP's guard against caching a stale allow: it
+    reads the version before asking the PDP and caches the answer only if the version is
+    unchanged afterwards. So the bump comes AFTER the deletes (a PEP that re-reads between the
+    two still sees the old version and will not cache across the change), and the version key
+    itself is skipped by the delete even though `nexus:{org_id}:a2a:grant:*` matches it:
+    deleting it would reset the counter to 1 on every change, and a PEP that last saw 1 would
+    then miss the change entirely.
+    """
+    version = version_key(org_id).encode()
     removed = 0
     batch: list[bytes] = []
     async for key in redis.scan_iter(match=cache_pattern(org_id), count=500):
+        if key == version:
+            continue
         batch.append(key)
         if len(batch) >= 500:
             removed += int(await redis.delete(*batch))
             batch = []
     if batch:
         removed += int(await redis.delete(*batch))
+    await redis.incr(version)
     return removed

@@ -385,3 +385,29 @@ def test_every_change_clears_this_tenants_cached_decisions_only(client):
     assert [r.exists(k) for k in _cache_keys(neighbour)] == [1, 1]
     assert r.exists(unrelated) == 1
     r.delete(*_cache_keys(neighbour), unrelated)
+
+
+def test_every_change_bumps_the_grant_version_after_the_deletes(client):
+    admin, neighbour = seed_tenant("admin"), seed_tenant("admin")
+    r = _redis()
+    mine = f"nexus:{admin.org_id}:a2a:grant:version"
+    theirs = f"nexus:{neighbour.org_id}:a2a:grant:version"
+    r.set(theirs, 7)
+    sign_in(admin)
+    assert r.get(mine) is None
+    body = {"grantee_role": "admin", "query_class": "action_status", "target_scope": "org"}
+
+    r.set(_cache_keys(admin)[0], "allow", ex=60)
+    gid = client.post("/api/v1/agent-authz-scopes", json=body).json()["id"]
+    assert r.get(mine) == b"1" and r.exists(_cache_keys(admin)[0]) == 0
+    client.post("/api/v1/agent-authz-scopes", json=body)  # no change: no bump
+    assert r.get(mine) == b"1"
+
+    r.set(_cache_keys(admin)[0], "allow", ex=60)
+    assert client.delete(f"/api/v1/agent-authz-scopes/{gid}").status_code == 204
+    assert r.get(mine) == b"2" and r.exists(_cache_keys(admin)[0]) == 0
+
+    client.post("/api/v1/agent-authz-scopes/template", json={"target_scope": "same_team"})
+    assert r.get(mine) == b"3"  # monotonic: the version key survives the SCAN + DEL
+    assert r.get(theirs) == b"7"
+    r.delete(mine, theirs)
