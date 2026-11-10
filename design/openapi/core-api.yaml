@@ -183,6 +183,161 @@ components:
       - content
       title: ActionStatus
       type: object
+    AgendaItem:
+      properties:
+        agent_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Note
+        duration_minutes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Minutes
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        position:
+          title: Position
+          type: integer
+        status:
+          enum:
+          - pending
+          - in_progress
+          - covered
+          - skipped
+          title: Status
+          type: string
+        status_source:
+          anyOf:
+          - enum:
+            - agent
+            - host
+            type: string
+          - type: 'null'
+          title: Status Source
+        title:
+          title: Title
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - position
+      - title
+      - owner_user_id
+      - duration_minutes
+      - status
+      - status_source
+      - agent_note
+      - updated_at
+      title: AgendaItem
+      type: object
+    AgendaItemCreate:
+      additionalProperties: false
+      description: One agenda item as a client writes it. `owner_user_id` must be a participant.
+      properties:
+        duration_minutes:
+          anyOf:
+          - maximum: 240.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Duration Minutes
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        title:
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      title: AgendaItemCreate
+      type: object
+    AgendaItemPut:
+      additionalProperties: false
+      description: '`PUT /meetings/{id}/agenda` entry. With the `id` of an existing item of this meeting
+        it
+
+        keeps that item (and its status); without one it is a new `pending` item.'
+      properties:
+        duration_minutes:
+          anyOf:
+          - maximum: 240.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Duration Minutes
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        title:
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      title: AgendaItemPut
+      type: object
+    AgendaItemStatusUpdate:
+      additionalProperties: false
+      description: '`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
+
+        `status_source = ''host''`, after which the MeetingAgent never changes it.'
+      properties:
+        status:
+          enum:
+          - pending
+          - in_progress
+          - covered
+          - skipped
+          title: Status
+          type: string
+      required:
+      - status
+      title: AgendaItemStatusUpdate
+      type: object
+    AgendaReplace:
+      additionalProperties: false
+      description: '`PUT /meetings/{id}/agenda` body: the whole agenda, in order. Items left out are
+
+        deleted; an empty list clears the agenda.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AgendaItemPut'
+          maxItems: 20
+          title: Items
+          type: array
+      required:
+      - items
+      title: AgendaReplace
+      type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first.'
       properties:
@@ -200,6 +355,94 @@ components:
       - decisions
       - actions
       title: CandidateList
+      type: object
+    CarryForward:
+      description: '`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists
+        and
+
+        `previous_meeting: null` when the meeting follows up nothing.'
+      properties:
+        decisions:
+          items:
+            $ref: '#/components/schemas/CarryForwardDecision'
+          title: Decisions
+          type: array
+        open_actions:
+          items:
+            $ref: '#/components/schemas/CarryForwardAction'
+          title: Open Actions
+          type: array
+        previous_meeting:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingRef'
+          - type: 'null'
+        saved_questions:
+          items:
+            $ref: '#/components/schemas/CarryForwardQuestion'
+          title: Saved Questions
+          type: array
+      required:
+      - previous_meeting
+      - decisions
+      - open_actions
+      - saved_questions
+      title: CarryForward
+      type: object
+    CarryForwardAction:
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - owner_user_id
+      - due_date
+      title: CarryForwardAction
+      type: object
+    CarryForwardDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      title: CarryForwardDecision
+      type: object
+    CarryForwardQuestion:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        question:
+          title: Question
+          type: string
+      required:
+      - id
+      - question
+      title: CarryForwardQuestion
       type: object
     ChatMessage:
       properties:
@@ -753,6 +996,96 @@ components:
           type: array
       title: HTTPValidationError
       type: object
+    InternalAgenda:
+      properties:
+        carry_forward:
+          $ref: '#/components/schemas/InternalCarryForward'
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
+        items:
+          items:
+            $ref: '#/components/schemas/InternalAgendaItem'
+          title: Items
+          type: array
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+      required:
+      - host_user_id
+      - previous_meeting_id
+      - scheduled_start
+      - scheduled_end
+      - items
+      - carry_forward
+      title: InternalAgenda
+      type: object
+    InternalAgendaItem:
+      properties:
+        duration_minutes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Minutes
+        id:
+          format: uuid
+          title: Id
+          type: string
+        position:
+          title: Position
+          type: integer
+        status:
+          title: Status
+          type: string
+        status_source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Source
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - position
+      - title
+      - duration_minutes
+      - status
+      - status_source
+      title: InternalAgendaItem
+      type: object
+    InternalCarryForward:
+      properties:
+        decisions:
+          items:
+            type: string
+          title: Decisions
+          type: array
+        open_actions:
+          items:
+            type: string
+          title: Open Actions
+          type: array
+      title: InternalCarryForward
+      type: object
     Meeting:
       properties:
         created_at:
@@ -765,6 +1098,12 @@ components:
             type: string
           - type: 'null'
           title: Created By
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
         id:
           format: uuid
           title: Id
@@ -779,6 +1118,12 @@ components:
             $ref: '#/components/schemas/Participant'
           title: Participants
           type: array
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
         scheduled_end:
           anyOf:
           - format: date-time
@@ -823,12 +1168,30 @@ components:
     MeetingCreate:
       additionalProperties: false
       properties:
+        agenda:
+          items:
+            $ref: '#/components/schemas/AgendaItemCreate'
+          maxItems: 20
+          title: Agenda
+          type: array
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
         participant_ids:
           items:
             format: uuid
             type: string
           title: Participant Ids
           type: array
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
         scheduled_end:
           anyOf:
           - format: date-time
@@ -849,6 +1212,98 @@ components:
       required:
       - title
       title: MeetingCreate
+      type: object
+    MeetingDetail:
+      description: '`GET /meetings/{id}` (and the create/PATCH responses): the meeting plus the meeting
+        it
+
+        follows up and its agenda, ordered by `position`.'
+      properties:
+        agenda:
+          items:
+            $ref: '#/components/schemas/AgendaItem'
+          title: Agenda
+          type: array
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Created By
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        livekit_room:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Livekit Room
+        participants:
+          items:
+            $ref: '#/components/schemas/Participant'
+          title: Participants
+          type: array
+        previous_meeting:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingRef'
+          - type: 'null'
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - title
+      - status
+      - scheduled_start
+      - scheduled_end
+      - livekit_room
+      - created_by
+      - created_at
+      - updated_at
+      title: MeetingDetail
       type: object
     MeetingPage:
       description: 'Cursor pagination, never OFFSET.
@@ -904,6 +1359,30 @@ components:
       required:
       - participants
       title: MeetingParticipants
+      type: object
+    MeetingRef:
+      description: The earlier meeting a meeting follows up (ADR-0038 D6).
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      - scheduled_start
+      title: MeetingRef
       type: object
     MeetingSpeaker:
       properties:
@@ -980,6 +1459,18 @@ components:
     MeetingUpdate:
       additionalProperties: false
       properties:
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
         scheduled_end:
           anyOf:
           - format: date-time
@@ -2514,7 +3005,18 @@ paths:
       tags:
       - meetings
     post:
-      description: Create a meeting, its participants, its event and its audit record, atomically.
+      description: 'Create a meeting, its participants, its agenda, its event and its audit record,
+
+        atomically.
+
+
+        ADR-0038 D5: exactly one host, `host_user_id` (default: the creator), which must be the
+
+        creator or one of `participant_ids`; the creator is always a participant (`attendee` when
+
+        not the host). Agenda owners must be participants. Every 422 below is raised before the
+
+        first write.'
       operationId: create_meeting
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key
@@ -2536,7 +3038,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Meeting'
+                $ref: '#/components/schemas/MeetingDetail'
           description: Successful Response
         '401':
           content:
@@ -2558,6 +3060,10 @@ paths:
       - meetings
   /api/v1/meetings/{meeting_id}:
     get:
+      description: 'The meeting, the meeting it follows up (`previous_meeting`) and its agenda ordered
+        by
+
+        `position` (ADR-0038 D6). A client re-hydrates the live agenda panel from here.'
       operationId: get_meeting
       parameters:
       - in: path
@@ -2572,7 +3078,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Meeting'
+                $ref: '#/components/schemas/MeetingDetail'
           description: Successful Response
         '401':
           content:
@@ -2621,7 +3127,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Meeting'
+                $ref: '#/components/schemas/MeetingDetail'
           description: Successful Response
         '401':
           content:
@@ -2639,6 +3145,130 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Update Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/agenda:
+    put:
+      description: 'Replace the agenda, host or creator only, and not once the meeting has ended (409).
+
+
+        Items sent with the `id` of an existing item of this meeting keep it, and its `status`,
+
+        `status_source` and `agent_note`; items without an `id` are new and `pending`; items left
+
+        out are deleted. Order is the order sent (`position` 0..n-1). The meeting row is locked for
+
+        the replace, so two concurrent PUTs apply one after the other, never interleaved.'
+      operationId: replace_agenda
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgendaReplace'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AgendaItem'
+                title: Response Replace Agenda
+                type: array
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Replace Agenda
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/agenda/{item_id}:
+    patch:
+      description: 'The host marks an item (host or creator). Sets `status_source = ''host''`: from then
+        on
+
+        the MeetingAgent''s updates to this item are ignored (the host wins, ADR-0038 D7).'
+      operationId: set_agenda_item_status
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: item_id
+        required: true
+        schema:
+          format: uuid
+          title: Item Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgendaItemStatusUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgendaItem'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Set Agenda Item Status
       tags:
       - meetings
   /api/v1/meetings/{meeting_id}/candidates:
@@ -2683,6 +3313,49 @@ paths:
       summary: List Candidates
       tags:
       - candidates
+  /api/v1/meetings/{meeting_id}/carry-forward:
+    get:
+      description: 'What the previous meeting left open (ADR-0038 D6): its confirmed decisions, its open
+
+        action items (confirmed, not done; proposed candidates and dismissed ones are not
+
+        commitments), and the CALLER''s own suggestions saved from it. Empty when there is no link
+
+        or the linked meeting is gone.'
+      operationId: carry_forward
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarryForward'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Carry Forward
+      tags:
+      - meetings
   /api/v1/meetings/{meeting_id}/collaborations:
     get:
       description: The meeting's A2A collaboration log, newest first. Participants and admins only.
@@ -3762,6 +4435,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Action Status
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/agenda:
+    get:
+      operationId: meeting_agenda
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalAgenda'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Meeting Agenda
       tags:
       - core-internal
   /internal/meetings/{meeting_id}/participants:
