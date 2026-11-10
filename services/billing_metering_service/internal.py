@@ -13,7 +13,7 @@ Service-to-service, not user, authentication, using the same header scheme as th
 (`services/identity_tenant_service/pii_vault/internal_auth.py`): `X-Mytheus-Service`,
 `X-Mytheus-Service-Token`, and the tenant in `X-Mytheus-Org`. Secrets come from
 `MYTHEUS_BILLING_CALLER_TOKENS` (`service=secret,...`, at least 32 characters each); the only
-allowed callers are the two `usage-events` producers. Every negative case refuses: an
+allowed callers are the `usage-events` producers. Every negative case refuses: an
 unconfigured service never answers, so the agent tier's fallback is "block", never "allow".
 
 `GET /internal/plan-features` (P11 contract section 3): `{plan_code, features}` for the tenant
@@ -54,7 +54,12 @@ from services.identity_tenant_service.pii_vault.internal_auth import (
     authenticate_service,
 )
 
-ALLOWED_CALLERS = frozenset({"agent-runtime-service", "rag-service"})
+# The `usage-events` producers. embedding-service and search-service joined with the polish
+# plan: their never-record check is a metered, budget-gated triage call (mytheus-intelligence
+# `libs/shared/index_guard.py`), which reads the budget through on a mirror miss.
+ALLOWED_CALLERS = frozenset(
+    {"agent-runtime-service", "rag-service", "embedding-service", "search-service"}
+)
 
 router = APIRouter(tags=["billing-internal"])
 
