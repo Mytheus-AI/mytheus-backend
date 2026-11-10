@@ -6,6 +6,243 @@
 # regeneration and blocks the build until then.
 components:
   schemas:
+    AgendaCoverage:
+      properties:
+        covered:
+          title: Covered
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - covered
+      - total
+      title: AgendaCoverage
+      type: object
+    BriefAction:
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        latest_status:
+          anyOf:
+          - $ref: '#/components/schemas/LatestStatus'
+          - type: 'null'
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - due_date
+      - latest_status
+      title: BriefAction
+      type: object
+    BriefAgendaItem:
+      properties:
+        duration_minutes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        position:
+          title: Position
+          type: integer
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - position
+      - title
+      - duration_minutes
+      - status
+      - goal_id
+      title: BriefAgendaItem
+      type: object
+    BriefMeeting:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      - scheduled_start
+      title: BriefMeeting
+      type: object
+    BriefProxy:
+      properties:
+        proxy_update:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proxy Update
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - proxy_update
+      title: BriefProxy
+      type: object
+    BriefQuestion:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        question:
+          title: Question
+          type: string
+      required:
+      - id
+      - meeting_id
+      - question
+      title: BriefQuestion
+      type: object
+    CatchUpAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      - due_date
+      title: CatchUpAction
+      type: object
+    CatchUpAgendaItem:
+      properties:
+        agent_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Note
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        position:
+          title: Position
+          type: integer
+        status:
+          title: Status
+          type: string
+        status_source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Source
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - position
+      - title
+      - owner_user_id
+      - status
+      - status_source
+      - agent_note
+      title: CatchUpAgendaItem
+      type: object
+    CatchUpDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+      required:
+      - id
+      - content
+      - rationale
+      title: CatchUpDecision
+      type: object
+    CatchUpNote:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      - created_at
+      title: CatchUpNote
+      type: object
     Dashboard:
       properties:
         action_items:
@@ -395,6 +632,21 @@ components:
           type: array
       title: HTTPValidationError
       type: object
+    LatestStatus:
+      description: The assignee's most recent answer to a status request for an action (ADR-0039 B7).
+      properties:
+        answered_at:
+          format: date-time
+          title: Answered At
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - answered_at
+      title: LatestStatus
+      type: object
     LineageDecision:
       properties:
         confidence:
@@ -442,6 +694,128 @@ components:
       - role
       - depth
       title: LineageDecision
+      type: object
+    MeetingBrief:
+      properties:
+        meeting:
+          $ref: '#/components/schemas/BriefMeeting'
+        my_agenda_items:
+          items:
+            $ref: '#/components/schemas/BriefAgendaItem'
+          title: My Agenda Items
+          type: array
+        my_open_actions:
+          items:
+            $ref: '#/components/schemas/BriefAction'
+          title: My Open Actions
+          type: array
+        previous_meeting:
+          anyOf:
+          - $ref: '#/components/schemas/PreviousMeeting'
+          - type: 'null'
+        proxies:
+          items:
+            $ref: '#/components/schemas/BriefProxy'
+          title: Proxies
+          type: array
+        saved_questions:
+          items:
+            $ref: '#/components/schemas/BriefQuestion'
+          title: Saved Questions
+          type: array
+      required:
+      - meeting
+      - my_agenda_items
+      - my_open_actions
+      - saved_questions
+      - proxies
+      - previous_meeting
+      title: MeetingBrief
+      type: object
+    MeetingCatchUp:
+      properties:
+        agenda:
+          items:
+            $ref: '#/components/schemas/CatchUpAgendaItem'
+          title: Agenda
+          type: array
+        assigned_to_me:
+          items:
+            $ref: '#/components/schemas/CatchUpAction'
+          title: Assigned To Me
+          type: array
+        attendance:
+          title: Attendance
+          type: string
+        decisions:
+          items:
+            $ref: '#/components/schemas/CatchUpDecision'
+          title: Decisions
+          type: array
+        my_notes:
+          items:
+            $ref: '#/components/schemas/CatchUpNote'
+          title: My Notes
+          type: array
+        my_questions:
+          items:
+            type: string
+          title: My Questions
+          type: array
+      required:
+      - attendance
+      - agenda
+      - decisions
+      - assigned_to_me
+      - my_notes
+      - my_questions
+      title: MeetingCatchUp
+      type: object
+    MeetingHealth:
+      properties:
+        actions:
+          title: Actions
+          type: integer
+        agenda:
+          $ref: '#/components/schemas/AgendaCoverage'
+        async_suggestion:
+          title: Async Suggestion
+          type: boolean
+        decisions:
+          title: Decisions
+          type: integer
+        duration_minutes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Minutes
+        people_hours:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: People Hours
+        talk_balance:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/TalkShare'
+            type: array
+          - type: 'null'
+          title: Talk Balance
+        trend:
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+          title: Trend
+          type: array
+      required:
+      - duration_minutes
+      - people_hours
+      - agenda
+      - decisions
+      - actions
+      - talk_balance
+      - async_suggestion
+      - trend
+      title: MeetingHealth
       type: object
     MeetingRef:
       description: 'A recent meeting as it appears inside `UserContext.recent_meetings` - same
@@ -643,6 +1017,22 @@ components:
       - topics
       title: PersonProfile
       type: object
+    PreviousMeeting:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      title: PreviousMeeting
+      type: object
     Problem:
       description: 'RFC 7807 problem detail. Every 4xx and 5xx this service emits has this shape, including
         the ones FastAPI would otherwise return in its own format: `libs/shared/errors.py` registers handlers
@@ -694,6 +1084,20 @@ components:
       - status
       - items
       title: RecentMeetingsArm
+      type: object
+    TalkShare:
+      properties:
+        share:
+          title: Share
+          type: number
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - share
+      title: TalkShare
       type: object
     TasksArm:
       properties:
@@ -757,6 +1161,39 @@ components:
       - name
       - department_id
       title: TeamRef
+      type: object
+    TrendPoint:
+      properties:
+        coverage:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Coverage
+        decisions:
+          title: Decisions
+          type: integer
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - meeting_id
+      - title
+      - scheduled_start
+      - coverage
+      - decisions
+      title: TrendPoint
       type: object
     ValidationError:
       properties:
@@ -856,6 +1293,90 @@ paths:
       summary: Dashboard
       tags:
       - bff
+  /bff/meetings/{meeting_id}/brief:
+    get:
+      description: 'Before a meeting: the caller''s agenda items, their open actions from the previous
+
+        meeting with the latest status, their saved questions, and who sent their agent.'
+      operationId: meeting_brief
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingBrief'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Brief
+      tags:
+      - bff
+  /bff/meetings/{meeting_id}/catch-up:
+    get:
+      description: 'What the meeting did, for a participant who sent their agent (or missed it): the agenda
+
+        with statuses and agent notes, the confirmed decisions, the actions assigned to the caller,
+
+        the caller''s own surfaced notes and the questions they left their agent. Any participant
+
+        may read it: attendance is not tracked beyond `attendance`, so "missed it" cannot be told
+
+        apart from "was there".'
+      operationId: meeting_catch_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingCatchUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Catch Up
+      tags:
+      - bff
   /bff/meetings/{meeting_id}/decisions/{decision_id}/lineage:
     get:
       operationId: decision_lineage
@@ -897,6 +1418,55 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Decision Lineage
+      tags:
+      - bff
+  /bff/meetings/{meeting_id}/health:
+    get:
+      description: 'After a meeting (409 before it ended): length, people-hours, agenda coverage, what
+        was
+
+        confirmed, who talked, whether it could have been async, and the trend over the meetings it
+
+        follows up (up to 6 back through `previous_meeting_id`, oldest first, then this one).
+
+
+        `duration_minutes` is the scheduled length (no actual start and end are stored); without a
+
+        schedule it falls back to the transcript''s span, else null. `people_hours` counts the
+
+        participants who attended live.'
+      operationId: meeting_health
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingHealth'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Health
       tags:
       - bff
   /bff/org/chart:

@@ -183,6 +183,71 @@ components:
       - content
       title: ActionStatus
       type: object
+    AgendaDraft:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AgendaDraftItem'
+          title: Items
+          type: array
+      required:
+      - items
+      title: AgendaDraft
+      type: object
+    AgendaDraftItem:
+      properties:
+        duration_minutes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        source:
+          enum:
+          - template
+          - unfinished
+          - open_action
+          title: Source
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - title
+      - owner_user_id
+      - duration_minutes
+      - goal_id
+      - source
+      title: AgendaDraftItem
+      type: object
+    AgendaDraftRequest:
+      additionalProperties: false
+      properties:
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
+        template_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Template Id
+      title: AgendaDraftRequest
+      type: object
     AgendaItem:
       properties:
         agent_note:
@@ -195,6 +260,12 @@ components:
           - type: integer
           - type: 'null'
           title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
         id:
           format: uuid
           title: Id
@@ -254,6 +325,12 @@ components:
             type: integer
           - type: 'null'
           title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
         owner_user_id:
           anyOf:
           - format: uuid
@@ -283,6 +360,12 @@ components:
             type: integer
           - type: 'null'
           title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
         id:
           anyOf:
           - format: uuid
@@ -337,6 +420,36 @@ components:
       required:
       - items
       title: AgendaReplace
+      type: object
+    AttendanceUpdate:
+      additionalProperties: false
+      description: '`PUT /meetings/{id}/attendance` (ADR-0039 B5): the caller''s own attendance. A PUT,
+        so an
+
+        omitted `proxy_update` clears it and omitted `proxy_questions` clears them.'
+      properties:
+        attendance:
+          enum:
+          - live
+          - agent
+          title: Attendance
+          type: string
+        proxy_questions:
+          items:
+            maxLength: 300
+            type: string
+          maxItems: 5
+          title: Proxy Questions
+          type: array
+        proxy_update:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Proxy Update
+      required:
+      - attendance
+      title: AttendanceUpdate
       type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first.'
@@ -400,6 +513,10 @@ components:
           format: uuid
           title: Id
           type: string
+        latest_status:
+          anyOf:
+          - $ref: '#/components/schemas/LatestStatus'
+          - type: 'null'
         owner_user_id:
           anyOf:
           - format: uuid
@@ -571,6 +688,93 @@ components:
       - items
       title: CollaborationPage
       type: object
+    Commitment:
+      description: One of the caller's own promises. Never served to anyone else.
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        done_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Done At
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Meeting Scheduled Start
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        status:
+          enum:
+          - open
+          - done
+          - dismissed
+          title: Status
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - meeting_id
+      - content
+      - due_hint
+      - status
+      - created_at
+      - updated_at
+      - done_at
+      title: Commitment
+      type: object
+    CommitmentList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Commitment'
+          title: Items
+          type: array
+      required:
+      - items
+      title: CommitmentList
+      type: object
+    CommitmentUpdate:
+      additionalProperties: false
+      properties:
+        status:
+          enum:
+          - open
+          - done
+          - dismissed
+          title: Status
+          type: string
+      required:
+      - status
+      title: CommitmentUpdate
+      type: object
     ContextFill:
       properties:
         citations:
@@ -644,6 +848,45 @@ components:
       required:
       - items
       title: ContextFillList
+      type: object
+    CreatedStatusRequest:
+      properties:
+        action_content:
+          title: Action Content
+          type: string
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        state:
+          title: State
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - action_id
+      - user_id
+      - action_content
+      - state
+      title: CreatedStatusRequest
+      type: object
+    CreatedStatusRequests:
+      properties:
+        requests:
+          items:
+            $ref: '#/components/schemas/CreatedStatusRequest'
+          title: Requests
+          type: array
+      required:
+      - requests
+      title: CreatedStatusRequests
       type: object
     Decision:
       description: One `decisions` row. `proposed` until a participant confirms or dismisses it.
@@ -1000,6 +1243,10 @@ components:
       properties:
         carry_forward:
           $ref: '#/components/schemas/InternalCarryForward'
+        confidential:
+          default: false
+          title: Confidential
+          type: boolean
         host_user_id:
           anyOf:
           - format: uuid
@@ -1017,6 +1264,11 @@ components:
             type: string
           - type: 'null'
           title: Previous Meeting Id
+        proxies:
+          items:
+            $ref: '#/components/schemas/InternalProxy'
+          title: Proxies
+          type: array
         scheduled_end:
           anyOf:
           - format: date-time
@@ -1029,6 +1281,11 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
       required:
       - host_user_id
       - previous_meeting_id
@@ -1045,10 +1302,22 @@ components:
           - type: integer
           - type: 'null'
           title: Duration Minutes
+        goal_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Goal Id
         id:
           format: uuid
           title: Id
           type: string
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
         position:
           title: Position
           type: integer
@@ -1086,8 +1355,50 @@ components:
           type: array
       title: InternalCarryForward
       type: object
+    InternalProxy:
+      description: 'ADR-0039 B5: a participant who sent their agent instead.'
+      properties:
+        proxy_questions:
+          items:
+            type: string
+          title: Proxy Questions
+          type: array
+        proxy_update:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proxy Update
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - proxy_update
+      - proxy_questions
+      title: InternalProxy
+      type: object
+    LatestStatus:
+      description: The assignee's most recent answer to a status request for an action (ADR-0039 B7).
+      properties:
+        answered_at:
+          format: date-time
+          title: Answered At
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - answered_at
+      title: LatestStatus
+      type: object
     Meeting:
       properties:
+        confidential:
+          default: false
+          title: Confidential
+          type: boolean
         created_at:
           format: date-time
           title: Created At
@@ -1144,6 +1455,12 @@ components:
           - cancelled
           title: Status
           type: string
+        template_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Template Id
         title:
           anyOf:
           - type: string
@@ -1174,6 +1491,11 @@ components:
           maxItems: 20
           title: Agenda
           type: array
+        confidential:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Confidential
         host_user_id:
           anyOf:
           - format: uuid
@@ -1204,6 +1526,12 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        template_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Template Id
         title:
           maxLength: 500
           minLength: 1
@@ -1224,6 +1552,10 @@ components:
             $ref: '#/components/schemas/AgendaItem'
           title: Agenda
           type: array
+        confidential:
+          default: false
+          title: Confidential
+          type: boolean
         created_at:
           format: date-time
           title: Created At
@@ -1284,6 +1616,12 @@ components:
           - cancelled
           title: Status
           type: string
+        template_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Template Id
         title:
           anyOf:
           - type: string
@@ -1384,6 +1722,57 @@ components:
       - scheduled_start
       title: MeetingRef
       type: object
+    MeetingReminders:
+      properties:
+        confidential:
+          title: Confidential
+          type: boolean
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        participants:
+          items:
+            $ref: '#/components/schemas/ReminderParticipant'
+          title: Participants
+          type: array
+        previous_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Previous Meeting Id
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          title: Status
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - meeting_id
+      - title
+      - status
+      - confidential
+      - scheduled_start
+      - scheduled_end
+      - previous_meeting_id
+      - participants
+      title: MeetingReminders
+      type: object
     MeetingSpeaker:
       properties:
         assignment:
@@ -1455,6 +1844,141 @@ components:
       required:
       - items
       title: MeetingSpeakerList
+      type: object
+    MeetingTemplate:
+      properties:
+        agenda:
+          items:
+            $ref: '#/components/schemas/TemplateAgendaItem'
+          title: Agenda
+          type: array
+        confidential:
+          title: Confidential
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Created By
+        default_duration_minutes:
+          title: Default Duration Minutes
+          type: integer
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - name
+      - description
+      - default_duration_minutes
+      - agenda
+      - confidential
+      - created_by
+      - created_at
+      - updated_at
+      title: MeetingTemplate
+      type: object
+    MeetingTemplateCreate:
+      additionalProperties: false
+      properties:
+        agenda:
+          items:
+            $ref: '#/components/schemas/TemplateAgendaItem'
+          maxItems: 20
+          title: Agenda
+          type: array
+        confidential:
+          default: false
+          title: Confidential
+          type: boolean
+        default_duration_minutes:
+          default: 30
+          maximum: 480.0
+          minimum: 5.0
+          title: Default Duration Minutes
+          type: integer
+        description:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          maxLength: 80
+          minLength: 1
+          title: Name
+          type: string
+      required:
+      - name
+      title: MeetingTemplateCreate
+      type: object
+    MeetingTemplateList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MeetingTemplate'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MeetingTemplateList
+      type: object
+    MeetingTemplateUpdate:
+      additionalProperties: false
+      description: 'PATCH: any subset. `description: null` clears it; the others cannot be null.'
+      properties:
+        agenda:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/TemplateAgendaItem'
+            maxItems: 20
+            type: array
+          - type: 'null'
+          title: Agenda
+        confidential:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Confidential
+        default_duration_minutes:
+          anyOf:
+          - maximum: 480.0
+            minimum: 5.0
+            type: integer
+          - type: 'null'
+          title: Default Duration Minutes
+        description:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          anyOf:
+          - maxLength: 80
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+      title: MeetingTemplateUpdate
       type: object
     MeetingUpdate:
       additionalProperties: false
@@ -1568,7 +2092,31 @@ components:
       title: MyTaskList
       type: object
     Participant:
+      description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
+
+        `proxy_update` are visible to every participant (the update is meant for the room);
+
+        `proxy_questions` only to the person themself and the host, and `null` for anyone else.'
       properties:
+        attendance:
+          default: live
+          enum:
+          - live
+          - agent
+          title: Attendance
+          type: string
+        proxy_questions:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Proxy Questions
+        proxy_update:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proxy Update
         role_in_meeting:
           anyOf:
           - type: string
@@ -1760,6 +2308,20 @@ components:
       required:
       - user_ids
       title: RelatedAttendees
+      type: object
+    ReminderParticipant:
+      properties:
+        attendance:
+          title: Attendance
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - attendance
+      title: ReminderParticipant
       type: object
     RetrievalScope:
       properties:
@@ -1993,6 +2555,97 @@ components:
       - user_id
       title: SpeakerAssign
       type: object
+    StatusAnswer:
+      additionalProperties: false
+      properties:
+        status_text:
+          maxLength: 500
+          minLength: 1
+          title: Status Text
+          type: string
+      required:
+      - status_text
+      title: StatusAnswer
+      type: object
+    StatusRequest:
+      description: A status asked of the caller about one of their actions before a follow-up meeting.
+      properties:
+        action_content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action Content
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        action_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action Title
+        answered_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Answered At
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Meeting Scheduled Start
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        requested_at:
+          format: date-time
+          title: Requested At
+          type: string
+        state:
+          enum:
+          - pending
+          - answered
+          - expired
+          title: State
+          type: string
+        status_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Text
+      required:
+      - id
+      - action_id
+      - meeting_id
+      - state
+      - status_text
+      - requested_at
+      - answered_at
+      title: StatusRequest
+      type: object
+    StatusRequestList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/StatusRequest'
+          title: Items
+          type: array
+      required:
+      - items
+      title: StatusRequestList
+      type: object
     Suggestion:
       description: One `agent_suggestions` row, as its owner sees it. Never served to anyone else.
       properties:
@@ -2199,6 +2852,25 @@ components:
           - type: 'null'
           title: Role
       title: TeamMemberUpsert
+      type: object
+    TemplateAgendaItem:
+      additionalProperties: false
+      properties:
+        duration_minutes:
+          anyOf:
+          - maximum: 240.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Duration Minutes
+        title:
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      title: TemplateAgendaItem
       type: object
     TranscriptChunk:
       description: 'One persisted final from `transcript_chunks`, owned by `transcription-service`.
@@ -2665,6 +3337,99 @@ paths:
       summary: Post Chat
       tags:
       - chat
+  /api/v1/commitments:
+    get:
+      description: The caller's own commitments, newest first (at most 200).
+      operationId: list_commitments
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - open
+            - done
+            - dismissed
+            type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitmentList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Commitments
+      tags:
+      - commitments
+  /api/v1/commitments/{commitment_id}:
+    patch:
+      description: 'Owner only: anyone else''s commitment is a 404, because it is private.'
+      operationId: update_commitment
+      parameters:
+      - in: path
+        name: commitment_id
+        required: true
+        schema:
+          format: uuid
+          title: Commitment Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitmentUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Commitment'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Commitment
+      tags:
+      - commitments
   /api/v1/context-fills/{fill_id}/dismiss:
     post:
       description: Hide a fill card for good. Requester only; repeating it is 200 and writes nothing.
@@ -2949,6 +3714,152 @@ paths:
       summary: Create Department
       tags:
       - org-hierarchy
+  /api/v1/meeting-templates:
+    get:
+      operationId: list_templates
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingTemplateList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Templates
+      tags:
+      - meeting-templates
+    post:
+      operationId: create_template
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingTemplateCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingTemplate'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Template
+      tags:
+      - meeting-templates
+  /api/v1/meeting-templates/{template_id}:
+    delete:
+      operationId: delete_template
+      parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          format: uuid
+          title: Template Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Template
+      tags:
+      - meeting-templates
+    patch:
+      operationId: update_template
+      parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          format: uuid
+          title: Template Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingTemplateUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingTemplate'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Template
+      tags:
+      - meeting-templates
   /api/v1/meetings:
     get:
       description: 'Keyset-paginated listing. No `org_id` parameter: RLS scopes it to the caller''s tenant.'
@@ -3056,6 +3967,61 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Create Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/agenda-draft:
+    post:
+      description: 'A drafted agenda for a new meeting (ADR-0039 B4). Saves nothing; deterministic.
+
+
+        In order, at most 20: the template''s items (`template`); the previous meeting''s agenda items
+
+        not `covered`, by position (`unfinished`); its open confirmed action items, oldest first, as
+
+        `Status: {content}` owned by the assignee (`open_action`). Both ids must name rows of this
+
+        tenant (422 naming the field). A confidential previous meeting contributes nothing for a
+
+        caller who was not in it (B2).'
+      operationId: draft_agenda
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgendaDraftRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgendaDraft'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Draft Agenda
       tags:
       - meetings
   /api/v1/meetings/{meeting_id}:
@@ -3271,6 +4237,62 @@ paths:
       summary: Set Agenda Item Status
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/attendance:
+    put:
+      description: 'The caller''s own attendance: `live`, or `agent` with an update for the room and up
+        to
+
+        five questions. Self only (the caller''s own participant row; there is no user id to name),
+
+        a participant only (403), and not once the meeting is over (409).'
+      operationId: set_attendance
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Participant'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Set Attendance
+      tags:
+      - meetings
   /api/v1/meetings/{meeting_id}/candidates:
     get:
       description: 'Proposed, surfaced decision and action candidates for one meeting, oldest first.
@@ -3321,7 +4343,14 @@ paths:
 
         commitments), and the CALLER''s own suggestions saved from it. Empty when there is no link
 
-        or the linked meeting is gone.'
+        or the linked meeting is gone.
+
+
+        ADR-0039: each open action carries `latest_status` (its assignee''s most recent answer to a
+
+        status request, or null). A confidential previous meeting is never a source for a caller
+
+        who was not in it (B2): they get the same empty answer as for no link.'
       operationId: carry_forward
       parameters:
       - in: path
@@ -3878,6 +4907,98 @@ paths:
       summary: List My Worklogs
       tags:
       - worklogs
+  /api/v1/status-requests:
+    get:
+      description: The caller's own requests, the soonest meeting first (at most 200).
+      operationId: list_status_requests
+      parameters:
+      - in: query
+        name: state
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - pending
+            - answered
+            - expired
+            type: string
+          - type: 'null'
+          title: State
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusRequestList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Status Requests
+      tags:
+      - status-requests
+  /api/v1/status-requests/{request_id}/answer:
+    post:
+      operationId: answer_status_request
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          format: uuid
+          title: Request Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusAnswer'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Answer Status Request
+      tags:
+      - status-requests
   /api/v1/suggestions:
     get:
       description: 'The caller''s open, surfaced suggestions for `meeting_id`, plus their saved ones from
@@ -4600,6 +5721,45 @@ paths:
       summary: Related Attendees
       tags:
       - core-internal
+  /internal/meetings/{meeting_id}/reminders:
+    get:
+      operationId: meeting_reminders
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingReminders'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Meeting Reminders
+      tags:
+      - core-internal
   /internal/meetings/{meeting_id}/room-state:
     post:
       operationId: report_room_state
@@ -4690,6 +5850,53 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Slack Digest
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/status-requests:
+    post:
+      operationId: create_status_requests
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedStatusRequests'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Create Status Requests
       tags:
       - core-internal
   /internal/retrieval/records:
