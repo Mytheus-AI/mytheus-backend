@@ -369,3 +369,15 @@ def test_gateway_rate_limits_per_token(gateway, monkeypatch):
         assert limited.json()["code"] == "RATE_LIMITED"
     # Another token of the same person has its own budget.
     assert gateway.get("/api/v1/decisions", headers=bearer(spare)).status_code == 200
+
+
+def test_gateway_lets_the_share_page_through_without_a_token(gateway):
+    """`/api/v1/public/` is the share-link read: no bearer, the signed token is the credential.
+    The edge passes it on (404 here only because this test app has no such route)."""
+    res = gateway.get("/api/v1/public/shares/abc.def")
+    assert res.status_code == 404 and res.json()["code"] != "AUTH_REQUIRED"
+    assert edge.route_for("/api/v1/public/shares/x") == "core-api"
+    assert edge.route_for("/mcp") == "bff" and edge.route_for("/api/v1/ask") == "bff"
+    assert edge.route_for("/api/v1/api-tokens/1") == "identity-tenant-service"
+    assert edge.route_for("/api/v1/search") == "core-api"
+    assert edge.route_for("/api/v1/share-links/1") == "core-api"
