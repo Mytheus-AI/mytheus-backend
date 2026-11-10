@@ -3959,6 +3959,117 @@ components:
       - useful
       title: NoteRating
       type: object
+    OffRecordSegment:
+      description: One stretch of the meeting that was (or is) off the record.
+      properties:
+        duration_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Length of a finished segment; null while it runs.
+          title: Duration Ms
+        end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: End Ms
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: Null while it runs.
+          title: Ended At
+        ended_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Null while it runs, or when the meeting ending closed it.
+          title: Ended By
+        id:
+          format: uuid
+          title: Id
+          type: string
+        requested_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Who asked for it, when the host granted a request.
+          title: Requested By
+        start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Where it began on the meeting's clock (the transcript's time origin), or null when
+            the room clock is unknown.
+          title: Start Ms
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        started_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Started By
+      required:
+      - id
+      - started_at
+      - started_by
+      title: OffRecordSegment
+      type: object
+    OffRecordStart:
+      additionalProperties: false
+      properties:
+        requested_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The participant whose request the host is granting, if any. Must be a participant
+            of the meeting.
+          title: Requested By
+      title: OffRecordStart
+      type: object
+    OffRecordState:
+      description: Whether the meeting is off the record now, and every off-the-record stretch so far.
+      properties:
+        active:
+          title: Active
+          type: boolean
+        can_toggle:
+          description: Whether the caller (the host or the creator) may start and end it.
+          title: Can Toggle
+          type: boolean
+        current:
+          anyOf:
+          - $ref: '#/components/schemas/OffRecordSegment'
+          - type: 'null'
+          description: The running segment, when active.
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        segments:
+          description: Every segment in time order, the running one last.
+          items:
+            $ref: '#/components/schemas/OffRecordSegment'
+          title: Segments
+          type: array
+        total_ms:
+          default: 0
+          description: Total length of the finished segments.
+          title: Total Ms
+          type: integer
+      required:
+      - meeting_id
+      - active
+      - can_toggle
+      title: OffRecordState
+      type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
 
@@ -8393,6 +8504,149 @@ paths:
       summary: Read a meeting's minutes
       tags:
       - minutes
+  /api/v1/meetings/{meeting_id}/off-record:
+    get:
+      description: 'Whether the meeting is off the record now, and every off-the-record stretch so far
+
+        (participants only). The transcript, the minutes and the room read it.'
+      operationId: get_off_record
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffRecordState'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Off Record
+      tags:
+      - off-the-record
+    post:
+      description: 'Take the meeting off the record (the host or the creator). Pauses every agent and
+        all
+
+        transcript persistence, captions included, until it is ended. Idempotent: while a segment
+
+        runs, this answers it unchanged.'
+      operationId: start_off_record
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/OffRecordStart'
+              - type: 'null'
+              title: Body
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffRecordState'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start Off Record
+      tags:
+      - off-the-record
+  /api/v1/meetings/{meeting_id}/off-record/end:
+    post:
+      description: 'Back on the record (the host or the creator): transcription and the agents resume.
+
+        Idempotent: with nothing running, this answers the state unchanged.'
+      operationId: end_off_record
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OffRecordState'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: End Off Record
+      tags:
+      - off-the-record
   /api/v1/meetings/{meeting_id}/participants:
     post:
       description: 'Invite tenant users into an existing meeting. Only someone already in it may invite.

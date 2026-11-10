@@ -170,3 +170,6 @@ ACTION_ACTION_REOPENED = "action.reopened"
 # Wave 3: someone starting a phone recording of an in-person meeting, after confirming that
 # everyone in the room knows (core-api `POST /api/v1/capture/sessions`).
 ACTION_CAPTURE_STARTED = "capture.started"
+# Polish wave 3, Off the record: a meeting paused every agent and the transcript for a stretch.
+ACTION_MEETING_OFF_RECORD_STARTED = "meeting.off_record_started"
+ACTION_MEETING_OFF_RECORD_ENDED = "meeting.off_record_ended"

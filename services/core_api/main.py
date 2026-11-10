@@ -33,6 +33,7 @@ from services.core_api.routes import (
     meetings,
     minutes,
     my_tasks,
+    off_record,
     org_hierarchy,
     public_api,
     room_closeout,
@@ -88,6 +89,7 @@ app.include_router(erasure.router)  # admin-only; reached through admin-ops-serv
 app.include_router(minutes.router)
 # Wave 3: the phone's in-person recording (`/api/v1/capture/*`).
 app.include_router(capture.router)
+app.include_router(off_record.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
