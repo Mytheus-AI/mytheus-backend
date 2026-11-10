@@ -9,9 +9,13 @@ components:
     Dashboard:
       properties:
         action_items:
-          $ref: '#/components/schemas/UnbuiltArm'
+          $ref: '#/components/schemas/TasksArm'
         decisions:
-          $ref: '#/components/schemas/UnbuiltArm'
+          $ref: '#/components/schemas/DecisionsArm'
+        needs_review:
+          $ref: '#/components/schemas/NeedsReviewArm'
+        recent_meetings:
+          $ref: '#/components/schemas/RecentMeetingsArm'
         upcoming_meetings:
           $ref: '#/components/schemas/MeetingsArm'
         worklogs:
@@ -21,7 +25,46 @@ components:
       - action_items
       - worklogs
       - decisions
+      - recent_meetings
+      - needs_review
       title: Dashboard
+      type: object
+    DashboardDecision:
+      description: A confirmed decision from one of the caller's meetings, for Recent decisions.
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+      required:
+      - id
+      - meeting_id
+      - meeting_title
+      - content
+      - rationale
+      - created_at
+      title: DashboardDecision
       type: object
     DashboardMeeting:
       description: 'The meetings-panel projection: six columns, not the whole `Meeting` resource.
@@ -109,6 +152,132 @@ components:
       - created_at
       title: DashboardNote
       type: object
+    DashboardRecentMeeting:
+      description: An ended meeting the caller was in, with what was confirmed in it.
+      properties:
+        action_count:
+          title: Action Count
+          type: integer
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decision_count:
+          title: Decision Count
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        participant_count:
+          title: Participant Count
+          type: integer
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - title
+      - scheduled_start
+      - scheduled_end
+      - created_at
+      - participant_count
+      - decision_count
+      - action_count
+      title: DashboardRecentMeeting
+      type: object
+    DashboardReviewItem:
+      description: 'An agent candidate (proposed, above the tenant''s surface threshold) in one of the
+
+        caller''s meetings that nobody has confirmed or dismissed yet.'
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - decision
+          - action
+          title: Kind
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - kind
+      - id
+      - meeting_id
+      - meeting_title
+      - content
+      - created_at
+      title: DashboardReviewItem
+      type: object
+    DashboardTask:
+      description: One of the caller's open (confirmed, not done) action items, for Your tasks.
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - id
+      - meeting_id
+      - meeting_title
+      - content
+      - due_date
+      - created_at
+      title: DashboardTask
+      type: object
     DecisionLineage:
       properties:
         chain:
@@ -129,6 +298,25 @@ components:
       - meeting_id
       - chain
       title: DecisionLineage
+      type: object
+    DecisionsArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardDecision'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: DecisionsArm
       type: object
     DepartmentNode:
       properties:
@@ -341,6 +529,25 @@ components:
       - role_in_team
       title: Member
       type: object
+    NeedsReviewArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardReviewItem'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: NeedsReviewArm
+      type: object
     OrgChart:
       properties:
         departments:
@@ -466,6 +673,44 @@ components:
       - status
       - code
       type: object
+    RecentMeetingsArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardRecentMeeting'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: RecentMeetingsArm
+      type: object
+    TasksArm:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DashboardTask'
+          title: Items
+          type: array
+        status:
+          enum:
+          - ok
+          - degraded
+          - empty
+          title: Status
+          type: string
+      required:
+      - status
+      - items
+      title: TasksArm
+      type: object
     TeamNode:
       properties:
         id:
@@ -509,52 +754,6 @@ components:
       - name
       - department_id
       title: TeamRef
-      type: object
-    UnbuiltArm:
-      description: 'A panel whose read model does not exist yet, so its item type stays open.
-
-
-        `action_items`, `worklogs` and `decisions` are shaped-but-empty until Plan 7-9 builds the
-
-        read models behind them. Inventing an item shape now would freeze a wire contract that
-
-        band has to either honour or break, on no evidence, and a generated client would carry
-
-        that invention to every caller as though it were measured.
-
-
-        The item type is therefore left exactly as it is on the wire today, an open object map.
-
-        Widening it to `Any` was tried and reverted: `oasdiff breaking` reports `object` -> `any`
-
-        as a `response-property-type-changed` on all three arms, and no client can observe the
-
-        difference because these arrays are always empty. Loosening a live response type to make
-
-        an always-empty array read better is not worth a breaking-change entry.
-
-
-        The name is the signal: when a read model lands, this class is replaced by a typed arm,
-
-        and that rename is a visible breaking change rather than a silent shape swap.'
-      properties:
-        items:
-          items:
-            additionalProperties: true
-            type: object
-          title: Items
-          type: array
-        status:
-          enum:
-          - ok
-          - degraded
-          - empty
-          title: Status
-          type: string
-      required:
-      - status
-      - items
-      title: UnbuiltArm
       type: object
     ValidationError:
       properties:
