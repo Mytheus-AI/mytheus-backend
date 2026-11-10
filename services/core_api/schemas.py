@@ -738,7 +738,10 @@ class StatusRequest(BaseModel):
 
     id: uuid.UUID
     action_id: uuid.UUID
+    # The action item's text, under both names the UI reads (`action_title` mirrors
+    # `CarryForwardAction.title`).
     action_content: str | None = None
+    action_title: str | None = None
     meeting_id: uuid.UUID
     meeting_title: str | None = None
     meeting_scheduled_start: datetime | None = None

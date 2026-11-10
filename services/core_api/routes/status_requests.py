@@ -30,7 +30,8 @@ router = APIRouter(prefix="/api/v1", tags=["status-requests"])
 
 MAX_REQUESTS = 200
 _SELECT = (
-    "SELECT r.id, r.action_id, a.content AS action_content, r.meeting_id, "
+    "SELECT r.id, r.action_id, a.content AS action_content, a.content AS action_title, "
+    "r.meeting_id, "
     "m.title AS meeting_title, m.scheduled_start AS meeting_scheduled_start, r.state, "
     "r.status_text, r.requested_at, r.answered_at "
     "FROM action_status_requests r JOIN action_items a ON a.id = r.action_id "

@@ -714,6 +714,7 @@ def test_status_requests_are_created_once_and_answered_by_the_assignee(client):
         ("Draft the plan", "Follow-up")
     ]
     assert mine[0]["meeting_scheduled_start"].startswith("2026-12-01T10:00:00")
+    assert mine[0]["action_title"] == "Draft the plan"
     rid = mine[0]["id"]
     carol_rid = next(r["id"] for r in reqs if r["user_id"] == str(carol.user_id))
     assert (
