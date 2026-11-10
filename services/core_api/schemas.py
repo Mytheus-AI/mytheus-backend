@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
 # Where the call happens: a Mytheus room, or an external call captured by the browser extension
 # (no Mytheus room is opened for those; `meetings.source`, migration b8c9d0e1f2a3).
-MeetingSource = Literal["mytheus", "meet", "teams", "zoom"]
+MeetingSource = Literal["mytheus", "meet", "teams", "zoom", "in_person"]
 
 # --- ADR-0038 D5/D6: the agenda ------------------------------------------------------------
 
@@ -206,7 +206,8 @@ class MeetingCreate(BaseModel):
     # template); `template_id` must name a meeting type of this tenant (422 otherwise).
     confidential: bool | None = None
     template_id: uuid.UUID | None = None
-    # Omitted means a Mytheus room. "meet" / "teams" / "zoom": a call captured elsewhere.
+    # Omitted means a Mytheus room. "meet" / "teams" / "zoom": a call captured elsewhere;
+    # "in_person": a meeting in a room, recorded on a phone (`/api/v1/capture/sessions`).
     source: MeetingSource | None = None
 
     @model_validator(mode="after")
