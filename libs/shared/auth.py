@@ -34,6 +34,7 @@ from fastapi import Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient, PyJWKClientError
 
+from libs.shared import pat
 from libs.shared.errors import ErrorCode, ProblemDetail
 
 _bearer = HTTPBearer(auto_error=False)
@@ -63,6 +64,16 @@ def verify_token(
     """Verify a Clerk session token and return its claims. Fails closed on every branch."""
     if not credentials:
         raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Missing bearer token")
+
+    if pat.is_pat(credentials.credentials):
+        # A personal access token is never a JWT. It is accepted here only when this request's
+        # `PatAuthMiddleware` already resolved THIS token against the database (same hash);
+        # called anywhere else (the gateway before resolution, a test, a worker) it is the
+        # same 401 as any other bad token. See libs/shared/pat.py.
+        principal = pat.current_principal()
+        if principal is None or principal.token_hash != pat.hash_token(credentials.credentials):
+            raise pat.invalid()
+        return pat.claims_for(principal)
 
     try:
         signing_key = _jwks_client().get_signing_key_from_jwt(credentials.credentials).key
@@ -128,5 +139,12 @@ def clerk_org_id_from(claims: dict[str, Any]) -> str:
     OPAQUE. Do not parse it, do not cast it to UUID, do not use it as a Redis namespace or a
     partition key. It is only ever an input to `org_resolver.resolve_org_id`, whose output is
     the `org_id` everything else in the system is keyed on.
+
+    A personal-access-token principal carries no Clerk organization (its tenant is already
+    resolved, `pat.PAT_CLAIM`), so code that only understands Clerk tokens gets a 401 here
+    rather than a KeyError, which would have been a 500.
     """
-    return str(claims[org_claim_name()])
+    value = claims.get(org_claim_name())
+    if not isinstance(value, str) or not value:
+        raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Token carries no organization")
+    return value

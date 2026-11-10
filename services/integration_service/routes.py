@@ -1,9 +1,11 @@
 """integration-service public API: list, connect, disconnect, and the OAuth completion.
 
-- `GET /integrations` (owner/admin): one item per R8 provider, never token material.
+- `GET /integrations` (owner/admin): one item per connectable provider (the R8 set, then the
+  Phase 4 reach providers HubSpot, Notion and Confluence), never token material.
 - `POST /integrations/{provider}/connect` (owner/admin) -> {authorize_url}. 404 for a provider
-  outside the R8 set (Linear is not built), 409 `PROVIDER_NOT_CONFIGURED` when the server has no
-  app credentials for it, 409 `PM_ALREADY_CONNECTED` when another PM tool is connected.
+  outside the connectable set (Linear is not built), 409 `PROVIDER_NOT_CONFIGURED` when the
+  server has no app credentials for it, 409 `PM_ALREADY_CONNECTED` when another PM tool is
+  connected.
 - `DELETE /integrations/{provider}` (owner/admin) -> 204: provider-side cleanup and revoke where
   the provider has one (best effort), tokens and cursors deleted, status `disconnected`, audited.
 - `POST /oauth/{provider}` {code, state} (owner/admin, JWT) -> {provider, status}: the canon path,
@@ -52,7 +54,7 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.integration_service import config, store
 from services.integration_service.clients import ProviderError, get_clients
-from services.integration_service.connectors import calendar, jira, slack
+from services.integration_service.connectors import calendar, decision_export, hubspot, jira, slack
 from services.integration_service.oauth_state import (
     STATE_TTL_SECONDS,
     StateError,
@@ -97,7 +99,7 @@ class AuthorizeUrl(BaseModel):
 
 
 def _known(provider: str) -> str:
-    if provider not in config.R8_PROVIDERS:
+    if provider not in config.CONNECTABLE_PROVIDERS:
         raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
     return provider
 
@@ -109,7 +111,7 @@ async def list_integrations(
 ) -> IntegrationList:
     connections = await store.list_connections(session)
     items = []
-    for provider in config.R8_PROVIDERS:
+    for provider in config.CONNECTABLE_PROVIDERS:
         conn = connections.get(provider)
         items.append(
             IntegrationItem(
@@ -371,6 +373,12 @@ async def oauth_complete(
                 await slack.post_install(session, conn, clients)
             elif provider == config.JIRA:
                 await jira.post_install(session, conn, clients, grant.extra)
+            elif provider == config.HUBSPOT:
+                await hubspot.post_install(session, conn, clients)
+            elif provider == config.NOTION:
+                await decision_export.notion_post_install(session, conn, clients)
+            elif provider == config.CONFLUENCE:
+                await decision_export.confluence_post_install(session, conn, clients, grant.extra)
     except (ProviderError, store.NotConnected, ProblemDetail) as exc:
         logger.warning("post-install failed for %s: %s", provider, exc)
         async with sessionmaker() as session, session.begin():

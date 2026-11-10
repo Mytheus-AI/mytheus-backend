@@ -136,6 +136,188 @@ components:
       - items
       title: AgentAuthzTemplateResult
       type: object
+    ApiToken:
+      description: 'A token as listed. Never the token text: only its last four characters.'
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_used_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: Last request the gateway accepted with it (90-day memory).
+          title: Last Used At
+        name:
+          title: Name
+          type: string
+        owner_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Present in the workspace-wide (`owner=all`) listing only.
+          title: Owner Email
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        scope:
+          enum:
+          - read
+          - read_write
+          title: Scope
+          type: string
+        state:
+          enum:
+          - active
+          - expired
+          - revoked
+          title: State
+          type: string
+        token_preview:
+          description: '`mytheus_pat_...abcd`, to recognise a token.'
+          title: Token Preview
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - user_id
+      - name
+      - scope
+      - token_preview
+      - state
+      - created_at
+      - expires_at
+      title: ApiToken
+      type: object
+    ApiTokenCreate:
+      additionalProperties: false
+      properties:
+        expires_in_days:
+          default: 90
+          description: Lifetime in days, 1 to 365. Every token expires.
+          maximum: 365.0
+          minimum: 1.0
+          title: Expires In Days
+          type: integer
+        name:
+          description: What the token is for, e.g. 'Claude Desktop' or 'HubSpot sync script'.
+          maxLength: 80
+          minLength: 1
+          title: Name
+          type: string
+        scope:
+          default: read
+          description: '`read`: GET requests, search and ask, and the MCP read tools. `read_write`: also
+            creates and updates (confirm, edit, create tasks) as the token''s owner.'
+          enum:
+          - read
+          - read_write
+          title: Scope
+          type: string
+      required:
+      - name
+      title: ApiTokenCreate
+      type: object
+    ApiTokenCreated:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_used_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: Last request the gateway accepted with it (90-day memory).
+          title: Last Used At
+        name:
+          title: Name
+          type: string
+        owner_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Present in the workspace-wide (`owner=all`) listing only.
+          title: Owner Email
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        scope:
+          enum:
+          - read
+          - read_write
+          title: Scope
+          type: string
+        state:
+          enum:
+          - active
+          - expired
+          - revoked
+          title: State
+          type: string
+        token:
+          description: The token itself. Shown in this response only; store it now.
+          title: Token
+          type: string
+        token_preview:
+          description: '`mytheus_pat_...abcd`, to recognise a token.'
+          title: Token Preview
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - user_id
+      - name
+      - scope
+      - token_preview
+      - state
+      - created_at
+      - expires_at
+      - token
+      title: ApiTokenCreated
+      type: object
+    ApiTokenList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ApiToken'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ApiTokenList
+      type: object
     ConfidenceThresholds:
       additionalProperties: false
       properties:
@@ -205,6 +387,7 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - EXTERNAL_MEETING
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
@@ -1695,9 +1878,11 @@ components:
   securitySchemes:
     HTTPBearer:
       bearerFormat: JWT
-      description: Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
+      description: 'Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
         re-verified in the service tier. `org_id` is derived from the token and is never accepted from
-        a path, query, body or client header.
+        a path, query, body or client header. The public API (meetings, decisions, actions, commitments,
+        search, ask, MCP) also accepts a personal access token, `mytheus_pat_...`, created under `/api/v1/api-tokens`:
+        it acts as its owner, `read` tokens may only read, and each token is rate limited at the gateway.'
       scheme: bearer
       type: http
     MytheusServiceToken:
@@ -1856,6 +2041,126 @@ paths:
       summary: Revoke Scope
       tags:
       - agent-authz
+  /api/v1/api-tokens:
+    get:
+      operationId: list_api_tokens
+      parameters:
+      - description: '`me` (default): your tokens. `all`: everyone''s (owner/admin).'
+        in: query
+        name: owner
+        required: false
+        schema:
+          default: me
+          description: '`me` (default): your tokens. `all`: everyone''s (owner/admin).'
+          enum:
+          - me
+          - all
+          title: Owner
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Api Tokens
+      tags:
+      - api-tokens
+    post:
+      operationId: create_api_token
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiTokenCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenCreated'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: You already have 20 active tokens; revoke one first.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Api Token
+      tags:
+      - api-tokens
+  /api/v1/api-tokens/{token_id}:
+    delete:
+      operationId: revoke_api_token
+      parameters:
+      - in: path
+        name: token_id
+        required: true
+        schema:
+          format: uuid
+          title: Token Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Revoke Api Token
+      tags:
+      - api-tokens
   /api/v1/org/glossary:
     get:
       description: 'authz: member. Every term (at most 500), ordered by term, case-insensitively.'

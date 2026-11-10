@@ -734,7 +734,10 @@ def test_preferences_default_upsert_and_in_app_forced(client):
             {"channel": "in_app", "enabled": True, "max_priority": 3},
             {"channel": "email", "enabled": False, "max_priority": 1},
             {"channel": "slack", "enabled": False, "max_priority": 1},
-        ]
+        ],
+        # No email provider in the test environment (Phase 4: the screen says so).
+        "email_configured": False,
+        "email_provider": None,
     }
     put = client.put(
         "/notifications/preferences",
@@ -751,7 +754,9 @@ def test_preferences_default_upsert_and_in_app_forced(client):
             {"channel": "in_app", "enabled": True, "max_priority": 3},
             {"channel": "email", "enabled": True, "max_priority": 3},
             {"channel": "slack", "enabled": False, "max_priority": 1},
-        ]
+        ],
+        "email_configured": False,
+        "email_provider": None,
     }
     assert put.json() == want
     assert client.get("/notifications/preferences").json() == want

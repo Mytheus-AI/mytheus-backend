@@ -33,6 +33,7 @@ from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.shared import pat
 from libs.shared.audit import ACTION_AUTHZ_DENY, audit
 from libs.shared.auth import clerk_org_id_from, user_id_from, verify_token
 from libs.shared.db import get_sessionmaker
@@ -58,6 +59,16 @@ class RequestContext:
     clerk_user_id: str
     rbac_tier: str  # "" when the user holds no grant, which satisfies no tier
     ip: str | None
+    # How the caller authenticated: a Clerk session, or a personal access token (Phase 4).
+    # A token resolves to its owner's context, so every permission check is the owner's.
+    auth_method: str = "session"
+    token_id: UUID | None = None
+    token_scope: str | None = None  # "read" | "read_write" for a token, None for a session
+
+    @property
+    def can_write(self) -> bool:
+        """False only for a read-only API token. Sessions and read_write tokens may write."""
+        return self.token_scope != "read"
 
     def satisfies(self, minimum: str) -> bool:
         return TIER_RANK.get(self.rbac_tier, 0) >= TIER_RANK[minimum]
@@ -99,7 +110,13 @@ async def tenant_context(
 
     The `users` lookup runs with `app.current_org` already set, so a Clerk user id that exists
     in another tenant resolves to nothing here rather than to that tenant's row.
+
+    A personal access token (`libs/shared/pat.py`) arrives already resolved by this request's
+    `PatAuthMiddleware`; it becomes the same context, re-checked against the scope rules here
+    as well so a route can never be reached by a token the middleware would have refused.
     """
+    if pat.PAT_CLAIM in claims:
+        return _token_context(request, claims)
     clerk_org = clerk_org_id_from(claims)
     clerk_user = user_id_from(claims)
 
@@ -140,6 +157,27 @@ async def tenant_session(
         async with session.begin():
             await set_rls(session, ctx.org_id)
             yield session
+
+
+def _token_context(request: Request, claims: dict[str, Any]) -> RequestContext:
+    principal = pat.current_principal()
+    marker = claims.get(pat.PAT_CLAIM) or {}
+    if principal is None or str(principal.token_id) != str(marker.get("token_id")):
+        raise pat.invalid()
+    verdict = pat.allows(request.method, request.url.path, principal.scope)
+    if verdict != "ok":
+        raise pat.refused(verdict)
+    set_org_id(principal.org_id)
+    return RequestContext(
+        org_id=principal.org_id,
+        user_id=principal.user_id,
+        clerk_user_id=principal.clerk_user_id,
+        rbac_tier=principal.rbac_tier,
+        ip=_client_ip(request),
+        auth_method="api_token",
+        token_id=principal.token_id,
+        token_scope=principal.scope,
+    )
 
 
 def require_tier(minimum: str) -> Callable[..., Any]:

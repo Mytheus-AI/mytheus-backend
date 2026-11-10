@@ -47,7 +47,8 @@ ALLOWED_CALLERS = frozenset({"meeting-service"})
 # agent-runtime-service reads related attendees (`internal_agents.py`, P10); workflow-service
 # reads the post-meeting digest (`internal_lifecycle.py`, P10 MeetingLifecycleWorkflow).
 # integration-service applies Jira status and reads the Slack digest
-# (`internal_integrations.py`, P12).
+# (`internal_integrations.py`, P12). embedding-service and search-service read a meeting's
+# index policy (`internal_policy.py`, polish plan: confidential meetings out of org-wide search).
 KNOWN_CALLERS = frozenset(
     {
         "meeting-service",
@@ -55,6 +56,8 @@ KNOWN_CALLERS = frozenset(
         "agent-runtime-service",
         "workflow-service",
         "integration-service",
+        "embedding-service",
+        "search-service",
     }
 )
 TOKENS_ENV = "MYTHEUS_CORE_CALLER_TOKENS"
@@ -159,13 +162,15 @@ async def report_room_state(
         await set_rls(session, org_id)
         current = (
             await session.execute(
-                text("SELECT status FROM meetings WHERE id = :id AND deleted_at IS NULL"),
+                text("SELECT status, source FROM meetings WHERE id = :id AND deleted_at IS NULL"),
                 {"id": str(meeting_id)},
             )
         ).first()
         if current is None:
             raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
-        if current[0] not in allowed_from:
+        # A call captured from Meet/Teams/Zoom is not ruled by a Mytheus room: an empty-room
+        # timeout (or any room report) must never end it while the external call runs on.
+        if current[1] != "mytheus" or current[0] not in allowed_from:
             return RoomStateResult(meeting_id=meeting_id, status=str(current[0]), changed=False)
 
         row = (

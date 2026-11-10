@@ -13,6 +13,12 @@ data (one writer per store):
   `{meeting_id}` (base `INTEGRATION_SERVICE_URL`, secret from
   `MYTHEUS_INTEGRATION_CALLER_TOKENS`). integration-service answers `{sent: 0}` when the tenant
   has no Slack, so "not connected" is a successful no-op, not an error.
+- `send_followup` (Phase 4): core-api `POST /internal/meetings/{id}/follow-up/dispatch`: the
+  recap to participants (in-app, email for those who opted in) and to the host's external
+  guests. `{status: "disabled"}` when the host turned it off.
+- `send_crm_note` (Phase 4): integration-service `POST /internal/crm/meeting-note` with body
+  `{meeting_id}`: the meeting note on the matched HubSpot company timeline. A tenant without
+  HubSpot gets `{status: "not_connected"}`, a successful no-op.
 
 `run_post_processing` is a read: it confirms the meeting is over in core-api and returns what it
 produced (see `services/core_api/routes/internal_lifecycle.py` for why nothing is built yet).
@@ -199,6 +205,27 @@ class LifecycleActivities:
             json={"meeting_id": meeting_id},
         )
 
+    @activity.defn(name="send_followup")
+    async def send_followup(self, meeting_id: str, org_id: str) -> dict[str, Any]:
+        return await self._call(
+            "POST",
+            f"{self._core_url}/internal/meetings/{meeting_id}/follow-up/dispatch",
+            self._core_secret,
+            org_id,
+            CORE_TOKENS_ENV,
+        )
+
+    @activity.defn(name="send_crm_note")
+    async def send_crm_note(self, meeting_id: str, org_id: str) -> dict[str, Any]:
+        return await self._call(
+            "POST",
+            f"{self._integration_url}/internal/crm/meeting-note",
+            self._integration_secret,
+            org_id,
+            INTEGRATION_TOKENS_ENV,
+            json={"meeting_id": meeting_id},
+        )
+
     def all(self) -> list[Any]:
         return [
             self.open_meeting_room,
@@ -206,4 +233,6 @@ class LifecycleActivities:
             self.close_meeting_room,
             self.send_prep_brief,
             self.send_meeting_summary,
+            self.send_followup,
+            self.send_crm_note,
         ]

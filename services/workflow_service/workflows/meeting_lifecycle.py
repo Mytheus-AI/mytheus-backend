@@ -41,6 +41,11 @@ P12 adds two Slack touches (integration-service builds the Block Kit and emits t
 
 Neither may fail the run (a failure is recorded in the output, like post-processing). Both are
 behind `workflow.patched` markers, so executions started before this change replay unchanged.
+
+Phase 4 adds two more after the summary, the same way (patch markers `p4-followup` and
+`p4-crm-note`, best effort): `send_followup` (core-api sends the recap to participants and the
+host's external guests) and `send_crm_note` (integration-service writes the meeting note on the
+matched HubSpot company; `not_connected` without HubSpot).
 """
 
 from __future__ import annotations
@@ -66,6 +71,9 @@ SLACK_TIMEOUT = timedelta(seconds=30)
 PREP_BRIEF_LEAD = timedelta(minutes=15)
 PREP_BRIEF_PATCH = "p12-prep-brief"
 SUMMARY_PATCH = "p12-meeting-summary"
+FOLLOWUP_PATCH = "p4-followup"
+CRM_NOTE_PATCH = "p4-crm-note"
+FOLLOWUP_TIMEOUT = timedelta(seconds=60)
 
 
 NEVER_ENDED = "MeetingNeverEnded"
@@ -116,13 +124,21 @@ class MeetingLifecycleWorkflow:
     def ended(self) -> bool:
         return self._ended
 
-    async def _slack(self, activity: str, args: list[str], out: dict[str, Any], key: str) -> None:
-        """One Slack touch; a failure is recorded under `{key}_error` and never fails the run."""
+    async def _slack(
+        self,
+        activity: str,
+        args: list[str],
+        out: dict[str, Any],
+        key: str,
+        timeout: timedelta = SLACK_TIMEOUT,
+    ) -> None:
+        """One best-effort touch (Slack, and since Phase 4 the follow-up and CRM note); a
+        failure is recorded under `{key}_error` and never fails the run."""
         try:
             out[key] = await workflow.execute_activity(
                 activity,
                 args=args,
-                start_to_close_timeout=SLACK_TIMEOUT,
+                start_to_close_timeout=timeout,
                 retry_policy=RETRY_POLICY,
             )
         except ActivityError as exc:
@@ -178,6 +194,12 @@ class MeetingLifecycleWorkflow:
                 out["post_meeting_error"] = str(exc.cause or exc)
             if workflow.patched(SUMMARY_PATCH):
                 await self._slack("send_meeting_summary", args, out, "meeting_summary")
+            # Phase 4: the follow-up recap and the CRM meeting note. Each is a no-op answer
+            # when off or not connected, and neither may fail the run.
+            if workflow.patched(FOLLOWUP_PATCH):
+                await self._slack("send_followup", args, out, "followup", FOLLOWUP_TIMEOUT)
+            if workflow.patched(CRM_NOTE_PATCH):
+                await self._slack("send_crm_note", args, out, "crm_note", FOLLOWUP_TIMEOUT)
 
         out["room_close"] = await workflow.execute_activity(
             "close_meeting_room",

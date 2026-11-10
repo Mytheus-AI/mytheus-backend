@@ -120,6 +120,7 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - EXTERNAL_MEETING
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
@@ -225,9 +226,11 @@ components:
   securitySchemes:
     HTTPBearer:
       bearerFormat: JWT
-      description: Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
+      description: 'Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
         re-verified in the service tier. `org_id` is derived from the token and is never accepted from
-        a path, query, body or client header.
+        a path, query, body or client header. The public API (meetings, decisions, actions, commitments,
+        search, ask, MCP) also accepts a personal access token, `mytheus_pat_...`, created under `/api/v1/api-tokens`:
+        it acts as its owner, `read` tokens may only read, and each token is rate limited at the gateway.'
       scheme: bearer
       type: http
     MytheusServiceToken:

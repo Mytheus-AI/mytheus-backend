@@ -139,7 +139,11 @@ def _title_text(content: str, limit: int = 120) -> str:
 
 def _link(status: dict[str, Any]) -> str | None:
     meeting_id = status.get("meeting_id")
-    return f"/meetings/{meeting_id}" if meeting_id else None
+    if not meeting_id:
+        return None
+    if str(meeting_id) == "00000000-0000-0000-0000-000000000000":
+        return "/tasks"  # a task created directly has no meeting (core-api's nil uuid)
+    return f"/meetings/{meeting_id}"
 
 
 class FollowUpActivities:

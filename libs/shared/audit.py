@@ -126,7 +126,24 @@ ACTION_INTEGRATION_CONNECTED = "integration.connected"
 ACTION_INTEGRATION_DISCONNECTED = "integration.disconnected"
 ACTION_ACTION_STATUS_SYNCED = "action.status_synced"
 
+# Phase 4 reach: a person exporting a decision record to Notion, Confluence or Slack
+# (integration-service `POST /integrations/exports/decisions/{id}`).
+ACTION_DECISION_EXPORTED = "decision.exported"
+
 # ADR-0039 B1: an owner/admin changing a meeting type, which is company-wide data.
 ACTION_MEETING_TEMPLATE_CREATED = "meeting_template.created"
 ACTION_MEETING_TEMPLATE_UPDATED = "meeting_template.updated"
 ACTION_MEETING_TEMPLATE_DELETED = "meeting_template.deleted"
+
+# Phase 4: a meeting follow-up dispatched (the recap to participants in-app, by email to those
+# who opted in, and to the host's listed external guests). Who triggered it and who was mailed
+# is a compliance fact: it sends meeting content outside the product.
+ACTION_MEETING_FOLLOWUP_SENT = "meeting.followup_sent"
+
+# Phase 4: personal access tokens (identity-tenant-service /api/v1/api-tokens), the actions
+# a person takes through one (core-api `POST /api/v1/actions`), and share links (core-api).
+ACTION_API_TOKEN_CREATED = "api_token.created"
+ACTION_API_TOKEN_REVOKED = "api_token.revoked"
+ACTION_ACTION_CREATED = "action.created"
+ACTION_SHARE_LINK_CREATED = "share_link.created"
+ACTION_SHARE_LINK_REVOKED = "share_link.revoked"

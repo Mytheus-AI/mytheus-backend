@@ -15,6 +15,151 @@ components:
       - authorize_url
       title: AuthorizeUrl
       type: object
+    CrmNoteResult:
+      properties:
+        companies:
+          default: 0
+          title: Companies
+          type: integer
+        contacts:
+          default: 0
+          title: Contacts
+          type: integer
+        note_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note Id
+        status:
+          enum:
+          - not_connected
+          - skipped_confidential
+          - no_match
+          - created
+          - updated
+          title: Status
+          type: string
+      required:
+      - status
+      title: CrmNoteResult
+      type: object
+    DecisionExport:
+      properties:
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        destination:
+          description: The parent page, space key, channel id or `dm`.
+          title: Destination
+          type: string
+        exported_at:
+          format: date-time
+          title: Exported At
+          type: string
+        external_id:
+          description: The page id, or `{channel}:{ts}` for Slack.
+          title: External Id
+          type: string
+        external_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Open the export in the tool.
+          title: External Url
+        provider:
+          enum:
+          - notion
+          - confluence
+          - slack
+          title: Provider
+          type: string
+        replaced:
+          description: An earlier export of this decision was replaced.
+          title: Replaced
+          type: boolean
+      required:
+      - decision_id
+      - provider
+      - external_id
+      - destination
+      - replaced
+      - exported_at
+      title: DecisionExport
+      type: object
+    DecisionExportList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DecisionExportSummary'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DecisionExportList
+      type: object
+    DecisionExportRequest:
+      additionalProperties: false
+      properties:
+        channel:
+          anyOf:
+          - pattern: ^[CG][A-Z0-9]{2,30}$
+            type: string
+          - type: 'null'
+          description: 'Slack: a channel id the Mytheus app is in. Omit for a direct message.'
+          title: Channel
+        parent_page_id:
+          anyOf:
+          - maxLength: 64
+            minLength: 1
+            pattern: ^[0-9a-fA-F-]+$
+            type: string
+          - type: 'null'
+          description: 'Notion: the page the export is created under (required for Notion).'
+          title: Parent Page Id
+        provider:
+          enum:
+          - notion
+          - confluence
+          - slack
+          title: Provider
+          type: string
+        space_key:
+          anyOf:
+          - maxLength: 255
+            minLength: 1
+            pattern: ^[A-Za-z0-9~_\-]+$
+            type: string
+          - type: 'null'
+          description: 'Confluence: the space the page is created in (required for Confluence).'
+          title: Space Key
+      required:
+      - provider
+      title: DecisionExportRequest
+      type: object
+    DecisionExportSummary:
+      properties:
+        exported_at:
+          format: date-time
+          title: Exported At
+          type: string
+        external_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: External Url
+        provider:
+          enum:
+          - notion
+          - confluence
+          - slack
+          title: Provider
+          type: string
+      required:
+      - provider
+      - exported_at
+      title: DecisionExportSummary
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -39,10 +184,74 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - EXTERNAL_MEETING
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
+    ExportDestination:
+      properties:
+        id:
+          description: Pass back as `parent_page_id` (Notion) or `space_key` (Confluence); `dm` for Slack
+            means a direct message to you.
+          title: Id
+          type: string
+        kind:
+          enum:
+          - page
+          - space
+          - dm
+          title: Kind
+          type: string
+        name:
+          title: Name
+          type: string
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - id
+      - name
+      - kind
+      title: ExportDestination
+      type: object
+    ExportDestinations:
+      properties:
+        configured:
+          description: The server has app credentials for this provider.
+          title: Configured
+          type: boolean
+        connected:
+          description: The workspace has a live connection to it.
+          title: Connected
+          type: boolean
+        destinations:
+          items:
+            $ref: '#/components/schemas/ExportDestination'
+          title: Destinations
+          type: array
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Guidance for the person, e.g. how to share a Notion page.
+          title: Note
+        provider:
+          enum:
+          - notion
+          - confluence
+          - slack
+          title: Provider
+          type: string
+      required:
+      - provider
+      - configured
+      - connected
+      - destinations
+      title: ExportDestinations
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -249,9 +458,11 @@ components:
   securitySchemes:
     HTTPBearer:
       bearerFormat: JWT
-      description: Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
+      description: 'Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
         re-verified in the service tier. `org_id` is derived from the token and is never accepted from
-        a path, query, body or client header.
+        a path, query, body or client header. The public API (meetings, decisions, actions, commitments,
+        search, ask, MCP) also accepts a personal access token, `mytheus_pat_...`, created under `/api/v1/api-tokens`:
+        it acts as its owner, `read` tokens may only read, and each token is rate limited at the gateway.'
       scheme: bearer
       type: http
     MytheusServiceToken:
@@ -309,6 +520,132 @@ paths:
       summary: List Integrations
       tags:
       - integrations
+  /integrations/exports/decisions/{decision_id}:
+    get:
+      operationId: list_decision_exports
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionExportList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Decision Exports
+      tags:
+      - integration-exports
+    post:
+      operationId: export_decision
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionExportRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionExport'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Export Decision
+      tags:
+      - integration-exports
+  /integrations/exports/destinations:
+    get:
+      operationId: export_destinations
+      parameters:
+      - description: Where the record would go.
+        in: query
+        name: provider
+        required: true
+        schema:
+          description: Where the record would go.
+          enum:
+          - notion
+          - confluence
+          - slack
+          title: Provider
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportDestinations'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Export Destinations
+      tags:
+      - integration-exports
   /integrations/{provider}:
     delete:
       operationId: disconnect
@@ -383,6 +720,52 @@ paths:
       summary: Connect
       tags:
       - integrations
+  /internal/crm/meeting-note:
+    post:
+      operationId: crm_meeting_note
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingRef'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmNoteResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Crm Meeting Note
+      tags:
+      - integration-internal
   /internal/slack/meeting-summary:
     post:
       operationId: meeting_summary

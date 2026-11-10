@@ -15,14 +15,18 @@ from libs.shared.errors import add_exception_handlers
 from libs.shared.idempotency import IdempotencyMiddleware
 from libs.shared.metrics import install as install_metrics
 from libs.shared.openapi import install as install_openapi
+from libs.shared.pat import PatAuthMiddleware
 from libs.shared.telemetry import setup_telemetry
 
 
-def create_app(service_name: str, *, idempotency: bool = True) -> FastAPI:
+def create_app(service_name: str, *, idempotency: bool = True, pat_auth: bool = True) -> FastAPI:
     """`idempotency=False` is for a pure proxy (api-gateway). The Idempotency-Key header is
     forwarded to the service behind it, which owns the replay. Two layers sharing one
     org-scoped key make the inner one see the outer's in-progress marker and answer 409 to a
-    perfectly fresh request."""
+    perfectly fresh request.
+
+    `pat_auth=False` likewise for api-gateway: its edge middleware resolves personal access
+    tokens itself (and rate limits them), before routing."""
     app = FastAPI(title=service_name, version="1.0.0")
 
     if idempotency:
@@ -30,6 +34,11 @@ def create_app(service_name: str, *, idempotency: bool = True) -> FastAPI:
             os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
         )
         app.add_middleware(IdempotencyMiddleware, redis=redis)  # replay mutating POST/PUT/PATCH
+    if pat_auth:
+        # Added after the idempotency layer, so it is OUTSIDE it: the principal a personal
+        # access token resolves to is known before the idempotency key is scoped to a tenant.
+        # `pat_auth=False` is for api-gateway, whose edge middleware resolves tokens itself.
+        app.add_middleware(PatAuthMiddleware)
     add_exception_handlers(app)
     setup_telemetry(app, service_name=service_name)  # no-op unless OTEL endpoint set
 

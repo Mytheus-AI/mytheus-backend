@@ -137,3 +137,15 @@ def test_another_tenants_meeting_is_404(client) -> None:
     _, meeting_b = _meeting()
     assert _post(client, org_a, meeting_b, "ended").status_code == 404
     assert _status(meeting_b) == "scheduled"
+
+
+def test_a_captured_external_call_is_never_ended_or_made_live_by_a_room_report(client) -> None:
+    """meetings.source <> 'mytheus' (Meet/Teams/Zoom captured by the extension): the external call
+    is not ruled by a Mytheus room, so LiveKit's empty-room timeout must never end it."""
+    for state, start in (("ended", "live"), ("live", "scheduled")):
+        org_id, meeting_id = _meeting(start)
+        _sql("UPDATE meetings SET source = 'meet' WHERE id = %(m)s", {"m": str(meeting_id)})
+        r = _post(client, org_id, meeting_id, state)
+        assert r.status_code == 200, r.text
+        assert r.json()["changed"] is False
+        assert _status(meeting_id) == start

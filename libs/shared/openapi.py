@@ -96,7 +96,10 @@ def _install_security(schema: dict[str, Any]) -> str | None:
     schemes[name]["description"] = (
         "Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and "
         "re-verified in the service tier. `org_id` is derived from the token and is never "
-        "accepted from a path, query, body or client header."
+        "accepted from a path, query, body or client header. The public API (meetings, "
+        "decisions, actions, commitments, search, ask, MCP) also accepts a personal access "
+        "token, `mytheus_pat_...`, created under `/api/v1/api-tokens`: it acts as its owner, "
+        "`read` tokens may only read, and each token is rate limited at the gateway."
     )
     schema["security"] = [{name: []}]
     return str(name)

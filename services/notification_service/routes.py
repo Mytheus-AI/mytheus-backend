@@ -7,7 +7,9 @@
   any tenant. `unread -> read`, `unread|read -> dismissed`; dismissed is terminal. Repeating the
   current status (or asking a dismissed row to be read) is 200 and writes nothing. Each real
   change writes one `notification.read` / `notification.dismissed` audit row.
-- `GET /notifications/preferences`: the caller's three channels, defaults filled in.
+- `GET /notifications/preferences`: the caller's three channels, defaults filled in, plus
+  `email_configured` / `email_provider` so the settings screen can say when this server has no
+  email provider (email then falls back to the in-app inbox).
 - `PUT /notifications/preferences` `{items: [...]}`: upserts the given channels; `in_app` is
   forced on (see `prefs.py`). Returns the same shape as GET.
 
@@ -32,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.notification_service.email import email_provider
 from services.notification_service.prefs import CHANNELS, IN_APP_FORCED, Channel, load_prefs
 
 router = APIRouter(tags=["notifications"])
@@ -86,6 +89,17 @@ class ChannelPreference(BaseModel):
 
 class PreferenceList(BaseModel):
     items: list[ChannelPreference]
+    email_configured: bool = Field(
+        default=False,
+        description=(
+            "Whether this server can send email at all (a Resend or SMTP provider is "
+            "configured). When false, an enabled email channel is recorded as skipped and the "
+            "in-app inbox stays the delivery; the settings screen should say so."
+        ),
+    )
+    email_provider: Literal["resend", "smtp"] | None = Field(
+        default=None, description="The configured email provider, or null when none is."
+    )
 
 
 class PreferenceUpdate(BaseModel):
@@ -218,13 +232,16 @@ async def put_preferences(
 
 async def _preferences(session: AsyncSession, user_id: uuid.UUID) -> PreferenceList:
     prefs = await load_prefs(session, user_id)
+    provider = email_provider()
     return PreferenceList(
         items=[
             ChannelPreference(
                 channel=c, enabled=prefs[c].enabled, max_priority=prefs[c].max_priority
             )
             for c in CHANNELS
-        ]
+        ],
+        email_configured=provider is not None,
+        email_provider=provider,
     )
 
 

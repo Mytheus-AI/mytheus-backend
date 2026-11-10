@@ -19,6 +19,9 @@ The two categories are different in kind, which is why they are two lists:
 
 - `PUBLIC_PREFIXES` are unauthenticated by design: liveness probes and the API's own
   documentation surface. They carry no tenant data.
+- `/api/v1/public/` (Phase 4) is the share-link read: no bearer token, because its reader has
+  no account. The HMAC-signed, expiring, revocable token in the path is the credential, and
+  core-api verifies it before reading anything.
 - `PUBLIC_CONTAINS` are NOT unauthenticated. They are authenticated by a mechanism a bearer
   token cannot express: a Svix or LiveKit or Stripe signature over the raw request body.
   They verify before they parse. "Public" here means "does not take a Clerk JWT", never
@@ -28,7 +31,7 @@ The two categories are different in kind, which is why they are two lists:
 
 from __future__ import annotations
 
-PUBLIC_PREFIXES = ("/healthz", "/health", "/openapi", "/docs", "/redoc")
+PUBLIC_PREFIXES = ("/healthz", "/health", "/openapi", "/docs", "/redoc", "/api/v1/public/")
 PUBLIC_CONTAINS = ("/webhook", "/clerk/", "/stripe/", "/livekit/", "/callback")
 
 

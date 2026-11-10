@@ -1,5 +1,5 @@
-"""Provider HTTP clients: the only code in integration-service that talks to Google, Slack or
-Atlassian.
+"""Provider HTTP clients: the only code in integration-service that talks to Google, Slack,
+Atlassian (Jira, Confluence), HubSpot or Notion.
 
 Each provider is two small classes: an OAuth client (authorize URL, code exchange, refresh,
 revoke) and an API client (the handful of REST calls the connector needs). Everything above this
@@ -13,6 +13,7 @@ codes and tokens back often enough that the safe default is to keep them out ent
 
 from __future__ import annotations
 
+import base64
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -384,6 +385,71 @@ class SlackApi(_Http):
             raise ProviderError(self.provider, "auth_test", str(body.get("error", "not_ok")))
         return body
 
+    async def _web(
+        self, token: str, operation: str, method: str, api: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """One Slack Web API call. Slack answers 200 with `ok: false` for every API error, so
+        the error code (e.g. `not_in_channel`, `users_not_found`) becomes the reason."""
+        body: dict[str, Any] = await self.json(
+            self.provider,
+            operation,
+            method,
+            f"{SLACK_API}/{api}",
+            headers={"Authorization": f"Bearer {token}"},
+            **kwargs,
+        )
+        if not body.get("ok"):
+            raise ProviderError(self.provider, operation, str(body.get("error", "not_ok")))
+        return body
+
+    async def user_id_for_email(self, token: str, email: str) -> str | None:
+        try:
+            body = await self._web(
+                token, "lookup_by_email", "GET", "users.lookupByEmail", params={"email": email}
+            )
+        except ProviderError as exc:
+            if exc.reason == "users_not_found":
+                return None
+            raise
+        user = body.get("user") or {}
+        return str(user["id"]) if user.get("id") else None
+
+    async def open_dm(self, token: str, user_id: str) -> str:
+        body = await self._web(
+            token, "conversations_open", "POST", "conversations.open", json={"users": user_id}
+        )
+        channel = (body.get("channel") or {}).get("id")
+        if not channel:
+            raise ProviderError(self.provider, "conversations_open", "no_channel")
+        return str(channel)
+
+    async def post_message(
+        self, token: str, *, channel: str, text: str, blocks: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """-> {channel, ts}. `not_in_channel` / `channel_not_found` surface as the reason."""
+        body = await self._web(
+            token,
+            "post_message",
+            "POST",
+            "chat.postMessage",
+            json={"channel": channel, "text": text, "blocks": blocks, "unfurl_links": False},
+        )
+        return {"channel": str(body.get("channel") or channel), "ts": str(body.get("ts") or "")}
+
+    async def permalink(self, token: str, *, channel: str, ts: str) -> str | None:
+        try:
+            body = await self._web(
+                token,
+                "permalink",
+                "GET",
+                "chat.getPermalink",
+                params={"channel": channel, "message_ts": ts},
+            )
+        except ProviderError:
+            return None
+        link = body.get("permalink")
+        return str(link) if link else None
+
 
 # --- Jira (Atlassian OAuth 2.0 3LO) ----------------------------------------------------------
 
@@ -581,6 +647,533 @@ class JiraApi(_Http):
         return None
 
 
+# --- HubSpot (Phase 4 CRM sync) -------------------------------------------------------------
+
+HUBSPOT_AUTHORIZE = "https://app.hubspot.com/oauth/authorize"
+HUBSPOT_API = "https://api.hubapi.com"
+# HubSpot-defined association type ids (CRM v3/v4): note -> company, note -> contact.
+HUBSPOT_NOTE_TO_COMPANY = 190
+HUBSPOT_NOTE_TO_CONTACT = 202
+
+
+class HubSpotOAuth(_Http):
+    """HubSpot OAuth 2.0 (authorization code). HubSpot does not take a PKCE challenge, so the
+    verifier the engine keeps is simply not sent; the signed, user-bound, single-use `state` is
+    what binds the completion (ADR-0037 D4)."""
+
+    provider = config.HUBSPOT
+    scopes = (
+        "oauth",
+        "crm.objects.companies.read",
+        "crm.objects.companies.write",
+        "crm.objects.contacts.read",
+        "crm.objects.contacts.write",
+    )
+
+    def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
+        query = {
+            "client_id": _creds(self.provider).client_id,
+            "redirect_uri": redirect_uri,
+            "scope": " ".join(self.scopes),
+            "state": state,
+        }
+        return f"{HUBSPOT_AUTHORIZE}?{urlencode(query)}"
+
+    async def _token(self, operation: str, form: dict[str, str]) -> dict[str, Any]:
+        creds = _creds(self.provider)
+        form = {**form, "client_id": creds.client_id, "client_secret": creds.client_secret}
+        body: dict[str, Any] = await self.json(
+            self.provider, operation, "POST", f"{HUBSPOT_API}/oauth/v1/token", data=form
+        )
+        if not body.get("access_token"):
+            raise ProviderError(self.provider, operation, "no_access_token")
+        return body
+
+    async def exchange(self, *, code: str, code_verifier: str, redirect_uri: str) -> TokenGrant:
+        body = await self._token(
+            "exchange",
+            {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
+        )
+        info = await self.json(
+            self.provider,
+            "token_info",
+            "GET",
+            f"{HUBSPOT_API}/oauth/v1/access-tokens/{body['access_token']}",
+        )
+        hub_id = info.get("hub_id")
+        if not hub_id:
+            raise ProviderError(self.provider, "exchange", "no_hub_id")
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token"),
+            expires_in=body.get("expires_in"),
+            scopes=[str(s) for s in info.get("scopes") or []],
+            external_account_id=str(hub_id),
+            extra={"hub_domain": info.get("hub_domain")},
+        )
+
+    async def refresh(self, refresh_token: str) -> TokenGrant:
+        body = await self._token(
+            "refresh", {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token") or refresh_token,
+            expires_in=body.get("expires_in"),
+            scopes=list(self.scopes),
+        )
+
+    async def revoke(self, token: str) -> None:
+        await self.request(
+            self.provider, "revoke", "DELETE", f"{HUBSPOT_API}/oauth/v1/refresh_tokens/{token}"
+        )
+
+
+class HubSpotApi(_Http):
+    provider = config.HUBSPOT
+
+    @staticmethod
+    def _auth(token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    async def account(self, token: str) -> dict[str, Any]:
+        """Proves the token: the portal's account details."""
+        body: dict[str, Any] = await self.json(
+            self.provider,
+            "account",
+            "GET",
+            f"{HUBSPOT_API}/account-info/v3/details",
+            headers=self._auth(token),
+        )
+        return body
+
+    async def _search(
+        self, token: str, obj: str, prop: str, values: list[str], props: list[str]
+    ) -> list[dict[str, Any]]:
+        if not values:
+            return []
+        body = await self.json(
+            self.provider,
+            f"search_{obj}",
+            "POST",
+            f"{HUBSPOT_API}/crm/v3/objects/{obj}/search",
+            headers=self._auth(token),
+            json={
+                "filterGroups": [
+                    {"filters": [{"propertyName": prop, "operator": "IN", "values": values}]}
+                ],
+                "properties": props,
+                "limit": 100,
+            },
+        )
+        return [r for r in body.get("results") or [] if isinstance(r, dict) and r.get("id")]
+
+    async def companies_by_domain(self, token: str, domains: list[str]) -> list[dict[str, Any]]:
+        return await self._search(token, "companies", "domain", domains, ["name", "domain"])
+
+    async def contacts_by_email(self, token: str, emails: list[str]) -> list[dict[str, Any]]:
+        return await self._search(
+            token, "contacts", "email", emails, ["email", "firstname", "lastname"]
+        )
+
+    async def create_note(
+        self,
+        token: str,
+        *,
+        body_html: str,
+        timestamp: str,
+        company_ids: list[str],
+        contact_ids: list[str],
+    ) -> str:
+        associations = [
+            {
+                "to": {"id": cid},
+                "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": type_id}],
+            }
+            for ids, type_id in (
+                (company_ids, HUBSPOT_NOTE_TO_COMPANY),
+                (contact_ids, HUBSPOT_NOTE_TO_CONTACT),
+            )
+            for cid in ids
+        ]
+        body = await self.json(
+            self.provider,
+            "create_note",
+            "POST",
+            f"{HUBSPOT_API}/crm/v3/objects/notes",
+            headers=self._auth(token),
+            json={
+                "properties": {"hs_timestamp": timestamp, "hs_note_body": body_html},
+                "associations": associations,
+            },
+        )
+        if not body.get("id"):
+            raise ProviderError(self.provider, "create_note", "no_id")
+        return str(body["id"])
+
+    async def update_note(
+        self, token: str, note_id: str, *, body_html: str, timestamp: str
+    ) -> bool:
+        """PATCH the note's body. False when HubSpot no longer has it (deleted there)."""
+        response = await self.request(
+            self.provider,
+            "update_note",
+            "PATCH",
+            f"{HUBSPOT_API}/crm/v3/objects/notes/{note_id}",
+            headers=self._auth(token),
+            json={"properties": {"hs_timestamp": timestamp, "hs_note_body": body_html}},
+        )
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            raise ProviderError(
+                self.provider, "update_note", f"http_{response.status_code}", response.status_code
+            )
+        return True
+
+    async def associate_note(self, token: str, note_id: str, to_object: str, to_id: str) -> None:
+        """v4 default association (idempotent): note -> company | contact."""
+        await self.json(
+            self.provider,
+            "associate_note",
+            "PUT",
+            f"{HUBSPOT_API}/crm/v4/objects/note/{note_id}/associations/default/{to_object}/{to_id}",
+            headers=self._auth(token),
+        )
+
+
+# --- Notion (Phase 4 decision exports) --------------------------------------------------------
+
+NOTION_AUTHORIZE = "https://api.notion.com/v1/oauth/authorize"
+NOTION_API = "https://api.notion.com/v1"
+NOTION_VERSION = "2022-06-28"
+
+
+def _basic(creds: config.AppCredentials) -> dict[str, str]:
+    raw = f"{creds.client_id}:{creds.client_secret}".encode()
+    return {"Authorization": "Basic " + base64.b64encode(raw).decode("ascii")}
+
+
+class NotionOAuth(_Http):
+    """A public Notion integration. Notion access tokens do not expire; newer integrations
+    also get a refresh token, which `refresh` uses when present."""
+
+    provider = config.NOTION
+    scopes: tuple[str, ...] = ()  # Notion has no OAuth scopes: access is per shared page
+
+    def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
+        query = {
+            "client_id": _creds(self.provider).client_id,
+            "response_type": "code",
+            "owner": "user",
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+        return f"{NOTION_AUTHORIZE}?{urlencode(query)}"
+
+    async def _token(self, operation: str, payload: dict[str, str]) -> dict[str, Any]:
+        body: dict[str, Any] = await self.json(
+            self.provider,
+            operation,
+            "POST",
+            f"{NOTION_API}/oauth/token",
+            headers={**_basic(_creds(self.provider)), "Notion-Version": NOTION_VERSION},
+            json=payload,
+        )
+        if not body.get("access_token"):
+            raise ProviderError(self.provider, operation, "no_access_token")
+        return body
+
+    async def exchange(self, *, code: str, code_verifier: str, redirect_uri: str) -> TokenGrant:
+        body = await self._token(
+            "exchange",
+            {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
+        )
+        workspace = body.get("workspace_id")
+        if not workspace:
+            raise ProviderError(self.provider, "exchange", "no_workspace")
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token"),
+            expires_in=body.get("expires_in"),
+            scopes=[],
+            external_account_id=str(workspace),
+            extra={"workspace_name": body.get("workspace_name"), "bot_id": body.get("bot_id")},
+        )
+
+    async def refresh(self, refresh_token: str) -> TokenGrant:
+        body = await self._token(
+            "refresh", {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token") or refresh_token,
+            expires_in=body.get("expires_in"),
+            scopes=[],
+        )
+
+    async def revoke(self, token: str) -> None:
+        await self.request(
+            self.provider,
+            "revoke",
+            "POST",
+            f"{NOTION_API}/oauth/revoke",
+            headers={**_basic(_creds(self.provider)), "Notion-Version": NOTION_VERSION},
+            json={"token": token},
+        )
+
+
+def notion_title(page: dict[str, Any]) -> str:
+    """A page's plain-text title (the one property of type `title`)."""
+    for prop in (page.get("properties") or {}).values():
+        if isinstance(prop, dict) and prop.get("type") == "title":
+            text = "".join(str(t.get("plain_text", "")) for t in prop.get("title") or [])
+            if text.strip():
+                return text.strip()
+    return "Untitled"
+
+
+class NotionApi(_Http):
+    provider = config.NOTION
+
+    @staticmethod
+    def _auth(token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}", "Notion-Version": NOTION_VERSION}
+
+    async def me(self, token: str) -> dict[str, Any]:
+        body: dict[str, Any] = await self.json(
+            self.provider, "me", "GET", f"{NOTION_API}/users/me", headers=self._auth(token)
+        )
+        return body
+
+    async def search_pages(self, token: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Pages shared with the integration -> [{id, title, url}]."""
+        body = await self.json(
+            self.provider,
+            "search",
+            "POST",
+            f"{NOTION_API}/search",
+            headers=self._auth(token),
+            json={"filter": {"property": "object", "value": "page"}, "page_size": limit},
+        )
+        return [
+            {"id": str(p["id"]), "title": notion_title(p), "url": p.get("url")}
+            for p in body.get("results") or []
+            if isinstance(p, dict) and p.get("id") and not p.get("archived")
+        ]
+
+    async def create_page(
+        self, token: str, *, parent_page_id: str, title: str, blocks: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """-> {id, url}."""
+        body = await self.json(
+            self.provider,
+            "create_page",
+            "POST",
+            f"{NOTION_API}/pages",
+            headers=self._auth(token),
+            json={
+                "parent": {"page_id": parent_page_id},
+                "properties": {"title": {"title": [{"text": {"content": title[:200]}}]}},
+                "children": blocks[:100],
+            },
+        )
+        if not body.get("id"):
+            raise ProviderError(self.provider, "create_page", "no_id")
+        return {"id": str(body["id"]), "url": body.get("url")}
+
+    async def archive_page(self, token: str, page_id: str) -> None:
+        response = await self.request(
+            self.provider,
+            "archive_page",
+            "PATCH",
+            f"{NOTION_API}/pages/{page_id}",
+            headers=self._auth(token),
+            json={"archived": True},
+        )
+        if response.status_code >= 400 and response.status_code != 404:
+            raise ProviderError(
+                self.provider, "archive_page", f"http_{response.status_code}", response.status_code
+            )
+
+
+# --- Confluence (Phase 4 decision exports; Atlassian OAuth 2.0 3LO) ---------------------------
+
+CONFLUENCE_API = "https://api.atlassian.com/ex/confluence"
+
+
+class ConfluenceOAuth(_Http):
+    provider = config.CONFLUENCE
+    scopes = (
+        "read:confluence-space.summary",
+        "read:confluence-content.summary",
+        "write:confluence-content",
+        "offline_access",
+    )
+
+    def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
+        query = {
+            "audience": "api.atlassian.com",
+            "client_id": _creds(self.provider).client_id,
+            "scope": " ".join(self.scopes),
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "response_type": "code",
+            "prompt": "consent",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+        return f"{ATLASSIAN_AUTHORIZE}?{urlencode(query)}"
+
+    async def _token(self, operation: str, payload: dict[str, str]) -> dict[str, Any]:
+        creds = _creds(self.provider)
+        payload = {**payload, "client_id": creds.client_id, "client_secret": creds.client_secret}
+        body: dict[str, Any] = await self.json(
+            self.provider, operation, "POST", ATLASSIAN_TOKEN, json=payload
+        )
+        if not body.get("access_token"):
+            raise ProviderError(self.provider, operation, "no_access_token")
+        return body
+
+    async def exchange(self, *, code: str, code_verifier: str, redirect_uri: str) -> TokenGrant:
+        body = await self._token(
+            "exchange",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
+            },
+        )
+        sites = await self.json(
+            self.provider,
+            "accessible_resources",
+            "GET",
+            ATLASSIAN_RESOURCES,
+            headers={"Authorization": f"Bearer {body['access_token']}"},
+        )
+        site = next(
+            (
+                s
+                for s in sites
+                if isinstance(s, dict)
+                and s.get("id")
+                and any("confluence" in str(sc) for sc in s.get("scopes") or [])
+            ),
+            None,
+        )
+        if site is None:
+            raise ProviderError(self.provider, "exchange", "no_confluence_site")
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token"),
+            expires_in=body.get("expires_in"),
+            scopes=str(body.get("scope", "")).split(),
+            external_account_id=str(site["id"]),
+            extra={"site_url": site.get("url")},
+        )
+
+    async def refresh(self, refresh_token: str) -> TokenGrant:
+        body = await self._token(
+            "refresh", {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token") or refresh_token,
+            expires_in=body.get("expires_in"),
+            scopes=str(body.get("scope", "")).split(),
+        )
+
+    async def revoke(self, token: str) -> None:
+        # Atlassian 3LO has no revocation endpoint (see JiraOAuth.revoke).
+        return None
+
+
+class ConfluenceApi(_Http):
+    provider = config.CONFLUENCE
+
+    @staticmethod
+    def _auth(token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    def _url(self, cloud_id: str, path: str) -> str:
+        return f"{CONFLUENCE_API}/{cloud_id}/wiki/rest/api{path}"
+
+    async def spaces(self, token: str, cloud_id: str) -> list[dict[str, Any]]:
+        """Global spaces the user can see -> [{key, name}]."""
+        body = await self.json(
+            self.provider,
+            "spaces",
+            "GET",
+            self._url(cloud_id, "/space"),
+            headers=self._auth(token),
+            params={"limit": "100", "type": "global"},
+        )
+        return [
+            {"key": str(s["key"]), "name": str(s.get("name") or s["key"])}
+            for s in body.get("results") or []
+            if isinstance(s, dict) and s.get("key")
+        ]
+
+    async def create_page(
+        self, token: str, cloud_id: str, *, space_key: str, title: str, storage: str
+    ) -> dict[str, Any]:
+        """-> {id, webui} (webui is relative to the site's /wiki)."""
+        body = await self.json(
+            self.provider,
+            "create_page",
+            "POST",
+            self._url(cloud_id, "/content"),
+            headers=self._auth(token),
+            json={
+                "type": "page",
+                "title": title[:250],
+                "space": {"key": space_key},
+                "body": {"storage": {"value": storage, "representation": "storage"}},
+            },
+        )
+        if not body.get("id"):
+            raise ProviderError(self.provider, "create_page", "no_id")
+        return {"id": str(body["id"]), "webui": (body.get("_links") or {}).get("webui")}
+
+    async def update_page(
+        self, token: str, cloud_id: str, page_id: str, *, title: str, storage: str
+    ) -> dict[str, Any] | None:
+        """New version of an existing page -> {id, webui}, or None when it is gone."""
+        response = await self.request(
+            self.provider,
+            "read_page",
+            "GET",
+            self._url(cloud_id, f"/content/{page_id}"),
+            headers=self._auth(token),
+            params={"expand": "version"},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ProviderError(
+                self.provider, "read_page", f"http_{response.status_code}", response.status_code
+            )
+        version = int(((response.json().get("version") or {}).get("number")) or 1)
+        body = await self.json(
+            self.provider,
+            "update_page",
+            "PUT",
+            self._url(cloud_id, f"/content/{page_id}"),
+            headers=self._auth(token),
+            json={
+                "type": "page",
+                "title": title[:250],
+                "version": {"number": version + 1},
+                "body": {"storage": {"value": storage, "representation": "storage"}},
+            },
+        )
+        return {
+            "id": str(body.get("id") or page_id),
+            "webui": (body.get("_links") or {}).get("webui"),
+        }
+
+
 # --- the container ---------------------------------------------------------------------------
 
 
@@ -590,6 +1183,10 @@ class Clients:
     calendar: GoogleCalendarApi
     slack: SlackApi
     jira: JiraApi
+    # Phase 4 reach. Defaulted so a container built for the R8 providers alone stays valid.
+    hubspot: HubSpotApi = field(default_factory=HubSpotApi)
+    notion: NotionApi = field(default_factory=NotionApi)
+    confluence: ConfluenceApi = field(default_factory=ConfluenceApi)
 
 
 def default_clients() -> Clients:
@@ -598,6 +1195,9 @@ def default_clients() -> Clients:
             config.GOOGLE_CALENDAR: GoogleOAuth(),
             config.SLACK: SlackOAuth(),
             config.JIRA: JiraOAuth(),
+            config.HUBSPOT: HubSpotOAuth(),
+            config.NOTION: NotionOAuth(),
+            config.CONFLUENCE: ConfluenceOAuth(),
         },
         calendar=GoogleCalendarApi(),
         slack=SlackApi(),

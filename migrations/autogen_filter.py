@@ -42,6 +42,11 @@ UNMODELLED_TABLES = frozenset(
         "topic_owners",
         "org_goals",
         "topic_watches",
+        # Phase 4 reach (a7b8c9d0e1f2): raw-SQL DDL, read and written with `text()`.
+        "api_tokens",
+        "share_links",
+        "meeting_followups",
+        "email_deliveries",
         # NOT this repo's. `mytheus-realtime` owns and migrates `transcript_chunks` in the
         # same physical Postgres (migrations/_grants.py:20-24). Dropping another repo's table
         # from this repo's autogenerate is the worst version of this bug.

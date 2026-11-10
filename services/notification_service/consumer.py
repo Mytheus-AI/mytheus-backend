@@ -593,7 +593,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     )
     email = email_sender_from_env()
     if email is None:
-        logger.info("SMTP_URL/SMTP_FROM unset: email attempts are recorded as skipped")
+        logger.info("no email provider configured: email attempts are recorded as skipped")
     slack = slack_sender_from_env()
     if slack is None:
         logger.info("no integration-service caller secret: Slack attempts are recorded as skipped")
