@@ -147,3 +147,6 @@ ACTION_API_TOKEN_REVOKED = "api_token.revoked"
 ACTION_ACTION_CREATED = "action.created"
 ACTION_SHARE_LINK_CREATED = "share_link.created"
 ACTION_SHARE_LINK_REVOKED = "share_link.revoked"
+# Polish wave 3, Off the record: a meeting paused every agent and the transcript for a stretch.
+ACTION_MEETING_OFF_RECORD_STARTED = "meeting.off_record_started"
+ACTION_MEETING_OFF_RECORD_ENDED = "meeting.off_record_ended"

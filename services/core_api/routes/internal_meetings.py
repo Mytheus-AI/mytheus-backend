@@ -39,6 +39,7 @@ from libs.shared.org_resolver import resolve_org_by_id
 from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 from services.core_api.routes.meetings import expire_status_requests
+from services.core_api.routes.off_record import close_open_segment
 
 ALLOWED_CALLERS = frozenset({"meeting-service"})
 # Every service that may hold a secret in MYTHEUS_CORE_CALLER_TOKENS. Each route still names
@@ -190,6 +191,8 @@ async def report_room_state(
         if target == "ended":
             # ADR-0039 B7: unanswered status requests for a meeting that is over expire.
             await expire_status_requests(session, meeting_id)
+            # Polish wave 3: an off-the-record stretch running when the room closed ends here.
+            await close_open_segment(session, org_id, meeting_id, None)
         await enqueue(
             session,
             EventEnvelope(

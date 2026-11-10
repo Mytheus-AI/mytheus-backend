@@ -28,6 +28,7 @@ from services.core_api.routes import (
     meeting_templates,
     meetings,
     my_tasks,
+    off_record,
     org_hierarchy,
     public_api,
     share_links,
@@ -67,6 +68,7 @@ app.include_router(share_links.router)
 app.include_router(share_links.public_router)
 app.include_router(followups.router)
 app.include_router(internal_reach.router)
+app.include_router(off_record.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
