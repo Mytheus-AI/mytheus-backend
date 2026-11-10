@@ -65,13 +65,37 @@ class AgendaReplace(BaseModel):
     items: Annotated[list[AgendaItemPut], Field(max_length=MAX_AGENDA_ITEMS)]
 
 
+MAX_EXTEND_MINUTES = 60
+MAX_EXTENDED_MINUTES = 240
+
+
 class AgendaItemStatusUpdate(BaseModel):
-    """`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
-    `status_source = 'host'`, after which the MeetingAgent never changes it."""
+    """`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item, extends it, or both.
+    Sets `status_source = 'host'`, after which the MeetingAgent never changes it.
+
+    `extend_minutes` (polish program, "the agenda as the spine") adds minutes to the item's plan
+    in the room; the original `duration_minutes` is kept and the total added is
+    `extended_minutes` on the item (at most 240). At least one of the two fields is required."""
 
     model_config = ConfigDict(extra="forbid")
 
-    status: AgendaStatus
+    status: AgendaStatus | None = None
+    extend_minutes: Annotated[int, Field(ge=1, le=MAX_EXTEND_MINUTES)] | None = None
+
+    @model_validator(mode="after")
+    def _something_to_do(self) -> AgendaItemStatusUpdate:
+        if self.status is None and self.extend_minutes is None:
+            raise ValueError("send a status, extend_minutes, or both")
+        return self
+
+
+class AgendaAdvance(BaseModel):
+    """`POST /meetings/{id}/agenda/advance` ("Start next"): every item now `in_progress` is
+    finished with `outcome`, and the first `pending` item by position starts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["covered", "skipped"] = "covered"
 
 
 class AgendaItem(BaseModel):
@@ -85,6 +109,20 @@ class AgendaItem(BaseModel):
     agent_note: str | None
     updated_at: datetime
     goal_id: uuid.UUID | None = None
+    # Polish program, "the agenda as the spine" (migration d0e1f2a3b4c5): when the item first
+    # went in progress and last finished, and the minutes the host added in the room. Every
+    # client draws "elapsed versus planned" from these, so a reload agrees with live.
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    extended_minutes: int = 0
+
+
+class AgendaAdvanced(BaseModel):
+    """`POST /meetings/{id}/agenda/advance`: the rows that changed (finished, then started), in
+    position order, and the item now in progress (null when the agenda is done)."""
+
+    items: list[AgendaItem]
+    current: AgendaItem | None
 
 
 class MeetingRef(BaseModel):
@@ -284,6 +322,12 @@ class Meeting(BaseModel):
     confidential: bool = False
     template_id: uuid.UUID | None = None
     source: MeetingSource = "mytheus"
+    # Polish program, "Close-out ritual" (migration d0e1f2a3b4c5): the host opened the
+    # 60-second wrap-up (null when not wrapping up), and who closed the meeting through it.
+    wrap_up_started_at: datetime | None = None
+    wrap_up_by: uuid.UUID | None = None
+    closed_at: datetime | None = None
+    closed_by: uuid.UUID | None = None
 
 
 class MeetingDetail(Meeting):

@@ -659,6 +659,12 @@ async def _apply_agenda_updates(
                 text(
                     "UPDATE meeting_agenda_items SET status = CAST(:s AS text), "
                     "status_source = 'agent', agent_note = CAST(:n AS text), "
+                    # The item's clock (migration d0e1f2a3b4c5), the same rule the host's PATCH
+                    # applies: starting stamps `started_at` once, covering stamps `ended_at`.
+                    "started_at = CASE WHEN CAST(:s AS text) = 'in_progress' "
+                    "  THEN COALESCE(started_at, now()) ELSE started_at END, "
+                    "ended_at = CASE WHEN CAST(:s AS text) = 'covered' THEN now() "
+                    "  ELSE NULL END, "
                     "updated_at = now() "
                     "WHERE id = :id AND meeting_id = :m "
                     "AND status_source IS DISTINCT FROM 'host' "

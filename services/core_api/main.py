@@ -30,8 +30,10 @@ from services.core_api.routes import (
     my_tasks,
     org_hierarchy,
     public_api,
+    room_closeout,
     share_links,
     speakers,
+    stand_ins,
     status_requests,
     suggestions,
     transcript,
@@ -67,6 +69,10 @@ app.include_router(share_links.router)
 app.include_router(share_links.public_router)
 app.include_router(followups.router)
 app.include_router(internal_reach.router)
+# Polish program, Phase 1: the room's close-out ritual and late-joiner line (room_closeout),
+# and asking a stand-in agent (stand_ins).
+app.include_router(room_closeout.router)
+app.include_router(stand_ins.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

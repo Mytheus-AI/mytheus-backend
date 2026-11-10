@@ -45,6 +45,9 @@ from libs.shared.outbox import enqueue
 from services.core_api.brain import latest_statuses, may_see_source
 from services.core_api.schemas import (
     MAX_AGENDA_ITEMS,
+    MAX_EXTENDED_MINUTES,
+    AgendaAdvance,
+    AgendaAdvanced,
     AgendaDraft,
     AgendaDraftItem,
     AgendaDraftRequest,
@@ -77,11 +80,12 @@ MAX_LIMIT = 200
 
 _MEETING_COLUMNS = (
     "id, title, status, scheduled_start, scheduled_end, livekit_room, created_by, "
-    "previous_meeting_id, confidential, template_id, source, created_at, updated_at"
+    "previous_meeting_id, confidential, template_id, source, created_at, updated_at, "
+    "wrap_up_started_at, wrap_up_by, closed_at, closed_by"
 )
 _AGENDA_COLUMNS = (
     "id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, "
-    "updated_at, goal_id"
+    "updated_at, goal_id, started_at, ended_at, extended_minutes"
 )
 # ADR-0039 B5: a meeting that is over takes no attendance change.
 _CLOSED = frozenset({"ended", "cancelled"})
@@ -899,6 +903,26 @@ async def replace_agenda(
     return await _load_agenda(session, meeting_id)
 
 
+# How a host status change moves the item's clock (migration d0e1f2a3b4c5): starting stamps
+# `started_at` once; finishing stamps `ended_at`; reopening to `pending` clears both, so a
+# reopened item starts its clock again when it next starts.
+_CLOCK = (
+    "started_at = CASE WHEN CAST(:s AS text) = 'in_progress' THEN COALESCE(started_at, now()) "
+    "WHEN CAST(:s AS text) = 'pending' THEN NULL ELSE started_at END, "
+    "ended_at = CASE WHEN CAST(:s AS text) IN ('covered', 'skipped') THEN now() "
+    "WHEN CAST(:s AS text) IN ('pending', 'in_progress') THEN NULL ELSE ended_at END"
+)
+
+
+def _not_while_ended(row: Any) -> None:
+    if row["status"] in _CLOSED:
+        raise ProblemDetail(
+            status.HTTP_409_CONFLICT,
+            ErrorCode.VERSION_CONFLICT,
+            "The meeting has ended; its agenda can no longer change",
+        )
+
+
 @router.patch("/meetings/{meeting_id}/agenda/{item_id}", response_model=AgendaItem)
 async def set_agenda_item_status(
     meeting_id: uuid.UUID,
@@ -907,26 +931,125 @@ async def set_agenda_item_status(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> AgendaItem:
-    """The host marks an item (host or creator). Sets `status_source = 'host'`: from then on
-    the MeetingAgent's updates to this item are ignored (the host wins, ADR-0038 D7)."""
+    """The host marks an item, extends it, or both (host or creator). Sets
+    `status_source = 'host'`: from then on the MeetingAgent's updates to this item are ignored
+    (the host wins, ADR-0038 D7).
+
+    Polish program, "the agenda as the spine": `in_progress` stamps `started_at` (once),
+    `covered`/`skipped` stamp `ended_at`, `pending` clears both; `extend_minutes` adds to
+    `extended_minutes` (422 past 240 in total). A meeting that is over is 409."""
     row = await _fetch_meeting(session, meeting_id)
     await _require_host_or_creator(session, ctx, row, "the agenda")
+    if body.extend_minutes is not None:
+        _not_while_ended(row)
+    sets = ["status_source = 'host'", "updated_at = now()"]
+    params: dict[str, Any] = {"id": str(item_id), "m": str(meeting_id)}
+    if body.status is not None:
+        sets += ["status = CAST(:s AS text)", _CLOCK]
+        params["s"] = body.status
+    if body.extend_minutes is not None:
+        sets.append("extended_minutes = extended_minutes + :x")
+        params["x"] = body.extend_minutes
+    current = (
+        await session.execute(
+            text(
+                "SELECT extended_minutes FROM meeting_agenda_items "
+                "WHERE id = :id AND meeting_id = :m FOR UPDATE"
+            ),
+            params,
+        )
+    ).first()
+    if current is None:
+        raise not_found()
+    if body.extend_minutes is not None and current[0] + body.extend_minutes > MAX_EXTENDED_MINUTES:
+        raise _field_error(
+            ["extend_minutes"], "An item can be extended by at most 240 minutes in total"
+        )
     item = (
         (
             await session.execute(
                 text(
-                    "UPDATE meeting_agenda_items SET status = :s, status_source = 'host', "
-                    "updated_at = now() WHERE id = :id AND meeting_id = :m "
+                    f"UPDATE meeting_agenda_items SET {', '.join(sets)} "
+                    f"WHERE id = :id AND meeting_id = :m RETURNING {_AGENDA_COLUMNS}"
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .one()
+    )
+    changed: dict[str, Any] = {"changed": ["agenda_item_status"], "item_id": str(item_id)}
+    if body.status is not None:
+        changed["status"] = body.status
+    if body.extend_minutes is not None:
+        changed["extend_minutes"] = body.extend_minutes
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        action=ACTION_MEETING_UPDATED,
+        target_type="meeting",
+        target_id=meeting_id,
+        metadata=changed,
+        ip=ctx.ip,
+    )
+    return AgendaItem(**dict(item))
+
+
+@router.post("/meetings/{meeting_id}/agenda/advance", response_model=AgendaAdvanced)
+async def advance_agenda(
+    meeting_id: uuid.UUID,
+    body: AgendaAdvance,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> AgendaAdvanced:
+    """ "Start next" (host or creator): every item now `in_progress` is finished with `outcome`
+    (`covered` by default, or `skipped`), then the first `pending` item by position starts. One
+    transaction with the meeting row locked, so two clicks apply one after the other and the
+    room never sees two items in progress. Every touched item becomes host-set. 409 once the
+    meeting has ended; an agenda with nothing left to start finishes the current item and
+    returns `current: null`."""
+    row = await _fetch_meeting(session, meeting_id, for_update=True)
+    await _require_host_or_creator(session, ctx, row, "the agenda")
+    _not_while_ended(row)
+    m = str(meeting_id)
+    finished = (
+        (
+            await session.execute(
+                text(
+                    "UPDATE meeting_agenda_items SET status = CAST(:s AS text), "
+                    "status_source = 'host', ended_at = now(), updated_at = now() "
+                    "WHERE meeting_id = :m AND status = 'in_progress' "
                     f"RETURNING {_AGENDA_COLUMNS}"
                 ),
-                {"s": body.status, "id": str(item_id), "m": str(meeting_id)},
+                {"m": m, "s": body.outcome},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    started = (
+        (
+            await session.execute(
+                text(
+                    "UPDATE meeting_agenda_items SET status = 'in_progress', "
+                    "status_source = 'host', started_at = COALESCE(started_at, now()), "
+                    "ended_at = NULL, updated_at = now() WHERE id = ("
+                    "  SELECT id FROM meeting_agenda_items WHERE meeting_id = :m "
+                    "  AND status = 'pending' ORDER BY position, id LIMIT 1"
+                    f") RETURNING {_AGENDA_COLUMNS}"
+                ),
+                {"m": m},
             )
         )
         .mappings()
         .first()
     )
-    if item is None:
-        raise not_found()
+    items = [AgendaItem(**dict(r)) for r in finished]
+    current = AgendaItem(**dict(started)) if started is not None else None
+    if current is not None:
+        items.append(current)
+    items.sort(key=lambda it: (it.position, str(it.id)))
     await audit(
         session,
         org_id=ctx.org_id,
@@ -935,13 +1058,14 @@ async def set_agenda_item_status(
         target_type="meeting",
         target_id=meeting_id,
         metadata={
-            "changed": ["agenda_item_status"],
-            "item_id": str(item_id),
-            "status": body.status,
+            "changed": ["agenda_advance"],
+            "outcome": body.outcome,
+            "finished": [str(r["id"]) for r in finished],
+            "started": str(current.id) if current else None,
         },
         ip=ctx.ip,
     )
-    return AgendaItem(**dict(item))
+    return AgendaAdvanced(items=items, current=current)
 
 
 @router.get("/meetings/{meeting_id}/carry-forward", response_model=CarryForward)
