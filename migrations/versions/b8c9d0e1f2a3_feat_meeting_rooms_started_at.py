@@ -23,7 +23,7 @@ room-state reports for it. core-api is the one writer of `meetings`; meeting-ser
 the column (RLS-scoped, like `status`), so the `meeting-events` Avro schema is unchanged.
 
 Revision ID: b8c9d0e1f2a3
-Revises: d2b3c4d5e6f7
+Revises: a7b8c9d0e1f2
 Create Date: 2026-11-11
 """
 
@@ -36,7 +36,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "b8c9d0e1f2a3"
-down_revision: Union[str, None] = "d2b3c4d5e6f7"
+down_revision: Union[str, None] = "a7b8c9d0e1f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
