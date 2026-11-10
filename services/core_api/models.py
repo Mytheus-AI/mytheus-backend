@@ -64,9 +64,14 @@ class Meeting(Base, TenantMixin, TimestampMixin):
         Boolean, nullable=False, server_default=text("false")
     )
     template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Polish program (migration b8c9d0e1f2a3): where the call happens. 'mytheus' is a Mytheus room;
+    # 'meet' / 'teams' / 'zoom' is an external call captured by the browser extension, for which
+    # meeting-service opens no room and mints no token.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'mytheus'"))
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
+        CheckConstraint("source IN ('mytheus', 'meet', 'teams', 'zoom')", name="source"),
         Index(
             "uq_meetings_org_id_calendar_event_id",
             "org_id",
