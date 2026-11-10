@@ -23,7 +23,11 @@ A message that can never apply (no header org, a non-UUID, an unknown event type
 dead-lettered to `meeting-events.dlq` and committed past. Temporal being unreachable is NOT
 poison: the exception propagates, the offset is not committed, and the message is retried.
 
-Run: `python -m services.workflow_service.consumer` (consumer group `workflow-service`).
+P12: the same process and consumer group also consume `actions` and start
+ActionFollowUpWorkflow (`actions_consumer.py`); poison there goes to `actions.dlq`.
+
+Run: `python -m services.workflow_service.consumer` (consumer group `workflow-service`, topics
+`meeting-events` and `actions`).
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from services.workflow_service.actions_consumer import TOPIC as ACTIONS_TOPIC
+from services.workflow_service.actions_consumer import PoisonAction, handle_action_event
 from services.workflow_service.workflows.meeting_lifecycle import (
     ENDED_SIGNAL,
     MeetingLifecycleWorkflow,
@@ -122,7 +128,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, like the o
             "auto.offset.reset": "earliest",
         }
     )
-    consumer.subscribe([TOPIC])
+    consumer.subscribe([TOPIC, ACTIONS_TOPIC])
     dlq = KafkaProducer({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
     deserializer = AvroDeserializer(
         SchemaRegistryClient(
@@ -138,24 +144,28 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, like the o
                 logger.error("workflow-service consumer error: %s", msg.error())
                 continue
             raw = msg.value()
+            topic = msg.topic() or TOPIC
             try:
                 try:
-                    value = deserializer(raw, SerializationContext(TOPIC, MessageField.VALUE))
+                    value = deserializer(raw, SerializationContext(topic, MessageField.VALUE))
                 except (ValueError, TypeError, EOFError, IndexError) as exc:
                     raise PoisonMessage(f"undecodable record: {exc}") from exc
-                outcome = await handle_meeting_event(client, value, task_queue=task_queue)
-                record_processed(CONSUMER_GROUP, TOPIC, outcome)
-            except PoisonMessage as exc:
-                logger.error("meeting-events: poison message routed to DLQ: %s", exc)
+                if topic == ACTIONS_TOPIC:
+                    outcome: str = await handle_action_event(client, value, task_queue=task_queue)
+                else:
+                    outcome = await handle_meeting_event(client, value, task_queue=task_queue)
+                record_processed(CONSUMER_GROUP, topic, outcome)
+            except (PoisonMessage, PoisonAction) as exc:
+                logger.error("%s: poison message routed to DLQ: %s", topic, exc)
                 dlq.produce(
-                    topic=f"{TOPIC}.dlq",
+                    topic=f"{topic}.dlq",
                     key=msg.key(),
                     value=json.dumps(
                         {"error": str(exc), "raw": raw.hex() if raw else None}
                     ).encode(),
                 )
                 dlq.flush(10)
-                record_dlq(CONSUMER_GROUP, TOPIC, "POISON")
+                record_dlq(CONSUMER_GROUP, topic, "POISON")
             consumer.commit(message=msg)
     finally:
         consumer.close()
