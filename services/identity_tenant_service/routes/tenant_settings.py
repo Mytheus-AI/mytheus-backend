@@ -32,7 +32,13 @@ therefore silently affect zero rows for every organization provisioned to date. 
 fills the row from the column defaults on first write, so this route works for an org whether
 or not one exists. That provisioning omission is a separate gap and is recorded as one.
 
-Scope: `pii_redaction_enabled` only. `consent_required` is deliberately NOT editable here -
+Scope (P12 widened it for the tenant-admin console, which forwards here rather than writing
+`tenant_settings` itself, so this stays the single writer): `pii_redaction_enabled`, the two
+retention windows, and `agent_confidence_overrides` (shape `{"<Agent>": {"surface": x,
+"silent": y}}`, ADR-0030 D3, both in 0..1 and `silent <= surface`). Every field is optional in
+a PATCH; at least one must be present. The Redis mirror is written only when
+`pii_redaction_enabled` is part of the change. `consent_required` is deliberately NOT editable
+here -
 [ADR-0018](../../../../Mytheus-docs/reprise-docs/adr/0018-consent-entity-behind-flag.md) makes
 flipping it a legal decision with a token-mint `428` consequence, so it wants its own route and
 its own audit action rather than riding along in a general settings PATCH.
@@ -40,11 +46,12 @@ its own audit action rather than riding along in a general settings PATCH.
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,15 +76,65 @@ _PII_KEY_PARTS = ("tenant_settings", "pii_redaction_enabled")
 _ON, _OFF = "1", "0"
 
 
+class ConfidenceThresholds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    surface: float = Field(ge=0, le=1)
+    silent: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _silent_not_above_surface(self) -> ConfidenceThresholds:
+        if self.silent > self.surface:
+            raise ValueError("silent must not exceed surface")
+        return self
+
+
 class TenantSettings(BaseModel):
     pii_redaction_enabled: bool
+    retention_days_transcripts: int = 365
+    retention_days_worklogs: int = 365
+    agent_confidence_overrides: dict[str, ConfidenceThresholds] = Field(default_factory=dict)
 
 
 class TenantSettingsUpdate(BaseModel):
-    pii_redaction_enabled: bool = Field(
+    pii_redaction_enabled: bool | None = Field(
+        default=None,
         description="When true, ingestion redacts detected PII before the chunk reaches "
-        "Postgres, the object store, or the bus."
+        "Postgres, the object store, or the bus.",
     )
+    retention_days_transcripts: int | None = Field(default=None, ge=1, le=3650)
+    retention_days_worklogs: int | None = Field(default=None, ge=1, le=3650)
+    agent_confidence_overrides: dict[str, ConfidenceThresholds] | None = Field(
+        default=None, description="Replaces the whole overrides object."
+    )
+
+
+_SETTINGS_COLUMNS = (
+    "pii_redaction_enabled, retention_days_transcripts, retention_days_worklogs, "
+    "agent_confidence_overrides"
+)
+
+
+def _row_to_settings(row: Any) -> TenantSettings:
+    return TenantSettings(
+        pii_redaction_enabled=row["pii_redaction_enabled"],
+        retention_days_transcripts=row["retention_days_transcripts"],
+        retention_days_worklogs=row["retention_days_worklogs"],
+        agent_confidence_overrides=_valid_overrides(row["agent_confidence_overrides"]),
+    )
+
+
+def _valid_overrides(raw: Any) -> dict[str, ConfidenceThresholds]:
+    """Stored overrides that parse; anything malformed is left out of the read (core-api's
+    `confidence.thresholds` falls back to the defaults for those the same way)."""
+    out: dict[str, ConfidenceThresholds] = {}
+    if isinstance(raw, dict):
+        for agent, entry in raw.items():
+            try:
+                out[str(agent)] = ConfidenceThresholds.model_validate(entry)
+            except ValueError:
+                continue
+    return out
 
 
 async def _publish_pii_mirror(org_id: UUID, enabled: bool) -> None:
@@ -109,7 +166,7 @@ async def read_tenant_settings(
     row = (
         (
             await session.execute(
-                text("SELECT pii_redaction_enabled FROM tenant_settings WHERE org_id = :o"),
+                text(f"SELECT {_SETTINGS_COLUMNS} FROM tenant_settings WHERE org_id = :o"),
                 {"o": str(ctx.org_id)},
             )
         )
@@ -117,10 +174,10 @@ async def read_tenant_settings(
         .first()
     )
     # No row is not an error: it means this org predates any settings write. Report the column
-    # default rather than 404, so a reader sees what the database would apply.
+    # defaults rather than 404, so a reader sees what the database would apply.
     if row is None:
         return TenantSettings(pii_redaction_enabled=True)
-    return TenantSettings(pii_redaction_enabled=row["pii_redaction_enabled"])
+    return _row_to_settings(row)
 
 
 @router.patch("/tenant-settings", response_model=TenantSettings)
@@ -129,22 +186,34 @@ async def update_tenant_settings(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> TenantSettings:
-    enabled = body.pii_redaction_enabled
+    fields = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not fields:
+        raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "No setting to change")
+    params: dict[str, Any] = {"o": str(ctx.org_id)}
+    columns: list[str] = []
+    values: list[str] = []
+    for column, value in fields.items():
+        columns.append(column)
+        if column == "agent_confidence_overrides":
+            values.append(f"CAST(:{column} AS jsonb)")
+            params[column] = json.dumps(value)
+        else:
+            values.append(f":{column}")
+            params[column] = value
 
     # Upsert: see the module docstring on why UPDATE would be a no-op for every org that
     # exists today. Every other column takes its declared default on insert.
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in columns)
     row = (
         (
             await session.execute(
                 text(
-                    "INSERT INTO tenant_settings (org_id, pii_redaction_enabled) "
-                    "VALUES (:o, :v) "
-                    "ON CONFLICT (org_id) DO UPDATE "
-                    "SET pii_redaction_enabled = EXCLUDED.pii_redaction_enabled, "
-                    "    updated_at = now() "
-                    "RETURNING pii_redaction_enabled"
+                    f"INSERT INTO tenant_settings (org_id, {', '.join(columns)}) "
+                    f"VALUES (:o, {', '.join(values)}) "
+                    f"ON CONFLICT (org_id) DO UPDATE SET {updates}, updated_at = now() "
+                    f"RETURNING {_SETTINGS_COLUMNS}"
                 ),
-                {"o": str(ctx.org_id), "v": enabled},
+                params,
             )
         )
         .mappings()
@@ -158,7 +227,7 @@ async def update_tenant_settings(
         action=ACTION_TENANT_SETTINGS_UPDATED,
         target_type="tenant_settings",
         target_id=ctx.org_id,
-        metadata={"pii_redaction_enabled": enabled},
+        metadata=fields,
         ip=ctx.ip,
     )
 
@@ -176,6 +245,7 @@ async def update_tenant_settings(
     # until the next successful write. Closing that last window needs the value to travel as a
     # `tenant-events` message with a consumer in `mytheus-intelligence`, which does not exist
     # yet; when it does, this mirror becomes an optimization rather than the delivery path.
-    await _publish_pii_mirror(ctx.org_id, row["pii_redaction_enabled"])
+    if "pii_redaction_enabled" in fields:
+        await _publish_pii_mirror(ctx.org_id, row["pii_redaction_enabled"])
 
-    return TenantSettings(pii_redaction_enabled=row["pii_redaction_enabled"])
+    return _row_to_settings(row)
