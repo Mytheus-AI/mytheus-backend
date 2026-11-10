@@ -14,6 +14,13 @@ dismisses them:
 - `POST /api/v1/context-fills/{id}/dismiss`: the requester only (404 for anyone else, any
   tenant), idempotent 200, one `context_fill.dismissed` audit row on the first dismiss.
 
+Privacy of the related-meeting hop: a `related_meeting` row's responder is, by construction,
+someone who is NOT in this meeting but met the requester recently, so naming them tells every
+participant who the requester has been meeting with. Only the requester and the tenant's
+admins/owners see that responder's id and label; everyone else gets `responder: "user"` and
+`responder_label: "A colleague"`. A `peer` responder is a participant of this meeting already,
+so it is shown to everyone who can read the log.
+
 Display names: `users` carries no name column, so a person's label is their email, the one
 human-readable identifier this service holds. A `rag` responder is labelled "Knowledge base".
 """
@@ -42,6 +49,7 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_FILLS = 100
 KNOWLEDGE_BASE = "Knowledge base"
+A_COLLEAGUE = "A colleague"
 
 
 class Collaboration(BaseModel):
@@ -185,8 +193,15 @@ async def list_collaborations(
     )
     has_more = len(rows) > limit
     page = list(rows[:limit])
+    is_admin = ctx.satisfies("admin")
+
+    def masked(r: Any) -> bool:
+        return r["hop"] == "related_meeting" and not is_admin and r["requester"] != ctx.user_id
+
     people = {r["requester"] for r in page}
-    people |= {u for r in page if (u := _responder_user(r["responder"])) is not None}
+    people |= {
+        u for r in page if not masked(r) and (u := _responder_user(r["responder"])) is not None
+    }
     names = await _names(session, people)
     return CollaborationPage(
         items=[
@@ -196,8 +211,8 @@ async def list_collaborations(
                 hop=r["hop"],
                 requester_id=r["requester"],
                 requester_name=names.get(r["requester"]),
-                responder=r["responder"],
-                responder_label=_label(r["responder"], names),
+                responder="user" if masked(r) else r["responder"],
+                responder_label=A_COLLEAGUE if masked(r) else _label(r["responder"], names),
                 query_class=r["query_class"],
                 target_scope=r["target_scope"],
                 result=r["result"],

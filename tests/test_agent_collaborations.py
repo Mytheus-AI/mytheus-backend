@@ -476,6 +476,36 @@ async def test_the_log_is_for_participants_and_admins_and_404_for_anyone_else(cl
     assert client.get(f"/api/v1/meetings/{m}/collaborations").status_code == 404
 
 
+async def test_a_related_meeting_responder_is_named_only_to_the_requester_and_admins(client):
+    me = seed_tenant()
+    bob = seed_user(me)  # in this meeting
+    carol = seed_user(me)  # met me recently; NOT in this meeting
+    _sql("UPDATE users SET email = 'carol@example.com' WHERE id = %(u)s", {"u": str(carol.user_id)})
+    m = meeting_with(me, bob)
+    related = entry(me.user_id, hop="related_meeting", responder=f"user:{carol.user_id}")
+    peer = entry(me.user_id, responder=f"user:{bob.user_id}")
+    assert await apply(fill_result(me, m, [related, peer]))
+
+    def seen_by(who: Tenant) -> dict[str, dict[str, Any]]:
+        sign_in(who)
+        resp = client.get(f"/api/v1/meetings/{m}/collaborations")
+        assert resp.status_code == 200, resp.text
+        return {i["id"]: i for i in resp.json()["items"]}
+
+    for who in (me, seed_user(me, "admin"), seed_user(me, "owner")):
+        rows_ = seen_by(who)
+        assert rows_[related["id"]]["responder"] == f"user:{carol.user_id}"
+        assert rows_[related["id"]]["responder_label"] == "carol@example.com"
+
+    as_bob = seen_by(bob)  # another participant
+    assert as_bob[related["id"]]["responder"] == "user"
+    assert as_bob[related["id"]]["responder_label"] == "A colleague"
+    assert str(carol.user_id) not in json.dumps(as_bob)
+    assert "carol@example.com" not in json.dumps(as_bob)
+    # the peer hop names a participant, so it stays visible to every participant
+    assert as_bob[peer["id"]]["responder"] == f"user:{bob.user_id}"
+
+
 async def test_the_log_is_newest_first_and_paginates(client):
     me = seed_tenant()
     m = meeting_with(me)
