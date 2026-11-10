@@ -3,9 +3,12 @@
 Consumes: `agent-results` (Plan 7-9 section 3.3 step 3: `PersonalListenerAgent` notes into
 `worklogs`; section 3.6 step 3: decision/action candidates into `decisions`/`action_items` as
 `proposed`, with no event; see `handle_agent_result`) and presence-events (analytics read
-model only; no domain write - Plan 3-4 section 3.3 step 5). Presence itself stays owned by
-`realtime-gateway`/Redis; this consumer never writes `meeting_participants` or any table
-`core-api` treats as domain source of truth from this path.
+model only; no domain write - Plan 3-4 section 3.3 step 5), and since P12 `integration-events`
+(`calendar_event_upserted` -> `meetings` + `meeting_participants`, see
+`services/core_api/integration_events.py`; every other integration event is a no-op here).
+Presence itself stays owned by `realtime-gateway`/Redis; this consumer never writes
+`meeting_participants` or any table `core-api` treats as domain source of truth from the
+presence path.
 
 Split the same way `libs/shared/relay.py` splits `relay_once` (testable core) from
 `services/relay/main.py`'s `run()` (the confluent-kafka/asyncio harness): `handle_presence_event`
@@ -71,13 +74,19 @@ from libs.shared.tenancy import set_rls
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
+from services.core_api.integration_events import (
+    IntegrationEventPoison,
+    handle_integration_event,
+)
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
 
 TOPIC = "presence-events"
 AGENT_RESULTS = "agent-results"
-TOPICS = [TOPIC, AGENT_RESULTS]
+INTEGRATION_EVENTS = "integration-events"
+# P12: calendar events become meetings (`services/core_api/integration_events.py`).
+TOPICS = [TOPIC, AGENT_RESULTS, INTEGRATION_EVENTS]
 CONSUMER_GROUP = "core-api"
 
 # doc 08 section 6, the uniform confidence policy (see `services/core_api/confidence.py`).
@@ -725,7 +734,10 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
             topic_name = msg.topic() or TOPIC
             _ts_type, _ts = msg.timestamp()
             observe_consumer_lag(CONSUMER_GROUP, topic_name, _ts if _ts_type else None)
-            handler = handle_agent_result if topic_name == AGENT_RESULTS else handle_presence_event
+            handler = {
+                AGENT_RESULTS: handle_agent_result,
+                INTEGRATION_EVENTS: handle_integration_event,
+            }.get(topic_name, handle_presence_event)
             try:
                 value = decode(
                     deserializer, raw_value, SerializationContext(topic_name, MessageField.VALUE)
@@ -733,7 +745,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 async with session_factory() as session, session.begin():
                     applied = await handler(session, redis, value)
                 record_processed(CONSUMER_GROUP, topic_name, "applied" if applied else "duplicate")
-            except PoisonMessage as exc:
+            except (PoisonMessage, IntegrationEventPoison) as exc:
                 logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)
                 dlq_producer.produce(
                     topic=f"{topic_name}.dlq",
