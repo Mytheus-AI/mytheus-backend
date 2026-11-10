@@ -1,16 +1,16 @@
 """notification-service (P11 contract section 3; plan 10-13 section 3.8), against a real Postgres.
 
 Consumer (`handle_message` / `consume_one`): only surfaced `ProactiveAgent` alerts become
-`notification_log` rows; a `notifications` event becomes a row; redelivery and replay are
-no-ops; channel preferences decide the attempts (email skipped without SMTP, sent with a fake
-SMTP adapter, Slack skipped until P12); one `notification-delivery-events` receipt per attempt
-through the outbox, valid against the mytheus-events schema; poison raises and `consume_one`
-routes it to `{topic}.dlq`.
+`notification_log` rows; a `notifications` event becomes a row; redelivery and replay are no-ops;
+channel preferences decide the attempts (email opt-in and off by default, skipped without SMTP,
+sent with a fake SMTP adapter only after the commit, Slack skipped until P12); one
+`notification-delivery-events` receipt per attempt through the outbox, valid against the
+mytheus-events schema; poison raises and `consume_one` routes it to `{topic}.dlq`.
 
 Routes: the caller's own rows only (other users and other tenants never), dismissed hidden by
-default, priority-then-time with `meeting_id`, cursor pagination; PATCH owner-only (404 for
-anyone else), idempotent, one audit row per real change; preferences defaults, upsert, in_app
-forced on. RLS isolation for both tables, failing closed with no `app.current_org`.
+default, priority-then-time with `meeting_id`, cursor pagination; PATCH owner-only (404 for anyone
+else), idempotent, one audit row per real change; preferences defaults, upsert, in_app forced on.
+RLS isolation for both tables, failing closed with no `app.current_org`.
 """
 
 from __future__ import annotations
@@ -33,9 +33,11 @@ from libs.shared.tenancy import set_rls
 from services.notification_service import routes
 from services.notification_service.consumer import (
     NOTIFICATION_NS,
+    PendingEmail,
     PoisonMessage,
     consume_one,
     handle_message,
+    send_pending,
 )
 from tests.conftest import APP_URL
 from tests.test_chat_api import (
@@ -197,16 +199,23 @@ class FakeEmail:
 async def apply(
     topic: str, value: dict[str, Any], redis: Any | None = None, email: Any | None = None
 ) -> bool:
+    """One message the way `consume_one` runs it: the transaction, then emails after commit."""
     engine = create_async_engine(APP_URL)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    pending: list[PendingEmail] = []
     try:
-        async with engine.connect() as conn, conn.begin():
-            return await handle_message(
-                conn,  # type: ignore[arg-type]
+        async with factory() as session, session.begin():
+            applied = await handle_message(
+                session,
                 redis or fakeredis.aioredis.FakeRedis(),
                 topic,
                 value,
                 email=email,
+                pending=pending,
             )
+        if email is not None and pending:
+            await send_pending(factory, pending, email)
+        return applied
     finally:
         await engine.dispose()
 
@@ -293,7 +302,7 @@ async def test_a_notifications_event_becomes_a_row_with_an_in_app_receipt():
     assert (row["source"], row["alert_type"], row["meeting_id"]) == ("notification", None, None)
     assert row["priority"] == 2 and row["link"] == "/settings/usage"
     assert row["payload"]["source_event_id"] == value["source_event_id"]
-    # priority 2 is above email's default ceiling of 1, so only in_app is attempted
+    # email is opt-in and this user never opted in, so only in_app is attempted
     assert by_channel(t.org_id) == {"in_app": ("sent", None)}
 
 
@@ -303,6 +312,7 @@ async def test_a_notifications_event_becomes_a_row_with_an_in_app_receipt():
 async def test_redelivery_and_replay_are_no_ops():
     t = seed_tenant()
     m = seed_meeting(t.org_id)
+    set_pref(t, "email", True, 1)
     redis = fakeredis.aioredis.FakeRedis()
     email = FakeEmail()
     value = alert_result(t, m, alert_obj(priority=1))
@@ -319,6 +329,7 @@ async def test_redelivery_and_replay_are_no_ops():
 
 async def test_a_second_intent_for_the_same_source_attempts_no_channel_twice():
     t = seed_tenant()
+    set_pref(t, "email", True, 1)
     first = notification_value(t, channel="in_app", priority=1)
     again = notification_value(t, channel="email", priority=1)  # same source, other channel
     email = FakeEmail()
@@ -333,8 +344,46 @@ async def test_a_second_intent_for_the_same_source_attempts_no_channel_twice():
 # --- consumer: channel preferences -----------------------------------------------------------
 
 
+async def test_email_is_off_by_default_even_for_priority_1():
+    t = seed_tenant()
+    email = FakeEmail()
+    assert await apply(
+        "agent-results", alert_result(t, seed_meeting(t.org_id), alert_obj()), email=email
+    )
+    assert by_channel(t.org_id) == {"in_app": ("sent", None)} and email.sent == []
+
+
+async def test_email_is_sent_only_after_the_commit():
+    t = seed_tenant()
+    set_pref(t, "email", True, 1)
+    email = FakeEmail()
+    engine = create_async_engine(APP_URL)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    pending: list[PendingEmail] = []
+    value = alert_result(t, seed_meeting(t.org_id), alert_obj(priority=1))
+    try:
+        with pytest.raises(RuntimeError):
+            async with factory() as session, session.begin():
+                await handle_message(
+                    session,
+                    fakeredis.aioredis.FakeRedis(),
+                    "agent-results",
+                    value,
+                    email=email,
+                    pending=pending,
+                )
+                assert len(pending) == 1 and email.sent == []  # queued, not sent
+                raise RuntimeError("the commit never happens")
+    finally:
+        await engine.dispose()
+    assert email.sent == [] and log_rows(t.user_id) == []  # rolled back: nothing went out
+    assert await apply("agent-results", value, email=email) is True  # redelivery applies
+    assert len(email.sent) == 1 and by_channel(t.org_id)["email"] == ("sent", None)
+
+
 async def test_email_is_skipped_without_smtp_and_sent_with_an_adapter():
     t = seed_tenant()
+    set_pref(t, "email", True, 1)
     m = seed_meeting(t.org_id)
     assert await apply("agent-results", alert_result(t, m, alert_obj(priority=1)), email=None)
     assert by_channel(t.org_id) == {
@@ -343,6 +392,7 @@ async def test_email_is_skipped_without_smtp_and_sent_with_an_adapter():
     }
 
     u = seed_tenant()
+    set_pref(u, "email", True, 1)
     _sql("UPDATE users SET email = 'priya@example.com' WHERE id = %(u)s", {"u": str(u.user_id)})
     m2 = seed_meeting(u.org_id)
     email = FakeEmail()
@@ -382,6 +432,7 @@ async def test_preferences_decide_which_channels_are_attempted():
 
 async def test_a_mail_server_failure_is_a_failed_receipt_not_a_crash():
     t = seed_tenant()
+    set_pref(t, "email", True, 1)
     assert await apply("notifications", notification_value(t, priority=1), email=FakeEmail(True))
     assert by_channel(t.org_id)["email"] == ("failed", "smtp_error:ConnectionRefusedError")
 
@@ -389,6 +440,7 @@ async def test_a_mail_server_failure_is_a_failed_receipt_not_a_crash():
 async def test_one_receipt_per_attempt_matching_the_delivery_event_schema():
     t = seed_tenant()
     set_pref(t, "slack", True, 3)
+    set_pref(t, "email", True, 1)
     m = seed_meeting(t.org_id)
     value = alert_result(t, m, alert_obj(priority=1))
     assert await apply("agent-results", value, email=FakeEmail())
@@ -680,7 +732,7 @@ def test_preferences_default_upsert_and_in_app_forced(client):
     assert resp.json() == {
         "items": [
             {"channel": "in_app", "enabled": True, "max_priority": 3},
-            {"channel": "email", "enabled": True, "max_priority": 1},
+            {"channel": "email", "enabled": False, "max_priority": 1},
             {"channel": "slack", "enabled": False, "max_priority": 1},
         ]
     }

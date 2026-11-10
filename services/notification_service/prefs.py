@@ -1,10 +1,10 @@
 """Per-user channel preferences: the defaults and the one read both the consumer and the routes use.
 
 A channel delivers when `enabled` and `priority <= max_priority` (priority 1 is the most
-urgent). A user with no row for a channel gets the default below, so a brand-new user is
-reachable in-app for everything and by email for urgent items only, and Slack stays off until
-they turn it on (P12 builds the Slack send; until then an enabled Slack channel records a
-`skipped` receipt).
+urgent). A user with no row for a channel gets the default below: in-app for everything, and
+email and Slack OFF until the user opts in. Email is opt-in on purpose: nobody is mailed by
+the product until they asked to be. (P12 builds the Slack send; until then an enabled Slack
+channel records a `skipped` receipt.)
 
 `in_app` is always on: the `notification_log` row IS the in-app delivery and the recipient's
 inbox, so it is written for every notification regardless. `PUT /notifications/preferences`
@@ -37,7 +37,7 @@ class ChannelPref:
 
 DEFAULTS: dict[Channel, ChannelPref] = {
     "in_app": ChannelPref("in_app", True, 3),
-    "email": ChannelPref("email", True, 1),
+    "email": ChannelPref("email", False, 1),  # opt-in: no email until the user turns it on
     "slack": ChannelPref("slack", False, 1),
 }
 IN_APP_FORCED = DEFAULTS["in_app"]

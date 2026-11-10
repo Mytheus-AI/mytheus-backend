@@ -26,20 +26,25 @@ Per message, in one transaction:
    with that key as its idempotency key. A claim already held means that channel was attempted
    before (a second `notifications` event for the same source and user, say) and is skipped.
    - in_app: the row is the delivery (realtime-gateway delivers live alerts itself); `sent`.
-   - email: the SMTP adapter (`email.py`). Unconfigured -> skipped (`smtp_not_configured`).
+   - email: the SMTP adapter (`email.py`), opt-in per user (off by default). Unconfigured ->
+     skipped (`smtp_not_configured`) in the same transaction. Configured -> queued as a
+     `PendingEmail` and sent only AFTER the transaction commits (see below).
    - slack: integration-service's Slack send arrives in P12 -> skipped (`slack_not_connected`).
 
 Receipt status. `NotificationDeliveryStatus` in mytheus-events is `sent | failed | bounced`
 and P11 may not change a schema, so a skipped attempt is recorded as `status: failed` with
 `detail: "skipped:<reason>"`. Consumers tell "skipped" from a real failure by that prefix.
 
-Side effects and at-least-once. The SMTP send happens inside the transaction, before commit.
-If the commit then fails the message is redelivered and the email can go out twice; the
-alternative (send after commit) can lose it. Duplicate over lost, as everywhere else on this
-bus.
+Email is sent after commit. The transaction claims the email channel's key and commits; only
+then does `send_pending` send the mail and write its receipt in a second small transaction. A
+redelivery finds the claim and never sends again. The trade: a crash between the commit and
+the send loses that one email (and its receipt) instead of duplicating it, and a database
+failure after a successful send loses the receipt. An urgent alert is still in the recipient's
+in-app inbox either way.
 
-Split like `services/core_api/consumer.py`: `handle_message` is the tested core (real Postgres,
-fakeredis, a fake email sender), `run_consumer()` the thin confluent-kafka harness with the DLQ.
+Split like `services/core_api/consumer.py`: `handle_message` and `send_pending` are the tested
+core (real Postgres, fakeredis, a fake email sender), `run_consumer()` the thin confluent-kafka
+harness with the DLQ.
 """
 
 from __future__ import annotations
@@ -109,6 +114,20 @@ class _Notification:
     body: str
     link: str | None
     payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PendingEmail:
+    """An email whose channel claim is in the transaction; sent by `send_pending` after commit."""
+
+    org_id: uuid.UUID
+    notification_id: uuid.UUID
+    key: str
+    to: str
+    subject: str
+    body: str
+    correlation_id: str | None
+    causation_id: str | None
 
 
 def _uuid(raw: Any, what: str) -> uuid.UUID:
@@ -208,8 +227,15 @@ async def handle_message(
     value: dict[str, Any],
     *,
     email: EmailSender | None = None,
+    pending: list[PendingEmail] | None = None,
 ) -> bool:
-    """Apply one decoded message. True if a `notification_log` row was newly written."""
+    """Apply one decoded message. True if a `notification_log` row was newly written.
+
+    With an `email` sender, an allowed email channel is appended to `pending` (required then)
+    instead of being sent; the caller passes `pending` to `send_pending` after the commit.
+    """
+    if email is not None and pending is None:
+        raise ValueError("an email sender needs a pending list: emails are sent after commit")
     if topic == AGENT_RESULTS:
         note = parse_alert(value)
         if note is None:
@@ -229,7 +255,14 @@ async def handle_message(
     claimed_keys: list[str] = [f"nexus:{org_id}:dedupe:{topic}:{idempotency_key}"]
     try:
         return await _apply(
-            session, redis, org_id, str(idempotency_key), header, note, email, claimed_keys
+            session,
+            redis,
+            org_id,
+            str(idempotency_key),
+            header,
+            note,
+            pending if email is not None else None,
+            claimed_keys,
         )
     except BaseException:
         # The transaction rolls back: release every dedupe key so the redelivery applies.
@@ -262,7 +295,7 @@ async def _apply(
     idempotency_key: str,
     header: dict[str, Any],
     note: _Notification,
-    email: EmailSender | None,
+    pending: list[PendingEmail] | None,
     claimed_keys: list[str],
 ) -> bool:
     await set_rls(session, org_id)
@@ -320,43 +353,101 @@ async def _apply(
         claimed_keys.append(f"nexus:{org_id}:dedupe:{DELIVERY_TOPIC}:{key}")
         if not await _claim_inbox(session, org_id, f"{DELIVERY_TOPIC}:{key}"):
             continue
-        status, detail = await _deliver(channel, note, user_email, email)
-        await enqueue(
+        if channel == "email" and pending is not None:
+            pending.append(
+                PendingEmail(
+                    org_id=org_id,
+                    notification_id=note.id,
+                    key=key,
+                    to=user_email,
+                    subject=note.title,
+                    body=render_body(note.body, note.link),
+                    correlation_id=header.get("correlation_id"),
+                    causation_id=header.get("event_id"),
+                )
+            )
+            continue
+        status, detail = _immediate(channel)
+        await _receipt(
             session,
-            EventEnvelope(
-                topic=DELIVERY_TOPIC,
-                org_id=str(org_id),
-                producer=PRODUCER,
-                idempotency_key=key,
-                correlation_id=header.get("correlation_id"),
-                causation_id=header.get("event_id"),
-                payload={
-                    "notification_id": str(note.id),
-                    "channel": channel,
-                    "status": status,
-                    "detail": detail,
-                },
-            ),
+            org_id,
+            note.id,
+            key,
+            channel,
+            status,
+            detail,
+            header.get("correlation_id"),
+            header.get("event_id"),
         )
     return inserted
 
 
-async def _deliver(
-    channel: Channel, note: _Notification, to: str, email: EmailSender | None
-) -> tuple[str, str | None]:
-    """One channel attempt -> (NotificationDeliveryStatus symbol, detail)."""
+def _immediate(channel: Channel) -> tuple[str, str | None]:
+    """Channels settled inside the transaction -> (NotificationDeliveryStatus symbol, detail)."""
     if channel == "in_app":
         return "sent", None
     if channel == "slack":
         return "failed", SKIPPED_SLACK
-    if email is None:
-        return "failed", SKIPPED_SMTP
-    try:
-        await email.send(to=to, subject=note.title, body=render_body(note.body, note.link))
-    except Exception as exc:  # a mail server problem is a failed receipt, never a crash
-        logger.warning("email delivery failed for notification %s: %s", note.id, exc)
-        return "failed", f"smtp_error:{type(exc).__name__}"
-    return "sent", None
+    return "failed", SKIPPED_SMTP  # email with no SMTP configured
+
+
+async def _receipt(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    notification_id: uuid.UUID,
+    key: str,
+    channel: str,
+    status: str,
+    detail: str | None,
+    correlation_id: str | None,
+    causation_id: str | None,
+) -> None:
+    await enqueue(
+        session,
+        EventEnvelope(
+            topic=DELIVERY_TOPIC,
+            org_id=str(org_id),
+            producer=PRODUCER,
+            idempotency_key=key,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={
+                "notification_id": str(notification_id),
+                "channel": channel,
+                "status": status,
+                "detail": detail,
+            },
+        ),
+    )
+
+
+async def send_pending(
+    session_factory: Callable[[], Any], pending: list[PendingEmail], email: EmailSender
+) -> None:
+    """Send emails whose claims have committed, then record each receipt in its own short
+    transaction. A mail server problem is a `failed` receipt, never an exception."""
+    for item in pending:
+        try:
+            await email.send(to=item.to, subject=item.subject, body=item.body)
+            status, detail = "sent", None
+        except Exception as exc:
+            logger.warning(
+                "email delivery failed for notification %s: %s", item.notification_id, exc
+            )
+            status, detail = "failed", f"smtp_error:{type(exc).__name__}"
+        async with session_factory() as session, session.begin():
+            await set_rls(session, item.org_id)
+            await _receipt(
+                session,
+                item.org_id,
+                item.notification_id,
+                item.key,
+                "email",
+                status,
+                detail,
+                item.correlation_id,
+                item.causation_id,
+            )
 
 
 def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:
@@ -384,10 +475,13 @@ async def consume_one(
     """
     raw_value = msg.value()
     topic_name = msg.topic() or NOTIFICATIONS
+    pending: list[PendingEmail] = []
     try:
         value = decode_value(raw_value, topic_name)
         async with session_factory() as session, session.begin():
-            applied = await handle_message(session, redis, topic_name, value, email=email)
+            applied = await handle_message(
+                session, redis, topic_name, value, email=email, pending=pending
+            )
     except PoisonMessage as exc:
         logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)
         dlq_producer.produce(
@@ -401,6 +495,8 @@ async def consume_one(
         record_dlq(CONSUMER_GROUP, topic_name, "POISON")
         record_processed(CONSUMER_GROUP, topic_name, "dlq")
         return "dlq"
+    if email is not None and pending:
+        await send_pending(session_factory, pending, email)  # only after the commit above
     outcome = "applied" if applied else "duplicate"
     record_processed(CONSUMER_GROUP, topic_name, outcome)
     return outcome

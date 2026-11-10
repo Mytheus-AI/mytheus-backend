@@ -12,7 +12,7 @@ Plan 10-13 section 3.8; P11 contract section 3. Both tables are owned and writte
 - `notification_preferences`: the recipient's per-channel switch and priority ceiling. A
   channel delivers when `enabled` and `priority <= max_priority` (1 is the most urgent).
   Missing rows fall back to the defaults in `services/notification_service/prefs.py`
-  (in_app on, 3; email on, 1; slack off, 1).
+  (in_app on, 3; email off, 1; slack off, 1). Email is opt-in.
 
 `meeting_id` has no foreign key: `meetings` belongs to core-api, and the consumer checks the
 meeting against the tenant under RLS before writing (gap 31). `user_id` references `users`
@@ -96,7 +96,7 @@ def upgrade() -> None:
           org_id        uuid        NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
           user_id       uuid        NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
           channel       text        NOT NULL,
-          enabled       boolean     NOT NULL DEFAULT true,
+          enabled       boolean     NOT NULL DEFAULT false,
           max_priority  integer     NOT NULL DEFAULT 1,
           updated_at    timestamptz NOT NULL DEFAULT now(),
           CONSTRAINT pk_notification_preferences PRIMARY KEY (org_id, user_id, channel),
