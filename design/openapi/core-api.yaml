@@ -376,6 +376,76 @@ components:
           title: Supersedes
       title: DecisionConfirm
       type: object
+    DecisionLog:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DecisionLogEntry'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DecisionLog
+      type: object
+    DecisionLogEntry:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_started_at:
+          format: date-time
+          title: Meeting Started At
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          enum:
+          - confirmed
+          - superseded
+          title: Status
+          type: string
+        superseded_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Superseded By
+        supersedes:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Supersedes
+      required:
+      - id
+      - meeting_id
+      - meeting_title
+      - meeting_started_at
+      - content
+      - status
+      - created_at
+      title: DecisionLogEntry
+      type: object
     DecisionUpdate:
       additionalProperties: false
       description: 'PATCH body: edit a proposed decision before confirming it. At least one field.'
@@ -1863,6 +1933,29 @@ paths:
       summary: Dismiss Context Fill
       tags:
       - collaborations
+  /api/v1/decisions:
+    get:
+      operationId: list_decisions
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionLog'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Decisions
+      tags:
+      - decisions
   /api/v1/decisions/{decision_id}:
     patch:
       operationId: update_decision
