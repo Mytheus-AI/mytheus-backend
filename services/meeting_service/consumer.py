@@ -84,6 +84,7 @@ from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_ended,
+    meeting_is_external,
     meeting_is_visible,
     sync_livekit_metadata,
 )
@@ -200,9 +201,18 @@ async def handle_meeting_event(
             raise PoisonMessage(
                 f"meeting-events created: meeting {meeting_id} is not visible to org {org_id}"
             )
-        result = await ensure_meeting_room(session, org_id, meeting_id)
-        if result.needs_livekit_sync:
-            pending_room_sync = (org_id, result.room)
+        if await meeting_is_external(session, meeting_id):
+            # Captured from Meet/Teams/Zoom: no Mytheus room. Opening one would leave an empty
+            # LiveKit room whose five-minute timeout ends the meeting mid-call.
+            logger.info(
+                "meeting-events: created for an external meeting, no room opened org=%s meeting=%s",
+                org_id,
+                meeting_id,
+            )
+        else:
+            result = await ensure_meeting_room(session, org_id, meeting_id)
+            if result.needs_livekit_sync:
+                pending_room_sync = (org_id, result.room)
     elif event_type == "ended":
         await mark_room_ended(session, org_id, meeting_id)
     else:  # "updated"

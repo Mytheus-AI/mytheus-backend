@@ -87,6 +87,20 @@ async def meeting_has_ended(session: AsyncSession, meeting_id: UUID) -> bool:
     return row is not None and row[0] in ("ended", "cancelled")
 
 
+async def meeting_is_external(session: AsyncSession, meeting_id: UUID) -> bool:
+    """True when the (visible) meeting was captured from Meet, Teams or Zoom
+    (`meetings.source <> 'mytheus'`): it has no Mytheus room, so none is opened and no join token
+    is minted for it. A read of core-api's column through the same RLS-scoped session as
+    `meeting_has_ended`; core-api stays the only writer."""
+    row = (
+        await session.execute(
+            text("SELECT source FROM meetings WHERE id = :id AND deleted_at IS NULL"),
+            {"id": str(meeting_id)},
+        )
+    ).first()
+    return row is not None and row[0] != "mytheus"
+
+
 @dataclass(frozen=True)
 class RoomUpsertResult:
     room: str

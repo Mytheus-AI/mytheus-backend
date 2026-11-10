@@ -82,6 +82,7 @@ from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_started,
     meeting_has_ended,
+    meeting_is_external,
     meeting_is_visible,
     sync_livekit_metadata,
 )
@@ -260,6 +261,14 @@ async def mint_token(
         if await meeting_has_ended(session, meeting_id):
             raise ProblemDetail(
                 status.HTTP_409_CONFLICT, ErrorCode.VERSION_CONFLICT, "This meeting has ended"
+            )
+
+        # A call captured from Meet/Teams/Zoom has no Mytheus room to join.
+        if await meeting_is_external(session, meeting_id):
+            raise ProblemDetail(
+                status.HTTP_409_CONFLICT,
+                ErrorCode.EXTERNAL_MEETING,
+                "This meeting is captured from an external call and has no Mytheus room",
             )
 
         if ctx.user_id is None:

@@ -77,7 +77,7 @@ MAX_LIMIT = 200
 
 _MEETING_COLUMNS = (
     "id, title, status, scheduled_start, scheduled_end, livekit_room, created_by, "
-    "previous_meeting_id, confidential, template_id, created_at, updated_at"
+    "previous_meeting_id, confidential, template_id, source, created_at, updated_at"
 )
 _AGENDA_COLUMNS = (
     "id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, "
@@ -396,8 +396,8 @@ async def create_meeting(
             await session.execute(
                 text(
                     "INSERT INTO meetings (org_id, title, scheduled_start, scheduled_end, "
-                    "created_by, previous_meeting_id, confidential, template_id) "
-                    "VALUES (:org, :title, :start, :end, :by, :prev, :conf, :tpl) "
+                    "created_by, previous_meeting_id, confidential, template_id, source) "
+                    "VALUES (:org, :title, :start, :end, :by, :prev, :conf, :tpl, :src) "
                     f"RETURNING {_MEETING_COLUMNS}"
                 ),
                 {
@@ -409,6 +409,7 @@ async def create_meeting(
                     "prev": str(body.previous_meeting_id) if body.previous_meeting_id else None,
                     "conf": confidential,
                     "tpl": str(body.template_id) if body.template_id else None,
+                    "src": body.source or "mytheus",
                 },
             )
         )

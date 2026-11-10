@@ -18,6 +18,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
+# Where the call happens: a Mytheus room, or an external call captured by the browser extension
+# (no Mytheus room is opened for those; `meetings.source`, migration b8c9d0e1f2a3).
+MeetingSource = Literal["mytheus", "meet", "teams", "zoom"]
 
 # --- ADR-0038 D5/D6: the agenda ------------------------------------------------------------
 
@@ -145,6 +148,8 @@ class MeetingCreate(BaseModel):
     # template); `template_id` must name a meeting type of this tenant (422 otherwise).
     confidential: bool | None = None
     template_id: uuid.UUID | None = None
+    # Omitted means a Mytheus room. "meet" / "teams" / "zoom": a call captured elsewhere.
+    source: MeetingSource | None = None
 
     @model_validator(mode="after")
     def _end_after_start(self) -> MeetingCreate:
@@ -278,6 +283,7 @@ class Meeting(BaseModel):
     # ADR-0039 B2.
     confidential: bool = False
     template_id: uuid.UUID | None = None
+    source: MeetingSource = "mytheus"
 
 
 class MeetingDetail(Meeting):

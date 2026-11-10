@@ -1257,6 +1257,7 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - EXTERNAL_MEETING
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
@@ -1520,6 +1521,15 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          default: mytheus
+          enum:
+          - mytheus
+          - meet
+          - teams
+          - zoom
+          title: Source
+          type: string
         status:
           enum:
           - scheduled
@@ -1599,6 +1609,16 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          anyOf:
+          - enum:
+            - mytheus
+            - meet
+            - teams
+            - zoom
+            type: string
+          - type: 'null'
+          title: Source
         template_id:
           anyOf:
           - format: uuid
@@ -1681,6 +1701,15 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          default: mytheus
+          enum:
+          - mytheus
+          - meet
+          - teams
+          - zoom
+          title: Source
+          type: string
         status:
           enum:
           - scheduled

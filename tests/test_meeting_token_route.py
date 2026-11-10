@@ -526,3 +526,18 @@ def test_session_is_403_for_a_non_participant_and_404_cross_tenant(client, tenan
     theirs = seed_meeting(tenant_b.org_id)
     add_participant(theirs, tenant_b.org_id, tenant_b.user_id)
     assert client.get(f"/api/meetings/{theirs}/session").status_code == 404
+
+
+def test_a_captured_external_meeting_mints_no_token_409_external_meeting(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+    _sql("UPDATE meetings SET source = 'zoom' WHERE id = %(m)s", {"m": str(meeting_id)})
+
+    resp = client.post(f"/api/meetings/{meeting_id}/token")
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EXTERNAL_MEETING"
+    assert FAKE.calls == []
+    assert (
+        _sql("SELECT 1 FROM meeting_rooms WHERE meeting_id = %(m)s", {"m": str(meeting_id)}) == []
+    )

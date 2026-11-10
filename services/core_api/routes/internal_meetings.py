@@ -159,13 +159,15 @@ async def report_room_state(
         await set_rls(session, org_id)
         current = (
             await session.execute(
-                text("SELECT status FROM meetings WHERE id = :id AND deleted_at IS NULL"),
+                text("SELECT status, source FROM meetings WHERE id = :id AND deleted_at IS NULL"),
                 {"id": str(meeting_id)},
             )
         ).first()
         if current is None:
             raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
-        if current[0] not in allowed_from:
+        # A call captured from Meet/Teams/Zoom is not ruled by a Mytheus room: an empty-room
+        # timeout (or any room report) must never end it while the external call runs on.
+        if current[1] != "mytheus" or current[0] not in allowed_from:
             return RoomStateResult(meeting_id=meeting_id, status=str(current[0]), changed=False)
 
         row = (

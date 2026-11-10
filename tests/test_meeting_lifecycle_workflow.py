@@ -435,3 +435,19 @@ async def test_a_message_that_can_never_apply_is_poison():
     ):
         with pytest.raises(PoisonMessage):
             await handle_meeting_event(None, bad, task_queue=QUEUE)  # type: ignore[arg-type]
+
+
+def test_open_room_never_opens_a_room_for_a_captured_external_call(app):
+    t = seed_tenant()
+    m = seed_meeting(t.org_id)
+    _sql("UPDATE meetings SET source = 'meet' WHERE id = %(m)s", {"m": str(m)})
+    good = {
+        "X-Mytheus-Service": "workflow-service",
+        "X-Mytheus-Service-Token": SECRET,
+        "X-Mytheus-Org": str(t.org_id),
+    }
+    with TestClient(app) as c:
+        r = c.post(f"/internal/meetings/{m}/room/open", headers=good)
+    assert r.status_code == 200, r.text
+    assert r.json()["opened"] is False
+    assert room(m) is None
