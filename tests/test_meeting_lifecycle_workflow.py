@@ -300,6 +300,17 @@ def test_wait_bound_is_measured_from_the_later_of_now_and_the_scheduled_start():
     assert wait_bound(now, "2026-11-11T12:00:00") == MAX_OPEN + timedelta(days=1)  # naive: UTC
 
 
+async def wait_for_no_pending_activity(handle, timeout: float = 10.0) -> None:
+    """Poll until the workflow has no activity in flight (its last completion is in history)."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        desc = await handle.describe()
+        if not desc.raw_description.pending_activities:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("activity still pending")
+
+
 async def test_the_run_survives_a_worker_restart(app):
     t = seed_tenant()
     m = seed_meeting(t.org_id)
@@ -310,6 +321,9 @@ async def test_the_run_survives_a_worker_restart(app):
         async with worker(env.client, activities(app), max_cached_workflows=0):
             await handle_meeting_event(env.client, event(t.org_id, m, "created"), task_queue=QUEUE)
             await wait_for_room(m)  # the first worker opened it and is parked on the signal
+            # The room row is committed before the activity's completion reaches Temporal; stop the
+            # worker only once history has it, or the next worker re-runs open (opened: false).
+            await wait_for_no_pending_activity(handle)
         # first worker is gone; the meeting ends while no worker runs
         end_meeting(m)
         await handle_meeting_event(env.client, event(t.org_id, m, "ended"), task_queue=QUEUE)
