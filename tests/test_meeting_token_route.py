@@ -411,3 +411,118 @@ def test_an_ended_meeting_cannot_be_joined_again(client, tenant_a, status):
     assert _sql(
         "SELECT count(*) AS n FROM meeting_rooms WHERE meeting_id = %(m)s", {"m": str(meeting_id)}
     ) == [{"n": 0}], "no room is opened for an ended meeting"
+
+
+# --- consent that is real, and the meeting clock (polish program, Phase 0) ----------------------
+
+
+def _participant_consent(meeting_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, Any]:
+    return _sql(
+        "SELECT consented_at, consent_version FROM meeting_participants "
+        "WHERE meeting_id = %(m)s AND user_id = %(u)s",
+        {"m": str(meeting_id), "u": str(user_id)},
+    )[0]
+
+
+def test_consent_sent_with_the_token_request_is_recorded_and_unlocks_the_gate(client, tenant_a):
+    _sql(
+        "INSERT INTO tenant_settings (org_id, consent_required) VALUES (%(o)s, true)",
+        {"o": str(tenant_a.org_id)},
+    )
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+
+    resp = client.post(
+        f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "notice-2026-11-11"}}
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["consent_version"] == "notice-2026-11-11"
+    assert body["consented_at"] is not None
+    stored = _participant_consent(meeting_id, tenant_a.user_id)
+    assert stored["consent_version"] == "notice-2026-11-11"
+    assert stored["consented_at"] is not None
+
+    # Asked once per person per meeting: a later join needs no body, and a later body never
+    # rewrites the first record.
+    again = client.post(f"/api/meetings/{meeting_id}/token")
+    assert again.status_code == 200, again.text
+    newer = client.post(
+        f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "notice-2027"}}
+    )
+    assert newer.json()["consent_version"] == "notice-2026-11-11"
+    assert _participant_consent(meeting_id, tenant_a.user_id) == stored
+
+
+def test_consent_is_recorded_even_when_the_tenant_does_not_require_it(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+
+    resp = client.post(f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "v1"}})
+
+    assert resp.status_code == 200, resp.text
+    assert _participant_consent(meeting_id, tenant_a.user_id)["consent_version"] == "v1"
+
+
+def test_a_malformed_consent_version_is_422_and_records_nothing(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+
+    resp = client.post(
+        f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "has spaces"}}
+    )
+
+    assert resp.status_code == 422
+    assert _participant_consent(meeting_id, tenant_a.user_id)["consented_at"] is None
+
+
+def test_a_refused_mint_records_no_consent_for_a_non_participant(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    resp = client.post(f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "v1"}})
+    assert resp.status_code == 403
+
+
+def test_started_at_is_stamped_by_the_first_mint_and_never_moves(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+
+    first = client.post(f"/api/meetings/{meeting_id}/token").json()
+    second = client.post(f"/api/meetings/{meeting_id}/token").json()
+
+    assert first["started_at"] is not None
+    assert first["started_at"] == second["started_at"]
+
+
+def test_session_reports_consent_recording_and_the_meeting_clock(client, tenant_a):
+    _sql(
+        "INSERT INTO tenant_settings (org_id, consent_required) VALUES (%(o)s, true)",
+        {"o": str(tenant_a.org_id)},
+    )
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+
+    before = client.get(f"/api/meetings/{meeting_id}/session")
+    assert before.status_code == 200, before.text
+    assert before.json() == {
+        "consent_required": True,
+        "consented_at": None,
+        "consent_version": None,
+        "recording": False,
+        "started_at": None,
+        "ended": False,
+    }
+
+    client.post(f"/api/meetings/{meeting_id}/token", json={"consent": {"version": "v1"}})
+    after = client.get(f"/api/meetings/{meeting_id}/session").json()
+    assert after["consent_version"] == "v1"
+    assert after["consented_at"] is not None
+    assert after["started_at"] is not None
+
+
+def test_session_is_403_for_a_non_participant_and_404_cross_tenant(client, tenant_a, tenant_b):
+    mine = seed_meeting(tenant_a.org_id)
+    assert client.get(f"/api/meetings/{mine}/session").status_code == 403
+    theirs = seed_meeting(tenant_b.org_id)
+    add_participant(theirs, tenant_b.org_id, tenant_b.user_id)
+    assert client.get(f"/api/meetings/{theirs}/session").status_code == 404

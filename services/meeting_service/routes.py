@@ -2,9 +2,10 @@
 
 Plan 3-4 section 3.1 step 4. Server-mediated, participant-verified, deny-by-default:
 `org_id` and `user_id` come only from `RequestContext` (the Clerk-verified token, via
-`libs.shared.authz`), never from the path, query, or a request body — this route accepts no
-body at all. Three invariants hold here, each enforced structurally rather than by review,
-matching `core_api.routes.meetings`'s pattern:
+`libs.shared.authz`), never from the path, query, or a request body. The only body this route
+accepts is the optional consent acknowledgment (`TokenRequest`), which carries no identity.
+Three invariants hold here, each enforced structurally rather than by review, matching
+`core_api.routes.meetings`'s pattern:
 
 - **Existence check before participation check.** `_fetch_meeting_or_404` runs first and is
   RLS-scoped with no hand-written `org_id` predicate, so a meeting belonging to another
@@ -47,7 +48,18 @@ The fix: this route depends on `tenant_context` only (auth/tenant resolution; it
 closes its own short session internally and returns no session to the caller), and opens ONE
 explicit, short-lived session of its own for the meeting/participant/consent checks and the
 room upsert - closed and committed BEFORE `background_tasks.add_task` is ever called, so there
-is no yield-dependency left open across the background task's own DB use. `mint_join_token`
+is no yield-dependency left open across the background task's own DB use.
+
+CONSENT THAT IS REAL (polish program, Phase 0). ADR-0018 records consent at token mint, but
+nothing ever wrote it: the pre-join's checkbox was never sent, so a tenant with
+`consent_required = true` answered 428 forever and the room looped the person back to the
+pre-join. Now the pre-join sends `{"consent": {"version": "<notice version>"}}` with its token
+request; the mint stamps `consented_at = now()` and `consent_version` the first time (never
+overwritten: consent is asked once per person per meeting), in the same short transaction as
+the checks, before the 428 gate is evaluated. Recorded whether or not the tenant requires it,
+because the person did agree and the record should say so. `GET .../session` tells the client
+whether it still has to ask. The first successful mint also stamps `meeting_rooms.started_at`
+(the meeting's clock). `mint_join_token`
 (the LiveKit call the token-mint route always made) needs no session at all, so it runs after,
 outside of any transaction, same as before.
 """
@@ -68,11 +80,13 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
+    mark_room_started,
     meeting_has_ended,
     meeting_is_visible,
     sync_livekit_metadata,
 )
-from services.meeting_service.schemas import TokenResponse
+from services.meeting_service.schemas import RoomSession, TokenRequest, TokenResponse
+from services.meeting_service.storage import RecordingConfig
 from services.meeting_service.transport import MeetingTransport, select_transport
 
 router = APIRouter(tags=["meetings"])
@@ -134,7 +148,7 @@ async def _fetch_participant(
         (
             await session.execute(
                 text(
-                    "SELECT mp.role_in_meeting, mp.consented_at, "
+                    "SELECT mp.role_in_meeting, mp.consented_at, mp.consent_version, "
                     "COALESCE(ts.consent_required, false) AS consent_required "
                     "FROM meeting_participants mp "
                     "LEFT JOIN tenant_settings ts ON ts.org_id = mp.org_id "
@@ -149,6 +163,74 @@ async def _fetch_participant(
     return dict(row) if row is not None else None
 
 
+async def _record_consent(
+    session: AsyncSession, meeting_id: uuid.UUID, user_id: uuid.UUID, version: str
+) -> dict[str, Any]:
+    """Stamp this participant's consent once. An existing `consented_at` is never moved and its
+    `consent_version` never rewritten: the first acknowledgment is the record."""
+    row = (
+        (
+            await session.execute(
+                text(
+                    "UPDATE meeting_participants SET consented_at = COALESCE(consented_at, now()), "
+                    "consent_version = CASE WHEN consented_at IS NULL THEN :v "
+                    "ELSE consent_version END "
+                    "WHERE meeting_id = :m AND user_id = :u "
+                    "RETURNING consented_at, consent_version"
+                ),
+                {"v": version, "m": str(meeting_id), "u": str(user_id)},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return dict(row)
+
+
+async def _room_started_at(session: AsyncSession, meeting_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT started_at FROM meeting_rooms WHERE meeting_id = :m"),
+            {"m": str(meeting_id)},
+        )
+    ).scalar()
+
+
+@router.get(
+    "/api/meetings/{meeting_id}/session",
+    status_code=status.HTTP_200_OK,
+    response_model=RoomSession,
+)
+async def get_room_session(
+    meeting_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(tenant_context)],
+) -> RoomSession:
+    """The caller's standing in this meeting's call: whether consent is required and already
+    given (so the pre-join asks once per person per meeting), whether audio/video is recorded
+    (so the notice says exactly what is kept), and when the call started (the meeting clock).
+    Same existence-then-participation order and codes as the token mint."""
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session, session.begin():
+        await session.execute(_BIND_STATEMENT_TIMEOUT)
+        await set_rls(session, ctx.org_id)
+        await _fetch_meeting_or_404(session, meeting_id)
+        if ctx.user_id is None:
+            raise _not_a_participant()
+        participant = await _fetch_participant(session, meeting_id, ctx.user_id)
+        if participant is None:
+            raise _not_a_participant()
+        started_at = await _room_started_at(session, meeting_id)
+        ended = await meeting_has_ended(session, meeting_id)
+    return RoomSession(
+        consent_required=bool(participant["consent_required"]),
+        consented_at=participant["consented_at"],
+        consent_version=participant["consent_version"],
+        recording=RecordingConfig.from_env().enabled,
+        started_at=started_at,
+        ended=ended,
+    )
+
+
 @router.post(
     "/api/meetings/{meeting_id}/token",
     status_code=status.HTTP_200_OK,
@@ -159,6 +241,7 @@ async def mint_token(
     ctx: Annotated[RequestContext, Depends(tenant_context)],
     transport: Annotated[MeetingTransport, Depends(get_transport)],
     background_tasks: BackgroundTasks,
+    body: TokenRequest | None = None,
 ) -> TokenResponse:
     sessionmaker = get_sessionmaker()
 
@@ -189,10 +272,16 @@ async def mint_token(
         if participant is None:
             raise _not_a_participant()
 
+        if body is not None and body.consent is not None:
+            participant.update(
+                await _record_consent(session, meeting_id, ctx.user_id, body.consent.version)
+            )
+
         if participant["consent_required"] and participant["consented_at"] is None:
             raise _consent_required()
 
         result = await ensure_meeting_room(session, ctx.org_id, meeting_id)
+        started_at = await mark_room_started(session, ctx.org_id, meeting_id)
     # session/transaction closed and committed here - the connection is back in the pool
     # before anything below this line runs.
 
@@ -218,5 +307,10 @@ async def mint_token(
     )
 
     return TokenResponse(
-        token=token, room=result.room, livekit_url=os.environ.get("LIVEKIT_URL", "")
+        token=token,
+        room=result.room,
+        livekit_url=os.environ.get("LIVEKIT_URL", ""),
+        consented_at=participant["consented_at"],
+        consent_version=participant["consent_version"],
+        started_at=started_at,
     )

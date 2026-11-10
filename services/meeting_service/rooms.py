@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -90,6 +91,8 @@ async def meeting_has_ended(session: AsyncSession, meeting_id: UUID) -> bool:
 class RoomUpsertResult:
     room: str
     needs_livekit_sync: bool
+    # When the call first opened (`meeting_rooms.started_at`), or None before anyone joined.
+    started_at: datetime | None = None
 
 
 async def ensure_meeting_room(
@@ -111,7 +114,7 @@ async def ensure_meeting_room(
                     "INSERT INTO meeting_rooms (org_id, meeting_id, livekit_room) "
                     "VALUES (:org, :meeting, :room) "
                     "ON CONFLICT (org_id, meeting_id) DO UPDATE SET updated_at = now() "
-                    "RETURNING livekit_room, livekit_metadata_synced_at"
+                    "RETURNING livekit_room, livekit_metadata_synced_at, started_at"
                 ),
                 {
                     "org": str(org_id),
@@ -126,7 +129,28 @@ async def ensure_meeting_room(
     return RoomUpsertResult(
         room=str(row["livekit_room"]),
         needs_livekit_sync=row["livekit_metadata_synced_at"] is None,
+        started_at=row["started_at"],
     )
+
+
+async def mark_room_started(
+    session: AsyncSession, org_id: UUID, meeting_id: UUID
+) -> datetime | None:
+    """Stamp `meeting_rooms.started_at` the first time the call opens, and return it.
+
+    `COALESCE` keeps the first value forever: a later mint or a redelivered `room_started` webhook
+    never moves the meeting's clock. Same RLS-scoped session as the caller's other writes.
+    """
+    row = (
+        await session.execute(
+            text(
+                "UPDATE meeting_rooms SET started_at = COALESCE(started_at, now()) "
+                "WHERE org_id = :org AND meeting_id = :meeting RETURNING started_at"
+            ),
+            {"org": str(org_id), "meeting": str(meeting_id)},
+        )
+    ).first()
+    return row[0] if row is not None else None
 
 
 async def mark_room_metadata_synced(session: AsyncSession, org_id: UUID, room: str) -> None:

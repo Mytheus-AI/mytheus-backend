@@ -398,6 +398,12 @@ class ChatMessage(BaseModel):
     created_at: datetime
 
 
+class ChatHistory(BaseModel):
+    """`GET /meetings/:id/chat`: the meeting's most recent chat messages, oldest first."""
+
+    items: list[ChatMessage]
+
+
 SpeakerAssignment = Literal["manual", "suggested"]
 
 
@@ -491,10 +497,27 @@ class ActionItem(BaseModel):
 
 
 class CandidateList(BaseModel):
-    """`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first."""
+    """`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first. With
+    `include_resolved=true`, the meeting's confirmed ones too (each row carries its `status`)."""
 
     decisions: list[Decision]
     actions: list[ActionItem]
+
+
+class CandidateState(BaseModel):
+    """`GET /meetings/:id/candidates/:candidate_id`: one decision or action candidate of this
+    meeting, in any status. Read by `realtime-gateway` to verify a room-wide resolution event
+    against the stored row before it tells the room (the shared candidate ledger)."""
+
+    id: uuid.UUID
+    kind: Literal["decision", "action"]
+    meeting_id: uuid.UUID
+    status: str
+    content: str
+    rationale: str | None = None
+    assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
+    confirmed_by: uuid.UUID | None = None
 
 
 def _reject_null_content(model: DecisionUpdate | ActionItemUpdate) -> None:

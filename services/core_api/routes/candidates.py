@@ -28,7 +28,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +53,7 @@ from services.core_api.schemas import (
     ActionItem,
     ActionItemUpdate,
     CandidateList,
+    CandidateState,
     Decision,
     DecisionConfirm,
     DecisionUpdate,
@@ -121,11 +122,17 @@ async def list_candidates(
     meeting_id: uuid.UUID,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
+    include_resolved: Annotated[bool, Query()] = False,
 ) -> CandidateList:
     """Proposed, surfaced decision and action candidates for one meeting, oldest first.
 
     Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
     stored but never served; the surface threshold is the tenant's, per agent.
+
+    `include_resolved=true` (polish program, shared candidate ledger) also returns the
+    meeting's CONFIRMED decisions and actions, whatever their confidence (a person confirmed
+    them), with `confirmed_by`, so the room can show "Confirmed by Maya" and the live Decisions
+    and Actions in Notes mode after a reload. Dismissed rows are never returned.
     """
     await _require_meeting_participant(session, ctx, meeting_id)
     overrides = (
@@ -133,13 +140,14 @@ async def list_candidates(
     ).scalar()
     decision_surface, _ = thresholds(overrides, "DecisionAgent")
     action_surface, _ = thresholds(overrides, "ActionAgent")
-    params = {"m": str(meeting_id), "limit": MAX_CANDIDATES}
+    params = {"m": str(meeting_id), "limit": MAX_CANDIDATES, "resolved": include_resolved}
     decisions = (
         (
             await session.execute(
                 text(
                     f"SELECT {_DECISION_COLS} FROM decisions WHERE meeting_id = :m "
-                    "AND status = 'proposed' AND deleted_at IS NULL AND confidence > :s "
+                    "AND deleted_at IS NULL AND ((status = 'proposed' AND confidence > :s) "
+                    "OR (:resolved AND status = 'confirmed')) "
                     "ORDER BY created_at ASC, id ASC LIMIT :limit"
                 ),
                 {**params, "s": decision_surface},
@@ -153,7 +161,8 @@ async def list_candidates(
             await session.execute(
                 text(
                     f"SELECT {_ACTION_COLS} FROM action_items WHERE meeting_id = :m "
-                    "AND status = 'proposed' AND deleted_at IS NULL AND confidence > :s "
+                    "AND deleted_at IS NULL AND ((status = 'proposed' AND confidence > :s) "
+                    "OR (:resolved AND status = 'confirmed')) "
                     "ORDER BY created_at ASC, id ASC LIMIT :limit"
                 ),
                 {**params, "s": action_surface},
@@ -166,6 +175,63 @@ async def list_candidates(
         decisions=[Decision(**dict(r)) for r in decisions],
         actions=[ActionItem(**dict(r)) for r in actions],
     )
+
+
+@router.get(
+    "/meetings/{meeting_id}/candidates/{candidate_id}",
+    response_model=CandidateState,
+    tags=["candidates"],
+)
+async def get_candidate(
+    meeting_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> CandidateState:
+    """One decision or action candidate of this meeting, in any status.
+
+    The shared candidate ledger: after someone confirms, edits or (as host) dismisses a card,
+    their client tells `realtime-gateway`, which reads the row here WITH THAT PERSON'S TOKEN and
+    only tells the room what the stored row says. So no client can announce a resolution the
+    server does not hold. Participants only; another meeting's id is a 404.
+    """
+    await _require_meeting_participant(session, ctx, meeting_id)
+    params = {"id": str(candidate_id), "m": str(meeting_id)}
+    decision = (
+        (
+            await session.execute(
+                text(
+                    f"SELECT {_DECISION_COLS} FROM decisions "  # noqa: S608
+                    "WHERE id = :id AND meeting_id = :m AND deleted_at IS NULL"
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if decision is not None:
+        return CandidateState(kind="decision", **{k: decision[k] for k in _STATE_DECISION})
+    action = (
+        (
+            await session.execute(
+                text(
+                    f"SELECT {_ACTION_COLS} FROM action_items "  # noqa: S608
+                    "WHERE id = :id AND meeting_id = :m AND deleted_at IS NULL"
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if action is None:
+        raise not_found()
+    return CandidateState(kind="action", **{k: action[k] for k in _STATE_ACTION})
+
+
+_STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by")
+_STATE_ACTION = ("id", "meeting_id", "status", "content", "assignee_id", "due_date", "confirmed_by")
 
 
 # --- decisions -----------------------------------------------------------------------------
