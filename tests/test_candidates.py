@@ -445,7 +445,9 @@ def test_dismiss_emits_nothing_and_leaves_no_confirmed_row(client, migrated_db):
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "dismissed"
         assert client.post(path).status_code == 200  # idempotent
-    assert all_outbox(t.org_id) == []
+    # No decisions/actions event, ever. Polish wave 2: each real dismiss is one feedback event
+    # (the repeated dismiss records nothing).
+    assert all_outbox(t.org_id) == [{"topic": "agent-feedback"}, {"topic": "agent-feedback"}]
     assert (
         _sql(
             "SELECT 1 FROM decisions WHERE meeting_id = %(m)s AND status = 'confirmed' "
@@ -460,7 +462,7 @@ def test_dismiss_emits_nothing_and_leaves_no_confirmed_row(client, migrated_db):
         resp = client.post(path)
         assert resp.status_code == 409
         assert resp.json()["code"] == "VERSION_CONFLICT"
-    assert all_outbox(t.org_id) == []
+    assert all_outbox(t.org_id) == [{"topic": "agent-feedback"}, {"topic": "agent-feedback"}]
 
 
 def test_edit_before_confirm_and_409_after(client, migrated_db):

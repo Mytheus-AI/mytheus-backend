@@ -63,6 +63,49 @@ class DataExportList(BaseModel):
     items: list[DataExport]
 
 
+ErasureKind = Literal["person", "meeting"]
+
+
+class ErasureCreate(BaseModel):
+    """Erase one person's, or one meeting's, data in this workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: ErasureKind
+    target_id: uuid.UUID = Field(description="The person's `users.id`, or the meeting's id.")
+    confirm: str = Field(
+        min_length=1,
+        max_length=320,
+        description=(
+            "Typed confirmation: the person's email, or the meeting's title (`Untitled meeting` "
+            "when it has none). Case and outer spaces are ignored."
+        ),
+    )
+
+
+class Erasure(BaseModel):
+    """One completed erasure, as recorded in `audit_logs` (`data_erasure.completed`)."""
+
+    id: uuid.UUID
+    kind: ErasureKind
+    target_id: uuid.UUID
+    label: str | None = Field(
+        default=None,
+        description="The person's email or the meeting's title; null when no longer readable.",
+    )
+    status: Literal["completed"] = "completed"
+    requested_by: uuid.UUID | None = None
+    requested_at: datetime
+    erased: dict[str, int] = Field(default_factory=dict)
+    anonymized: dict[str, int] = Field(default_factory=dict)
+    revoked_share_links: int = 0
+    revoked_tokens: int = 0
+
+
+class ErasureList(BaseModel):
+    items: list[Erasure]
+
+
 # --- internal ops ------------------------------------------------------------------------------
 
 

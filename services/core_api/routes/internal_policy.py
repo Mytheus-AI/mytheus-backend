@@ -1,12 +1,24 @@
 """Internal reads that make the AI tier apply core-api's own policies (polish plan, Phase 0).
 
-`GET /internal/agent-policy` (agent-runtime-service): the tenant's
-`tenant_settings.agent_confidence_overrides`, normalized exactly as core-api applies them
-(`confidence.thresholds`: a malformed entry reads as the defaults), shaped
-`{"agent_confidence_overrides": {"<Agent>": {"surface": x, "silent": y}}}`; `{}` for a tenant
-with no row or no overrides. The agent decides `surfaced` with them, so realtime-gateway's live
-forward (which trusts the agent's `surfaced`) and core-api's store and reload (which re-derive
-it with the same numbers) agree: one threshold source. The agent caches it per org (60 s).
+`GET /internal/agent-policy` (agent-runtime-service): the thresholds core-api itself applies
+(`learning.band_for`), so the agent decides `surfaced` with the same numbers. realtime-gateway's
+live forward (which trusts the agent's `surfaced`) and core-api's store and reload (which
+re-derive it) agree: one threshold source. The agent caches it per org (60 s) and drops the
+cache on an `agent-feedback` event. Shape (every field after the first added in polish wave 2,
+all optional for a reader, so the response stays BACKWARD compatible):
+
+    {"agent_confidence_overrides": {"<Agent>": {"surface": x, "silent": y}},
+     "user_overrides": {"<user_id>": {"<Agent>": {"surface": x, "silent": y}}},
+     "calibration": {"<Agent>": {"samples": n, "dismiss_rate": r, "surface": x|null}}}
+
+- `agent_confidence_overrides`: the WORKSPACE band per agent: the tenant's
+  `agent_confidence_overrides` entry (a malformed one reads as the defaults), moved by the
+  workspace calibration. Every agent with an override or a calibration is listed; `{}` for a
+  tenant with neither. An agent built before wave 2 reads only this and still agrees with the
+  reload for every meeting-wide agent.
+- `user_overrides`: per person, only where it differs from the workspace band, only for the
+  agents whose output is one person's (`learning.USER_SCOPED_AGENTS`).
+- `calibration`: the workspace calibration detail per agent, for observability.
 
 `GET /internal/meetings/{meeting_id}/index-policy` (embedding-service, search-service):
 `{"confidential": bool}` for one meeting, so the indexing consumers flag a confidential
@@ -31,6 +43,8 @@ from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.core_api.confidence import thresholds
+from services.core_api.learning import MIN_SAMPLES_WORKSPACE, calibrated_surface
+from services.core_api.learning import agent_policy as learned_policy
 from services.core_api.routes.internal_meetings import authenticate_caller, service_token_scheme
 
 AGENT_CALLERS = frozenset({"agent-runtime-service"})
@@ -58,8 +72,18 @@ class ConfidenceBand(BaseModel):
     silent: float = Field(ge=0, le=1)
 
 
+class CalibrationDetail(BaseModel):
+    samples: int = Field(ge=0, description="Items with feedback in the window")
+    dismiss_rate: float = Field(ge=0, le=1, description="Decayed share of dismisses")
+    surface: float | None = Field(
+        default=None, description="The calibrated surface threshold; null below the minimum"
+    )
+
+
 class AgentPolicy(BaseModel):
     agent_confidence_overrides: dict[str, ConfidenceBand] = Field(default_factory=dict)
+    user_overrides: dict[str, dict[str, ConfidenceBand]] = Field(default_factory=dict)
+    calibration: dict[str, CalibrationDetail] = Field(default_factory=dict)
 
 
 class IndexPolicy(BaseModel):
@@ -75,13 +99,33 @@ async def agent_policy(
         raw = (
             await session.execute(text("SELECT agent_confidence_overrides FROM tenant_settings"))
         ).scalar()
-    out: dict[str, ConfidenceBand] = {}
-    for agent in raw if isinstance(raw, dict) else {}:
-        surface, silent = thresholds(raw, str(agent))
-        out[str(agent)] = ConfidenceBand(
-            surface=min(1.0, max(0.0, surface)), silent=min(1.0, max(0.0, silent))
+        workspace, per_user, rows = await learned_policy(session)
+    calibration: dict[str, CalibrationDetail] = {}
+    for r in rows:
+        if r["user_id"] is not None:
+            continue
+        positives, negatives = float(r["positives"]), float(r["negatives"])
+        weight = positives + negatives
+        base, _ = thresholds(raw, str(r["agent"]))
+        calibration[str(r["agent"])] = CalibrationDetail(
+            samples=int(r["samples"]),
+            dismiss_rate=round(negatives / weight, 4) if weight > 0 else 0.0,
+            surface=calibrated_surface(
+                base, positives, negatives, int(r["samples"]), MIN_SAMPLES_WORKSPACE
+            ),
         )
-    return AgentPolicy(agent_confidence_overrides=out)
+    return AgentPolicy(
+        agent_confidence_overrides={a: _band(b) for a, b in workspace.items()},
+        user_overrides={
+            u: {a: _band(b) for a, b in bands.items()} for u, bands in per_user.items()
+        },
+        calibration=calibration,
+    )
+
+
+def _band(band: tuple[float, float]) -> ConfidenceBand:
+    surface, silent = band
+    return ConfidenceBand(surface=min(1.0, max(0.0, surface)), silent=min(1.0, max(0.0, silent)))
 
 
 @router.get("/internal/meetings/{meeting_id}/index-policy", response_model=IndexPolicy)

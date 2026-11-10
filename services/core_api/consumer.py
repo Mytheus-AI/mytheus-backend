@@ -5,7 +5,9 @@ Consumes: `agent-results` (Plan 7-9 section 3.3 step 3: `PersonalListenerAgent` 
 `proposed`, with no event; see `handle_agent_result`) and presence-events (analytics read
 model only; no domain write - Plan 3-4 section 3.3 step 5), and since P12 `integration-events`
 (`calendar_event_upserted` -> `meetings` + `meeting_participants`, see
-`services/core_api/integration_events.py`; every other integration event is a no-op here).
+`services/core_api/integration_events.py`; every other integration event is a no-op here), and
+since polish wave 2 `agent-feedback` (core-api's own feedback events, folded into
+`person_memory` by `services/core_api/person_memory.py`; inbox claim first, DLQ on poison).
 Presence itself stays owned by `realtime-gateway`/Redis; this consumer never writes
 `meeting_participants` or any table `core-api` treats as domain source of truth from the
 presence path.
@@ -48,6 +50,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
 
@@ -71,6 +74,7 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.core_api import minutes as minutes_mod
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
@@ -78,6 +82,8 @@ from services.core_api.integration_events import (
     IntegrationEventPoison,
     handle_integration_event,
 )
+from services.core_api.learning import band_for
+from services.core_api.person_memory import FeedbackPoison, handle_agent_feedback
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
@@ -85,8 +91,11 @@ logger = logging.getLogger(__name__)
 TOPIC = "presence-events"
 AGENT_RESULTS = "agent-results"
 INTEGRATION_EVENTS = "integration-events"
+# Polish wave 2: a person's feedback on agent output folds into their `person_memory`
+# (`services/core_api/person_memory.py`).
+AGENT_FEEDBACK = "agent-feedback"
 # P12: calendar events become meetings (`services/core_api/integration_events.py`).
-TOPICS = [TOPIC, AGENT_RESULTS, INTEGRATION_EVENTS]
+TOPICS = [TOPIC, AGENT_RESULTS, INTEGRATION_EVENTS, AGENT_FEEDBACK]
 CONSUMER_GROUP = "core-api"
 
 # doc 08 section 6, the uniform confidence policy (see `services/core_api/confidence.py`).
@@ -127,6 +136,17 @@ _MEETING_UPDATE = ("MeetingAgent", "meeting_update")
 _AGENT_AGENDA_STATUSES = frozenset({"in_progress", "covered"})
 MAX_AGENDA_NOTE_CHARS = 300
 MAX_AGENDA_UPDATES = 20
+
+# Minutes for everyone: after the meeting ended, one MeetingAgent `minutes` record per
+# participant and one shared record (`user_id` = the nil uuid), into `meeting_minutes`
+# (`services/core_api/minutes.py`). When the shared minutes land and the automatic follow-up is
+# waiting for them (`meeting_followups.awaiting_minutes_since`), the follow-up is sent once the
+# transaction has committed (`AFTER_COMMIT`, drained by `run_consumer`).
+_MINUTES = ("MeetingAgent", "minutes")
+
+# Work to run after the current message's transaction commits (never inside it: it calls other
+# services). `run_consumer` drains it after the commit and clears it on a rollback.
+AFTER_COMMIT: list[Callable[[], Awaitable[Any]]] = []
 
 # ADR-0039 B6/C3: PersonalListenerAgent records carry `payload_json.commitments`
 # (`[{content, due_hint}]`, at most 5): promises the participant made, private to `user_id`.
@@ -280,11 +300,13 @@ async def _apply_agent_result(
     is_suggestion = (agent, kind) == _SUGGESTION
     is_context_fill = (agent, kind) == _CONTEXT_FILL
     is_meeting_update = (agent, kind) == _MEETING_UPDATE
+    is_minutes = (agent, kind) == _MINUTES
     if (
         candidate_table is None
         and not is_suggestion
         and not is_context_fill
         and not is_meeting_update
+        and not is_minutes
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
         # Anything else - including an agent class or kind this consumer has never heard of -
@@ -300,6 +322,8 @@ async def _apply_agent_result(
     # unknown (P10 contract 5.9). Only a context_fill may, and only the nil uuid: any other
     # meeting id is checked against the tenant like every other result.
     unknown_meeting = is_context_fill and meeting_id == NIL_UUID
+    # The shared minutes are for nobody in particular: they carry the nil user.
+    shared_minutes = is_minutes and user_id == NIL_UUID
     visible = (
         await session.execute(
             text(
@@ -310,14 +334,21 @@ async def _apply_agent_result(
             {"m": str(meeting_id), "u": str(user_id)},
         )
     ).one()
-    if (not visible[0] and not unknown_meeting) or not visible[1]:
+    if (not visible[0] and not unknown_meeting) or (not visible[1] and not shared_minutes):
         raise PoisonMessage(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
         )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
-    surface, silent = _thresholds(visible[2], agent)
+    if is_minutes:
+        return await _persist_minutes(
+            session, org_id, meeting_id, None if shared_minutes else user_id, value
+        )
+    # The tenant's thresholds moved by the confirm/dismiss calibration (polish wave 2): the
+    # person's own for a note, suggestion or context fill, the workspace's otherwise. The same
+    # numbers `GET /internal/agent-policy` gives the agent and the reload routes apply.
+    surface, silent = await band_for(session, agent, user_id, visible[2], have_overrides=True)
     if is_context_fill:
         return await _persist_collaborations(
             session,
@@ -350,10 +381,12 @@ async def _apply_agent_result(
         await session.execute(
             text(
                 "INSERT INTO worklogs (org_id, meeting_id, user_id, window_id, content, "
-                "relevance_score, confidence, created_by_agent, source_chunk_ids, surfaced) "
-                "VALUES (:o, :m, :u, :w, :c, :r, :conf, true, CAST(:chunks AS uuid[]), :s)"
+                f"relevance_score, confidence, created_by_agent, source_chunk_ids, surfaced, "
+                f"{_MOMENT_SQL}) VALUES (:o, :m, :u, :w, :c, :r, :conf, true, "
+                f"CAST(:chunks AS uuid[]), :s, {_MOMENT_VALUES})"
             ),
             {
+                **await _moment(session, _payload_object(value.get("payload_json"))),
                 "o": str(org_id),
                 "m": str(meeting_id),
                 "u": str(user_id),
@@ -394,6 +427,37 @@ def _optional_date(raw: Any) -> date | None:
         return None
 
 
+MAX_WHY_CHARS = 200
+MAX_QUOTE_CHARS = 300
+_MOMENT_SQL = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+_MOMENT_VALUES = ":mo, :why, :qt, :qs, :qa, :qb"
+
+
+def _ms(raw: Any) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+async def _moment(session: AsyncSession, item: Any) -> dict[str, Any]:
+    """Polish program (one card per moment): the moment fields of one payload item as SQL
+    params (`:mo :why :qt :qs :qa :qb`), each null when absent or malformed. A quote speaker is
+    a `users.id` this tenant can see, or null (gap 31: never store another tenant's id)."""
+    item = item if isinstance(item, dict) else {}
+    speaker = _optional_uuid(item.get("speaker_id"))
+    if speaker is not None and not await is_visible(session, "users", speaker):
+        speaker = None
+    mo = _optional_uuid(item.get("moment_id"))
+    return {
+        "mo": str(mo) if mo else None,
+        "why": _bounded_text(item.get("why"), MAX_WHY_CHARS),
+        "qt": _bounded_text(item.get("quote"), MAX_QUOTE_CHARS),
+        "qs": str(speaker) if speaker else None,
+        "qa": _ms(item.get("start_ms")),
+        "qb": _ms(item.get("end_ms")),
+    }
+
+
 async def _persist_candidates(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -412,6 +476,10 @@ async def _persist_candidates(
     A payload that is not JSON is poison (the producer is broken); a candidate with a bad
     shape is skipped and the rest are applied. The band is re-derived from the tenant's
     thresholds here, never trusted from the payload's `surfaced`.
+
+    Polish program (memory inside the meeting): a candidate with `updates_candidate_id` is an
+    UPDATE of an existing card of this meeting (`_apply_update`), not a new row. Every row
+    stores the candidate's moment fields (`_moment`).
     """
     try:
         payload = json.loads(payload_json) if isinstance(payload_json, str) else None
@@ -440,14 +508,15 @@ async def _persist_candidates(
             "m": str(meeting_id),
             "c": content,
             "conf": confidence,
+            **await _moment(session, cand),
         }
         if table == "decisions":
             rationale = cand.get("rationale")
             params["r"] = (rationale.strip() or None) if isinstance(rationale, str) else None
             sql = (
                 "INSERT INTO decisions (id, org_id, meeting_id, content, rationale, confidence, "
-                "status) VALUES (:id, :o, :m, :c, :r, :conf, 'proposed') "
-                "ON CONFLICT (id) DO NOTHING RETURNING 1"
+                f"status, {_MOMENT_SQL}) VALUES (:id, :o, :m, :c, :r, :conf, 'proposed', "
+                f"{_MOMENT_VALUES}) ON CONFLICT (id) DO NOTHING RETURNING 1"
             )
         else:
             # A foreign key resolves another tenant's user with RLS bypassed (gap 31): an
@@ -464,12 +533,67 @@ async def _persist_candidates(
             params["d"] = _optional_date(cand.get("due_date"))
             sql = (
                 "INSERT INTO action_items (id, org_id, meeting_id, content, assignee_id, "
-                "due_date, confidence, status) VALUES (:id, :o, :m, :c, :a, :d, :conf, "
-                "'proposed') ON CONFLICT (id) DO NOTHING RETURNING 1"
+                f"due_date, confidence, status, {_MOMENT_SQL}) VALUES (:id, :o, :m, :c, :a, "
+                f":d, :conf, 'proposed', {_MOMENT_VALUES}) ON CONFLICT (id) DO NOTHING RETURNING 1"
             )
+        target = _optional_uuid(cand.get("updates_candidate_id"))
+        if target is not None:
+            applied = await _apply_update(session, table, meeting_id, target, params)
+            if applied is not None:
+                written = written or applied
+                continue  # the card exists: updated, or left alone (resolved / edited)
+            params["id"] = str(target)  # the card was never stored (below silent): create it
         if (await session.execute(text(sql), params)).first() is not None:
             written = True
     return written
+
+
+async def _apply_update(
+    session: AsyncSession,
+    table: str,
+    meeting_id: uuid.UUID,
+    target: uuid.UUID,
+    params: dict[str, Any],
+) -> bool | None:
+    """Apply an agent's update to the existing card `target` of this meeting. None when there
+    is no such card (the caller inserts it), True when it changed, False when it is left alone:
+    only a `proposed` card no person has edited (`edited_at` null) is ever updated, so an agent
+    never reopens a confirmed or dismissed card and never overwrites a person's words.
+
+    New text, confidence, the latest words (quote, speaker, time) and the why line replace the
+    old; a rationale, an assignee and a due date only fill in or change, never clear (a
+    refinement that does not repeat the owner keeps the owner); the moment stays the card's
+    first, so every link to it (a promise, a note) still holds. The live card is updated in the
+    room by realtime-gateway from the same `agent-results` record (the candidate keeps its id).
+    """
+    row = (
+        await session.execute(
+            text(
+                f"SELECT status, edited_at FROM {table} "  # noqa: S608 - closed set of tables
+                "WHERE id = :t AND meeting_id = :m AND deleted_at IS NULL FOR UPDATE"
+            ),
+            {"t": str(target), "m": str(meeting_id)},
+        )
+    ).first()
+    if row is None:
+        return None
+    if row[0] != "proposed" or row[1] is not None:
+        return False
+    if table == "decisions":
+        extra = "rationale = COALESCE(:r, rationale)"
+    else:
+        extra = "assignee_id = COALESCE(:a, assignee_id), due_date = COALESCE(:d, due_date)"
+    await session.execute(
+        text(
+            f"UPDATE {table} SET content = :c, confidence = :conf, {extra}, "  # noqa: S608
+            "moment_id = COALESCE(moment_id, :mo), why = COALESCE(:why, why), "
+            "quote = COALESCE(:qt, quote), quote_speaker_id = COALESCE(:qs, quote_speaker_id), "
+            "quote_start_ms = COALESCE(:qa, quote_start_ms), "
+            "quote_end_ms = COALESCE(:qb, quote_end_ms) WHERE id = :t"
+        ),
+        {**params, "t": str(target)},
+    )
+    return True
 
 
 async def _persist_commitments(
@@ -509,7 +633,7 @@ async def _persist_commitments(
             await session.execute(
                 text(
                     "INSERT INTO commitments (org_id, user_id, meeting_id, content, due_hint, "
-                    "source_window_id) VALUES (:o, :u, :m, :c, :d, :w) "
+                    "source_window_id, moment_id) VALUES (:o, :u, :m, :c, :d, :w, :mo) "
                     "ON CONFLICT DO NOTHING RETURNING 1"
                 ),
                 {
@@ -519,11 +643,23 @@ async def _persist_commitments(
                     "c": content,
                     "d": _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS),
                     "w": window_id,
+                    # polish: the moment the promise was made (a confirmed action of the same
+                    # moment for this person closes it, routes/candidates.py)
+                    "mo": (str(mo) if (mo := _optional_uuid(entry.get("moment_id"))) else None),
                 },
             )
         ).first()
         written = written or inserted is not None
     return written
+
+
+def _payload_object(payload_json: Any) -> dict[str, Any]:
+    """The payload as an object, {} when absent or not JSON (a note never fails on it)."""
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _payload_list(payload_json: Any, key: str) -> list[Any] | None:
@@ -598,12 +734,14 @@ async def _persist_suggestions(
             await session.execute(
                 text(
                     "INSERT INTO agent_suggestions (id, org_id, user_id, meeting_id, question, "
-                    "priority, status, confidence, rationale, citations) "
-                    "SELECT :id, :o, :u, :m, :q, :p, 'open', :c, :r, CAST(:cit AS jsonb) "
+                    f"priority, status, confidence, rationale, citations, {_MOMENT_SQL}) "
+                    "SELECT :id, :o, :u, :m, :q, :p, 'open', :c, :r, CAST(:cit AS jsonb), "
+                    f"{_MOMENT_VALUES} "
                     "WHERE NOT EXISTS (SELECT 1 FROM agent_suggestions WHERE id = :id) "
                     "ON CONFLICT DO NOTHING RETURNING 1"
                 ),
                 {
+                    **await _moment(session, s),
                     "id": str(sid),
                     "o": str(org_id),
                     "u": str(user_id),
@@ -659,6 +797,12 @@ async def _apply_agenda_updates(
                 text(
                     "UPDATE meeting_agenda_items SET status = CAST(:s AS text), "
                     "status_source = 'agent', agent_note = CAST(:n AS text), "
+                    # The item's clock (migration d0e1f2a3b4c5), the same rule the host's PATCH
+                    # applies: starting stamps `started_at` once, covering stamps `ended_at`.
+                    "started_at = CASE WHEN CAST(:s AS text) = 'in_progress' "
+                    "  THEN COALESCE(started_at, now()) ELSE started_at END, "
+                    "ended_at = CASE WHEN CAST(:s AS text) = 'covered' THEN now() "
+                    "  ELSE NULL END, "
                     "updated_at = now() "
                     "WHERE id = :id AND meeting_id = :m "
                     "AND status_source IS DISTINCT FROM 'host' "
@@ -672,6 +816,52 @@ async def _apply_agenda_updates(
         ).first()
         changed = changed or updated is not None
     return changed
+
+
+async def _persist_minutes(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    value: dict[str, Any],
+) -> bool:
+    """Upsert one set of minutes (`minutes.persist`: validated, clipped, participants only).
+    For the shared minutes, a follow-up waiting for them is queued to go out after commit."""
+    payload = minutes_mod.parse_payload(value.get("payload_json"))
+    if payload is None:
+        return False  # nothing to file; the inbox claim keeps a redelivery a no-op
+    written = await minutes_mod.persist(session, org_id, meeting_id, user_id, payload)
+    if written and user_id is None:
+        waiting = (
+            await session.execute(
+                text(
+                    "UPDATE meeting_followups SET awaiting_minutes_since = NULL, "
+                    "updated_at = now() WHERE meeting_id = :m "
+                    "AND awaiting_minutes_since IS NOT NULL AND enabled RETURNING 1"
+                ),
+                {"m": str(meeting_id)},
+            )
+        ).first()
+        if waiting is not None:
+            AFTER_COMMIT.append(lambda: _send_follow_up(org_id, meeting_id))
+    return written
+
+
+async def _send_follow_up(org_id: uuid.UUID, meeting_id: uuid.UUID) -> None:
+    from services.core_api.routes.followups import dispatch
+
+    try:
+        await dispatch(org_id, meeting_id, actor_id=None, automatic=True)
+    except Exception:  # noqa: BLE001 - the host can still send it; never stop the consumer
+        logger.exception("deferred follow-up for meeting %s failed", meeting_id)
+
+
+async def drain_after_commit() -> None:
+    """Run (and clear) the work queued by the message that just committed."""
+    jobs = list(AFTER_COMMIT)
+    AFTER_COMMIT.clear()
+    for job in jobs:
+        await job()
 
 
 def _bounded_text(raw: Any, limit: int) -> str | None:
@@ -876,15 +1066,18 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
             handler = {
                 AGENT_RESULTS: handle_agent_result,
                 INTEGRATION_EVENTS: handle_integration_event,
+                AGENT_FEEDBACK: handle_agent_feedback,
             }.get(topic_name, handle_presence_event)
             try:
                 value = decode(
                     deserializer, raw_value, SerializationContext(topic_name, MessageField.VALUE)
                 )
+                AFTER_COMMIT.clear()
                 async with session_factory() as session, session.begin():
                     applied = await handler(session, redis, value)
+                await drain_after_commit()
                 record_processed(CONSUMER_GROUP, topic_name, "applied" if applied else "duplicate")
-            except (PoisonMessage, IntegrationEventPoison) as exc:
+            except (PoisonMessage, IntegrationEventPoison, FeedbackPoison) as exc:
                 logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)
                 dlq_producer.produce(
                     topic=f"{topic_name}.dlq",

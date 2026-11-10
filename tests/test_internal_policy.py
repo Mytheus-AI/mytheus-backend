@@ -73,7 +73,9 @@ def test_agent_policy_returns_the_tenants_overrides_as_core_api_applies_them(cor
     org = seed_tenant("owner").org_id
     agent = _headers(org, "agent-runtime-service", AGENT_SECRET)
     assert core.get("/internal/agent-policy", headers=agent).json() == {
-        "agent_confidence_overrides": {}
+        "agent_confidence_overrides": {},
+        "user_overrides": {},
+        "calibration": {},
     }
     _overrides(
         org,
@@ -92,7 +94,7 @@ def test_agent_policy_returns_the_tenants_overrides_as_core_api_applies_them(cor
     other = seed_tenant("owner").org_id
     assert core.get(
         "/internal/agent-policy", headers=_headers(other, "agent-runtime-service", AGENT_SECRET)
-    ).json() == {"agent_confidence_overrides": {}}
+    ).json() == {"agent_confidence_overrides": {}, "user_overrides": {}, "calibration": {}}
 
 
 def test_agent_policy_is_agent_runtime_only(core):

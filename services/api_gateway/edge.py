@@ -336,6 +336,8 @@ ROUTE_MAP: dict[str, str] = {
     # ADR-0039 Part B: meeting types, promises and status requests are core-api's too.
     "/api/v1/meeting-templates": "core-api",
     "/api/v1/commitments": "core-api",
+    # Polish wave 2: the caller's own memory across meetings (core-api's person_memory).
+    "/api/v1/me/memory": "core-api",
     "/api/v1/status-requests": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",

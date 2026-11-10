@@ -464,6 +464,8 @@ def test_carry_forward_lists_what_the_previous_meeting_left_open(client):
         "decisions": [],
         "open_actions": [],
         "saved_questions": [],
+        "open_items": [],  # minutes for everyone: from the previous meeting's shared minutes
+        "unanswered_questions": [],
     }
 
 
@@ -519,6 +521,8 @@ def test_internal_agenda_for_the_meeting_agent(client):
     assert body["carry_forward"] == {
         "decisions": ["Ship in Q1"],
         "open_actions": ["Draft the plan"],
+        "open_items": [],  # minutes for everyone: none written for the previous meeting yet
+        "questions": [],
     }
 
     assert client.get(url, headers=_headers(owner.org_id, "x" * 40)).status_code in (401, 403)

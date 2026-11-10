@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import WithJsonSchema
 
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
 # Where the call happens: a Mytheus room, or an external call captured by the browser extension
@@ -65,13 +66,42 @@ class AgendaReplace(BaseModel):
     items: Annotated[list[AgendaItemPut], Field(max_length=MAX_AGENDA_ITEMS)]
 
 
+MAX_EXTEND_MINUTES = 60
+MAX_EXTENDED_MINUTES = 240
+
+
 class AgendaItemStatusUpdate(BaseModel):
-    """`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
-    `status_source = 'host'`, after which the MeetingAgent never changes it."""
+    """`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item, extends it, or both.
+    Sets `status_source = 'host'`, after which the MeetingAgent never changes it.
+
+    `extend_minutes` (polish program, "the agenda as the spine") adds minutes to the item's plan
+    in the room; the original `duration_minutes` is kept and the total added is
+    `extended_minutes` on the item (at most 240). At least one of the two fields is required."""
 
     model_config = ConfigDict(extra="forbid")
 
-    status: AgendaStatus
+    # Optional, but the published schema keeps the plain enum it had before `extend_minutes`
+    # existed (a nullable union reads to oasdiff as every enum value removed).
+    status: Annotated[
+        AgendaStatus | None,
+        WithJsonSchema({"enum": list(get_args(AgendaStatus)), "title": "Status", "type": "string"}),
+    ] = None
+    extend_minutes: Annotated[int, Field(ge=1, le=MAX_EXTEND_MINUTES)] | None = None
+
+    @model_validator(mode="after")
+    def _something_to_do(self) -> AgendaItemStatusUpdate:
+        if self.status is None and self.extend_minutes is None:
+            raise ValueError("send a status, extend_minutes, or both")
+        return self
+
+
+class AgendaAdvance(BaseModel):
+    """`POST /meetings/{id}/agenda/advance` ("Start next"): every item now `in_progress` is
+    finished with `outcome`, and the first `pending` item by position starts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["covered", "skipped"] = "covered"
 
 
 class AgendaItem(BaseModel):
@@ -85,6 +115,20 @@ class AgendaItem(BaseModel):
     agent_note: str | None
     updated_at: datetime
     goal_id: uuid.UUID | None = None
+    # Polish program, "the agenda as the spine" (migration d0e1f2a3b4c5): when the item first
+    # went in progress and last finished, and the minutes the host added in the room. Every
+    # client draws "elapsed versus planned" from these, so a reload agrees with live.
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    extended_minutes: int = 0
+
+
+class AgendaAdvanced(BaseModel):
+    """`POST /meetings/{id}/agenda/advance`: the rows that changed (finished, then started), in
+    position order, and the item now in progress (null when the agenda is done)."""
+
+    items: list[AgendaItem]
+    current: AgendaItem | None
 
 
 class MeetingRef(BaseModel):
@@ -120,14 +164,34 @@ class CarryForwardQuestion(BaseModel):
     question: str
 
 
+class CarryForwardOpenItem(BaseModel):
+    """An open item from the previous meeting's shared minutes (minutes for everyone)."""
+
+    text: str
+    owner_user_id: uuid.UUID | None = None
+    owner_name: str | None = None
+    due: str | None = None
+
+
+class CarryForwardOpenQuestion(BaseModel):
+    """A question the previous meeting left unanswered, from its shared minutes."""
+
+    text: str
+    asked_by_name: str | None = None
+
+
 class CarryForward(BaseModel):
     """`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists and
-    `previous_meeting: null` when the meeting follows up nothing."""
+    `previous_meeting: null` when the meeting follows up nothing. `open_items` and
+    `unanswered_questions` come from the previous meeting's shared minutes (empty until they
+    exist)."""
 
     previous_meeting: MeetingRef | None
     decisions: list[CarryForwardDecision]
     open_actions: list[CarryForwardAction]
     saved_questions: list[CarryForwardQuestion]
+    open_items: list[CarryForwardOpenItem] = Field(default_factory=list)
+    unanswered_questions: list[CarryForwardOpenQuestion] = Field(default_factory=list)
 
 
 class MeetingCreate(BaseModel):
@@ -284,6 +348,12 @@ class Meeting(BaseModel):
     confidential: bool = False
     template_id: uuid.UUID | None = None
     source: MeetingSource = "mytheus"
+    # Polish program, "Close-out ritual" (migration d0e1f2a3b4c5): the host opened the
+    # 60-second wrap-up (null when not wrapping up), and who closed the meeting through it.
+    wrap_up_started_at: datetime | None = None
+    wrap_up_by: uuid.UUID | None = None
+    closed_at: datetime | None = None
+    closed_by: uuid.UUID | None = None
 
 
 class MeetingDetail(Meeting):
@@ -443,7 +513,23 @@ class MeetingSpeakerList(BaseModel):
     items: list[MeetingSpeaker]
 
 
-class Worklog(BaseModel):
+class CardMoment(BaseModel):
+    """Polish program (one card per moment): the moment a card points at. `moment_id` is the
+    same for every card, note and promise about the same words (uuid5 over the meeting and the
+    quoted transcript final); `quote` the words, `quote_speaker_id` who said them (a
+    `users.id`), `quote_start_ms` / `quote_end_ms` when (meeting time, the transcript's clock);
+    `why` one line saying why the card exists or why the person sees it. All null for rows
+    written before the agents sent them."""
+
+    moment_id: uuid.UUID | None = None
+    why: str | None = None
+    quote: str | None = None
+    quote_speaker_id: uuid.UUID | None = None
+    quote_start_ms: int | None = None
+    quote_end_ms: int | None = None
+
+
+class Worklog(CardMoment):
     """One `PersonalListenerAgent` note from `worklogs` (Plan 7-9 section 3.3).
 
     Only `surfaced` notes are ever served; the 0.4-0.7 silent-log band stays in the table and
@@ -474,7 +560,7 @@ ActionStatus = Literal["proposed", "confirmed", "done", "dismissed"]
 _CANDIDATE_TEXT_MAX = 4000
 
 
-class Decision(BaseModel):
+class Decision(CardMoment):
     """One `decisions` row. `proposed` until a participant confirms or dismisses it."""
 
     id: uuid.UUID
@@ -488,7 +574,7 @@ class Decision(BaseModel):
     created_at: datetime
 
 
-class ActionItem(BaseModel):
+class ActionItem(CardMoment):
     """One `action_items` row. `proposed` until a participant confirms or dismisses it."""
 
     id: uuid.UUID
@@ -510,7 +596,7 @@ class CandidateList(BaseModel):
     actions: list[ActionItem]
 
 
-class CandidateState(BaseModel):
+class CandidateState(CardMoment):
     """`GET /meetings/:id/candidates/:candidate_id`: one decision or action candidate of this
     meeting, in any status. Read by `realtime-gateway` to verify a room-wide resolution event
     against the stored row before it tells the room (the shared candidate ledger)."""
@@ -598,7 +684,7 @@ class SuggestionCitation(BaseModel):
     title: str | None = None
 
 
-class Suggestion(BaseModel):
+class Suggestion(CardMoment):
     """One `agent_suggestions` row, as its owner sees it. Never served to anyone else."""
 
     id: uuid.UUID
@@ -724,6 +810,11 @@ class AgendaDraftItem(BaseModel):
 
 class AgendaDraft(BaseModel):
     items: list[AgendaDraftItem]
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="Questions the previous meeting's shared minutes left unanswered, for the "
+        "host to add as items (minutes for everyone).",
+    )
 
 
 # --- ADR-0039 B6: promises ------------------------------------------------------------------
@@ -744,6 +835,10 @@ class Commitment(BaseModel):
     created_at: datetime
     updated_at: datetime
     done_at: datetime | None
+    # polish (one card per moment): the moment the promise was made, and the task that closed
+    # it when an action of the same moment was confirmed for this person
+    moment_id: uuid.UUID | None = None
+    action_item_id: uuid.UUID | None = None
 
 
 class CommitmentList(BaseModel):

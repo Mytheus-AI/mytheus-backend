@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_CONTEXT_FILL_DISMISSED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.core_api.learning import record_feedback
 
 router = APIRouter(prefix="/api/v1", tags=["collaborations"])
 
@@ -286,7 +287,8 @@ async def dismiss_context_fill(
         (
             await session.execute(
                 text(
-                    "SELECT id, meeting_id, dismissed_at FROM agent_collaborations "
+                    "SELECT id, meeting_id, dismissed_at, fill_content, confidence "
+                    "FROM agent_collaborations "
                     "WHERE id = :id AND requester = :u AND fill_content IS NOT NULL FOR UPDATE"
                 ),
                 {"id": str(fill_id), "u": str(ctx.user_id)},
@@ -317,5 +319,17 @@ async def dismiss_context_fill(
         target_id=fill_id,
         metadata={"meeting_id": str(row["meeting_id"])},
         ip=ctx.ip,
+    )
+    await record_feedback(
+        session,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+        meeting_id=row["meeting_id"],
+        agent="ContextGapAgent",
+        kind="context_fill",
+        candidate_id=fill_id,
+        action="dismiss",
+        confidence=row["confidence"],
+        content=row["fill_content"],
     )
     return ContextFillDismissed(id=fill_id, dismissed_at=dismissed_at)

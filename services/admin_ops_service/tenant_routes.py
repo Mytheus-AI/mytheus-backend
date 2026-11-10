@@ -16,6 +16,24 @@ Data export: `POST /admin/tenant/data-export` records the request as an `audit_l
 as "delete this tenant", so reusing it for an export would be dangerous. The export workflow
 does not exist yet, so nothing completes the request (no manifest in `mytheus-exports`);
 `GET /admin/tenant/data-export` lists the recorded requests from `audit_logs`.
+
+Data erasure: `POST /admin/tenant/erasures` erases one person's or one meeting's data. This
+service owns no row of it, so it orchestrates the owners, each as the CALLER (their bearer
+token), in order:
+
+1. core-api `POST /api/v1/erasures` erases core-api's tables in one transaction and checks the
+   typed confirmation (the person's email or the meeting's title) against its own records;
+2. for a person, identity revokes each of their active personal access tokens
+   (`GET /api/v1/api-tokens?owner=all`, then `DELETE /api/v1/api-tokens/{id}`; identity audits
+   each revoke);
+3. here, in one transaction: an `audit_logs` row `data_erasure.completed` (counts, never the
+   erased content and never the person's email) and an `admin-events` `erasure_requested`
+   outbox row with `target_type` `person` or `meeting` (never a tenant), so the stores this repo
+   does not own (vectors, the graph, `transcript_chunks`, agent memory) can purge their share.
+
+Every leg is idempotent, so a failure part-way (a 503 from an upstream) is fixed by asking
+again: what was already erased matches nothing the second time and nothing is recorded as
+completed until every leg has run. `GET /admin/tenant/erasures` lists the completed requests.
 """
 
 from __future__ import annotations
@@ -25,23 +43,30 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.audit import audit
+from libs.shared.audit import ACTION_DATA_ERASURE_COMPLETED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.admin_ops_service.common import (
+    CoreTransport,
     IdentityTransport,
+    emit_admin_event,
+    forward_to_core,
     forward_to_identity,
     staff_user_ids,
 )
 from services.admin_ops_service.schemas import (
     DataExport,
     DataExportList,
+    Erasure,
+    ErasureCreate,
+    ErasureList,
     Member,
     MemberList,
     MemberTierUpdate,
@@ -324,3 +349,126 @@ async def list_data_exports(
             )
         )
     return DataExportList(items=items)
+
+
+async def _revoke_tokens(
+    request: Request, user_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None
+) -> int:
+    """Revoke every active token `user_id` holds, through identity (the tokens' one writer)."""
+    listed = await forward_to_identity(request, "GET", "/api/v1/api-tokens?owner=all", transport)
+    revoked = 0
+    for item in listed.json().get("items", []):
+        if item.get("user_id") != str(user_id) or item.get("state") != "active":
+            continue
+        await forward_to_identity(request, "DELETE", f"/api/v1/api-tokens/{item['id']}", transport)
+        revoked += 1
+    return revoked
+
+
+@router.post("/erasures", response_model=Erasure)
+async def create_erasure(
+    body: ErasureCreate,
+    request: Request,
+    ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
+    core: CoreTransport,
+    identity: IdentityTransport,
+) -> Erasure:
+    """authz: admin. Erase one person's or one meeting's data (see the module docstring).
+    core-api's 404 / 409 (meeting live) / 422 (confirmation mismatch, own data) pass through."""
+    applied = (
+        await forward_to_core(
+            request, "POST", "/api/v1/erasures", core, body.model_dump(mode="json")
+        )
+    ).json()
+    revoked_tokens = 0
+    if body.kind == "person":
+        revoked_tokens = await _revoke_tokens(request, body.target_id, identity)
+    erasure_id = uuid.uuid4()
+    requested_at = datetime.now(UTC)
+    metadata: dict[str, Any] = {
+        "kind": body.kind,
+        "status": "completed",
+        "target_id": str(body.target_id),
+        "erased": applied.get("erased", {}),
+        "anonymized": applied.get("anonymized", {}),
+        "revoked_share_links": applied.get("revoked_share_links", 0),
+        "revoked_tokens": revoked_tokens,
+    }
+    if body.kind == "meeting":
+        # A meeting's title is the console's name for the request; a person's email is not
+        # kept here (the record of an erasure must not hold what it erased).
+        metadata["label"] = applied.get("label")
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, ctx.org_id)
+        await audit(
+            session,
+            org_id=ctx.org_id,
+            actor_id=ctx.user_id,
+            action=ACTION_DATA_ERASURE_COMPLETED,
+            target_type="data_erasure",
+            target_id=erasure_id,
+            metadata=metadata,
+            ip=ctx.ip,
+        )
+        await emit_admin_event(
+            session,
+            org_id=ctx.org_id,
+            event_type="erasure_requested",
+            actor_id=ctx.user_id,
+            target_type=body.kind,
+            target_id=str(body.target_id),
+            detail={"erasure_id": str(erasure_id), "scope": body.kind},
+        )
+    return Erasure(
+        id=erasure_id,
+        kind=body.kind,
+        target_id=body.target_id,
+        label=applied.get("label"),
+        requested_by=ctx.user_id,
+        requested_at=requested_at,
+        erased=metadata["erased"],
+        anonymized=metadata["anonymized"],
+        revoked_share_links=int(metadata["revoked_share_links"]),
+        revoked_tokens=revoked_tokens,
+    )
+
+
+@router.get("/erasures", response_model=ErasureList)
+async def list_erasures(
+    ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> ErasureList:
+    """authz: admin. Completed erasures, newest first. A person's label is their email read now
+    from `users` (RLS-scoped); null when they are gone."""
+    rows = (
+        await session.execute(
+            text(
+                "SELECT a.target_id, a.actor_id, a.occurred_at, a.metadata, u.email "
+                "FROM audit_logs a LEFT JOIN users u "
+                "ON a.metadata->>'kind' = 'person' AND u.id::text = a.metadata->>'target_id' "
+                "WHERE a.action = :a ORDER BY a.occurred_at DESC LIMIT 100"
+            ),
+            {"a": ACTION_DATA_ERASURE_COMPLETED},
+        )
+    ).all()
+    items = []
+    for target_id, actor_id, occurred_at, metadata, email in rows:
+        meta = metadata if isinstance(metadata, dict) else json.loads(metadata or "{}")
+        kind = meta.get("kind")
+        if kind not in ("person", "meeting"):
+            continue
+        items.append(
+            Erasure(
+                id=uuid.UUID(str(target_id)),
+                kind=kind,
+                target_id=uuid.UUID(str(meta.get("target_id"))),
+                label=email if kind == "person" else meta.get("label"),
+                requested_by=actor_id,
+                requested_at=occurred_at,
+                erased=meta.get("erased") or {},
+                anonymized=meta.get("anonymized") or {},
+                revoked_share_links=int(meta.get("revoked_share_links") or 0),
+                revoked_tokens=int(meta.get("revoked_tokens") or 0),
+            )
+        )
+    return ErasureList(items=items)

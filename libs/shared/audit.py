@@ -147,3 +147,17 @@ ACTION_API_TOKEN_REVOKED = "api_token.revoked"
 ACTION_ACTION_CREATED = "action.created"
 ACTION_SHARE_LINK_CREATED = "share_link.created"
 ACTION_SHARE_LINK_REVOKED = "share_link.revoked"
+
+# Polish program, "Close-out ritual": the host opening or cancelling the 60-second wrap-up, and
+# closing the meeting through it (who closed it, and who now owns the cards nobody confirmed).
+ACTION_MEETING_WRAP_UP_STARTED = "meeting.wrap_up_started"
+ACTION_MEETING_WRAP_UP_CANCELLED = "meeting.wrap_up_cancelled"
+ACTION_MEETING_CLOSED = "meeting.closed"
+# Polish program, "Agents that stand in properly": a participant asking the agent of someone who
+# sent it instead of coming. Allowed or denied by the A2A PDP; either way it is a compliance fact.
+ACTION_STAND_IN_ASKED = "stand_in.asked"
+# Data erasure (Workspace > Data and privacy). core-api records its own share
+# (`POST /api/v1/erasures`, row counts); admin-ops-service records the whole request once every
+# leg has run (`POST /admin/tenant/erasures`), and that row is what the console lists.
+ACTION_DATA_ERASURE_APPLIED = "data_erasure.applied"
+ACTION_DATA_ERASURE_COMPLETED = "data_erasure.completed"

@@ -4,6 +4,8 @@ core-api presents its own `core-api=<secret>` entry from `MYTHEUS_NOTIFICATION_C
 (the variable notification-service verifies against), base URL `NOTIFICATION_SERVICE_URL`
 (default `http://notification-service:8000`).
 
+- `GET /internal/email/status`: whether notification-service has an email provider, for the
+  follow-up composer (`email_status`: True / False, None when it cannot be asked).
 - `POST /internal/email/send`: the follow-up email to the external guests a host listed.
   notification-service is the sole external fan-out, so core-api never talks to a mail
   provider itself.
@@ -53,6 +55,28 @@ class NotificationClient:
         ).rstrip("/")
         self._secret = secret if secret is not None else own_secret(os.environ.get(TOKENS_ENV, ""))
         self._transport = transport
+
+    async def email_status(self, org_id: uuid.UUID) -> bool | None:
+        """True / False: whether external guests can be emailed. False when core-api holds no
+        secret for notification-service (it could never send); None when it cannot be asked."""
+        if not self._secret:
+            return False
+        headers = {
+            "X-Mytheus-Service": SERVICE_NAME,
+            "X-Mytheus-Service-Token": self._secret,
+            "X-Mytheus-Org": str(org_id),
+        }
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=3.0) as client:
+                response = await client.get(f"{self._base}/internal/email/status", headers=headers)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            return bool(response.json().get("configured"))
+        except ValueError:
+            return None
 
     async def send_email(
         self,

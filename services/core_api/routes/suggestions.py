@@ -39,13 +39,17 @@ from libs.shared.audit import (
 )
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api.confidence import thresholds
+from services.core_api.learning import band_for, record_feedback
+from services.core_api.meeting_ledger import mark_suggestion
 from services.core_api.routes.candidates import _require_meeting_participant
 from services.core_api.schemas import Suggestion, SuggestionList, SuggestionStatus
 
 router = APIRouter(prefix="/api/v1")
 
-_COLS = "id, meeting_id, question, priority, status, confidence, rationale, citations, created_at"
+_COLS = (
+    "id, meeting_id, question, priority, status, confidence, rationale, citations, created_at, "
+    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+)
 MAX_OPEN = 200  # bounded by windows x 2 per meeting
 MAX_SAVED = 50
 
@@ -55,6 +59,7 @@ _FROM: dict[str, frozenset[str]] = {
     "dismissed": frozenset({"open", "saved"}),
     "saved": frozenset({"open"}),
 }
+_FEEDBACK = {"asked": "ask", "dismissed": "dismiss", "saved": "save"}
 _AUDIT = {
     "asked": ACTION_SUGGESTION_ASKED,
     "dismissed": ACTION_SUGGESTION_DISMISSED,
@@ -74,12 +79,12 @@ async def list_suggestions(
 ) -> SuggestionList:
     """The caller's open, surfaced suggestions for `meeting_id`, plus their saved ones from any
     meeting. Re-hydrates the sidebar on every socket (re)connect. The 0.4-0.7 silent band is
-    stored but never served; the surface threshold is the tenant's."""
+    stored but never served; the surface threshold is the caller's calibrated one, else the
+    workspace's (`learning.band_for`)."""
     user_id = await _require_meeting_participant(session, ctx, meeting_id)
-    overrides = (
-        await session.execute(text("SELECT agent_confidence_overrides FROM tenant_settings"))
-    ).scalar()
-    surface, _ = thresholds(overrides, "QuestionAgent")
+    # The caller's calibrated threshold when they have one (polish wave 2), else the
+    # workspace's: the one the agent decided `surfaced` with.
+    surface, _ = await band_for(session, "QuestionAgent", user_id)
     open_rows = (
         (
             await session.execute(
@@ -163,6 +168,27 @@ async def _transition(
         target_id=suggestion_id,
         metadata={"meeting_id": str(updated["meeting_id"]), "from": current},
         ip=ctx.ip,
+    )
+    # memory inside the meeting: the agent does not suggest this question to this person again
+    await mark_suggestion(
+        ctx.org_id,
+        updated["meeting_id"],
+        ctx.user_id,
+        suggestion_id,
+        status=target,
+        text=updated["question"],
+    )
+    await record_feedback(
+        session,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+        meeting_id=updated["meeting_id"],
+        agent="QuestionAgent",
+        kind="suggestion",
+        candidate_id=suggestion_id,
+        action=_FEEDBACK[target],
+        confidence=updated["confidence"],
+        content=updated["question"],
     )
     return _suggestion(updated)
 

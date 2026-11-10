@@ -133,6 +133,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         status:
           enum:
           - proposed
@@ -141,6 +168,11 @@ components:
           - dismissed
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -217,12 +249,55 @@ components:
       - content
       title: ActionStatus
       type: object
+    AgendaAdvance:
+      additionalProperties: false
+      description: '`POST /meetings/{id}/agenda/advance` ("Start next"): every item now `in_progress`
+        is
+
+        finished with `outcome`, and the first `pending` item by position starts.'
+      properties:
+        outcome:
+          default: covered
+          enum:
+          - covered
+          - skipped
+          title: Outcome
+          type: string
+      title: AgendaAdvance
+      type: object
+    AgendaAdvanced:
+      description: '`POST /meetings/{id}/agenda/advance`: the rows that changed (finished, then started),
+        in
+
+        position order, and the item now in progress (null when the agenda is done).'
+      properties:
+        current:
+          anyOf:
+          - $ref: '#/components/schemas/AgendaItem'
+          - type: 'null'
+        items:
+          items:
+            $ref: '#/components/schemas/AgendaItem'
+          title: Items
+          type: array
+      required:
+      - items
+      - current
+      title: AgendaAdvanced
+      type: object
     AgendaDraft:
       properties:
         items:
           items:
             $ref: '#/components/schemas/AgendaDraftItem'
           title: Items
+          type: array
+        open_questions:
+          description: Questions the previous meeting's shared minutes left unanswered, for the host to
+            add as items (minutes for everyone).
+          items:
+            type: string
+          title: Open Questions
           type: array
       required:
       - items
@@ -294,6 +369,16 @@ components:
           - type: integer
           - type: 'null'
           title: Duration Minutes
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        extended_minutes:
+          default: 0
+          title: Extended Minutes
+          type: integer
         goal_id:
           anyOf:
           - format: uuid
@@ -313,6 +398,12 @@ components:
         position:
           title: Position
           type: integer
+        started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Started At
         status:
           enum:
           - pending
@@ -423,10 +514,24 @@ components:
       type: object
     AgendaItemStatusUpdate:
       additionalProperties: false
-      description: '`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
+      description: '`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item, extends it, or both.
 
-        `status_source = ''host''`, after which the MeetingAgent never changes it.'
+        Sets `status_source = ''host''`, after which the MeetingAgent never changes it.
+
+
+        `extend_minutes` (polish program, "the agenda as the spine") adds minutes to the item''s plan
+
+        in the room; the original `duration_minutes` is kept and the total added is
+
+        `extended_minutes` on the item (at most 240). At least one of the two fields is required.'
       properties:
+        extend_minutes:
+          anyOf:
+          - maximum: 60.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Extend Minutes
         status:
           enum:
           - pending
@@ -435,8 +540,6 @@ components:
           - skipped
           title: Status
           type: string
-      required:
-      - status
       title: AgendaItemStatusUpdate
       type: object
     AgendaReplace:
@@ -455,12 +558,42 @@ components:
       - items
       title: AgendaReplace
       type: object
+    AgentGuidance:
+      properties:
+        examples:
+          items:
+            $ref: '#/components/schemas/GuidanceExample'
+          title: Examples
+          type: array
+        scope:
+          enum:
+          - workspace
+          - person
+          title: Scope
+          type: string
+      required:
+      - scope
+      - examples
+      title: AgentGuidance
+      type: object
     AgentPolicy:
       properties:
         agent_confidence_overrides:
           additionalProperties:
             $ref: '#/components/schemas/ConfidenceBand'
           title: Agent Confidence Overrides
+          type: object
+        calibration:
+          additionalProperties:
+            $ref: '#/components/schemas/CalibrationDetail'
+          title: Calibration
+          type: object
+        user_overrides:
+          additionalProperties:
+            additionalProperties:
+              $ref: '#/components/schemas/ConfidenceBand'
+            type: object
+          title: User Overrides
           type: object
       title: AgentPolicy
       type: object
@@ -493,6 +626,30 @@ components:
       required:
       - attendance
       title: AttendanceUpdate
+      type: object
+    CalibrationDetail:
+      properties:
+        dismiss_rate:
+          description: Decayed share of dismisses
+          maximum: 1.0
+          minimum: 0.0
+          title: Dismiss Rate
+          type: number
+        samples:
+          description: Items with feedback in the window
+          minimum: 0.0
+          title: Samples
+          type: integer
+        surface:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: The calibrated surface threshold; null below the minimum
+          title: Surface
+      required:
+      - samples
+      - dismiss_rate
+      title: CalibrationDetail
       type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first. With
@@ -557,6 +714,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -565,6 +749,11 @@ components:
         status:
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - kind
@@ -577,7 +766,11 @@ components:
       description: '`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists
         and
 
-        `previous_meeting: null` when the meeting follows up nothing.'
+        `previous_meeting: null` when the meeting follows up nothing. `open_items` and
+
+        `unanswered_questions` come from the previous meeting''s shared minutes (empty until they
+
+        exist).'
       properties:
         decisions:
           items:
@@ -589,6 +782,11 @@ components:
             $ref: '#/components/schemas/CarryForwardAction'
           title: Open Actions
           type: array
+        open_items:
+          items:
+            $ref: '#/components/schemas/CarryForwardOpenItem'
+          title: Open Items
+          type: array
         previous_meeting:
           anyOf:
           - $ref: '#/components/schemas/MeetingRef'
@@ -597,6 +795,11 @@ components:
           items:
             $ref: '#/components/schemas/CarryForwardQuestion'
           title: Saved Questions
+          type: array
+        unanswered_questions:
+          items:
+            $ref: '#/components/schemas/CarryForwardOpenQuestion'
+          title: Unanswered Questions
           type: array
       required:
       - previous_meeting
@@ -651,6 +854,47 @@ components:
       - content
       title: CarryForwardDecision
       type: object
+    CarryForwardOpenItem:
+      description: An open item from the previous meeting's shared minutes (minutes for everyone).
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: CarryForwardOpenItem
+      type: object
+    CarryForwardOpenQuestion:
+      description: A question the previous meeting left unanswered, from its shared minutes.
+      properties:
+        asked_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asked By Name
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: CarryForwardOpenQuestion
+      type: object
     CarryForwardQuestion:
       properties:
         id:
@@ -664,6 +908,120 @@ components:
       - id
       - question
       title: CarryForwardQuestion
+      type: object
+    CatchUpActionLine:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      - assignee_id
+      - due_date
+      - created_at
+      title: CatchUpActionLine
+      type: object
+    CatchUpDecisionLine:
+      properties:
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      - confirmed_by
+      - created_at
+      title: CatchUpDecisionLine
+      type: object
+    CatchUpSummary:
+      description: '`GET /meetings/{id}/catch-up-summary`: so far in this meeting.'
+      properties:
+        action_count:
+          title: Action Count
+          type: integer
+        actions:
+          items:
+            $ref: '#/components/schemas/CatchUpActionLine'
+          title: Actions
+          type: array
+        agenda_done:
+          description: Agenda items covered or skipped.
+          title: Agenda Done
+          type: integer
+        agenda_total:
+          title: Agenda Total
+          type: integer
+        current_item:
+          anyOf:
+          - $ref: '#/components/schemas/AgendaItem'
+          - type: 'null'
+          description: The item in progress, if any.
+        decision_count:
+          title: Decision Count
+          type: integer
+        decisions:
+          items:
+            $ref: '#/components/schemas/CatchUpDecisionLine'
+          title: Decisions
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      - status
+      - decision_count
+      - action_count
+      - decisions
+      - actions
+      - agenda_done
+      - agenda_total
+      - current_item
+      title: CatchUpSummary
       type: object
     ChatHistory:
       description: '`GET /meetings/:id/chat`: the meeting''s most recent chat messages, oldest first.'
@@ -807,6 +1165,12 @@ components:
     Commitment:
       description: One of the caller's own promises. Never served to anyone else.
       properties:
+        action_item_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Action Item Id
         content:
           title: Content
           type: string
@@ -844,6 +1208,12 @@ components:
           - type: string
           - type: 'null'
           title: Meeting Title
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         status:
           enum:
           - open
@@ -890,6 +1260,39 @@ components:
       required:
       - status
       title: CommitmentUpdate
+      type: object
+    CompactMemory:
+      properties:
+        learning_enabled:
+          title: Learning Enabled
+          type: boolean
+        open_actions:
+          items:
+            $ref: '#/components/schemas/MemoryOpen'
+          title: Open Actions
+          type: array
+        open_promises:
+          items:
+            $ref: '#/components/schemas/MemoryOpen'
+          title: Open Promises
+          type: array
+        recurring_questions:
+          items:
+            type: string
+          title: Recurring Questions
+          type: array
+        topics:
+          items:
+            type: string
+          title: Topics
+          type: array
+      required:
+      - learning_enabled
+      - topics
+      - recurring_questions
+      - open_actions
+      - open_promises
+      title: CompactMemory
       type: object
     ConfidenceBand:
       properties:
@@ -1159,6 +1562,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -1178,6 +1608,11 @@ components:
             type: string
           - type: 'null'
           title: Supersedes
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -1473,6 +1908,73 @@ components:
       - open_actions
       title: DigestParticipant
       type: object
+    ErasureApplied:
+      properties:
+        anonymized:
+          additionalProperties:
+            type: integer
+          description: Records kept with the person removed.
+          title: Anonymized
+          type: object
+        erased:
+          additionalProperties:
+            type: integer
+          description: Rows deleted, by kind of data.
+          title: Erased
+          type: object
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        label:
+          description: 'What the confirmation matched: an email or a meeting title.'
+          title: Label
+          type: string
+        revoked_share_links:
+          title: Revoked Share Links
+          type: integer
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - kind
+      - target_id
+      - label
+      - erased
+      - anonymized
+      - revoked_share_links
+      title: ErasureApplied
+      type: object
+    ErasureRequest:
+      additionalProperties: false
+      properties:
+        confirm:
+          description: 'Typed confirmation: the person''s email, or the meeting''s title (`Untitled meeting`
+            when it has none). Case and outer spaces are ignored.'
+          maxLength: 320
+          minLength: 1
+          title: Confirm
+          type: string
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        target_id:
+          description: The person's `users.id` or the meeting's id.
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - kind
+      - target_id
+      - confirm
+      title: ErasureRequest
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -1547,10 +2049,31 @@ components:
     FollowUp:
       description: A meeting's follow-up settings as one participant sees them.
       properties:
+        awaiting_minutes:
+          default: false
+          description: The automatic follow-up is waiting for the minutes (sent when they land).
+          title: Awaiting Minutes
+          type: boolean
         can_send:
           description: Host, meeting ended, follow-up on.
           title: Can Send
           type: boolean
+        confidential:
+          default: false
+          title: Confidential
+          type: boolean
+        draft:
+          anyOf:
+          - $ref: '#/components/schemas/FollowUpDraft'
+          - type: 'null'
+          description: For the host, once the meeting ended; null otherwise.
+        email_configured:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          description: 'Whether this server can email external guests: false shows the composer''s not-connected
+            state; null when it could not be determined.'
+          title: Email Configured
         enabled:
           title: Enabled
           type: boolean
@@ -1580,6 +2103,11 @@ components:
         meeting_status:
           title: Meeting Status
           type: string
+        minutes_ready:
+          default: false
+          description: Whether the meeting's shared minutes exist.
+          title: Minutes Ready
+          type: boolean
         share_link:
           anyOf:
           - $ref: '#/components/schemas/FollowUpShareLink'
@@ -1625,16 +2153,72 @@ components:
           title: Share Url
         status:
           description: '`sent`; `disabled` (the host turned the follow-up off); `unavailable` (the meeting
-            has no host who can share its recap).'
+            has no host who can share its recap, or, with `waiting_for_minutes`, the automatic send is
+            waiting for the meeting''s minutes).'
           enum:
           - sent
           - disabled
           - unavailable
           title: Status
           type: string
+        waiting_for_minutes:
+          default: false
+          description: 'Automatic send only: deferred until the meeting''s minutes land; core-api sends
+            it then. `status` is `unavailable` meanwhile (nothing was sent).'
+          title: Waiting For Minutes
+          type: boolean
       required:
       - status
       title: FollowUpDispatch
+      type: object
+    FollowUpDraft:
+      description: The composer's starting point, written from the shared minutes and confirmed records.
+      properties:
+        body:
+          title: Body
+          type: string
+        participant_count:
+          description: Participants who get it (in app, email if on).
+          title: Participant Count
+          type: integer
+        subject:
+          title: Subject
+          type: string
+      required:
+      - subject
+      - body
+      - participant_count
+      title: FollowUpDraft
+      type: object
+    FollowUpSend:
+      additionalProperties: false
+      description: 'What the host''s composer sends. Every field optional: missing ones use the draft.'
+      properties:
+        body:
+          anyOf:
+          - maxLength: 10000
+            minLength: 1
+            type: string
+          - type: 'null'
+          description: Plain text. Lines starting with '- ' become a list in the HTML email.
+          title: Body
+        guest_emails:
+          anyOf:
+          - items:
+              type: string
+            maxItems: 20
+            type: array
+          - type: 'null'
+          description: Replaces the saved external guests before sending.
+          title: Guest Emails
+        subject:
+          anyOf:
+          - maxLength: 200
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Subject
+      title: FollowUpSend
       type: object
     FollowUpShareLink:
       properties:
@@ -1701,6 +2285,39 @@ components:
       - recipient
       - status
       title: GuestDelivery
+      type: object
+    Guidance:
+      properties:
+        agents:
+          additionalProperties:
+            $ref: '#/components/schemas/AgentGuidance'
+          title: Agents
+          type: object
+      title: Guidance
+      type: object
+    GuidanceExample:
+      properties:
+        action:
+          enum:
+          - confirm
+          - dismiss
+          - edit
+          title: Action
+          type: string
+        before:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'action=edit: the agent''s wording'
+          title: Before
+        text:
+          description: The item as the person left it (redacted, short)
+          title: Text
+          type: string
+      required:
+      - action
+      - text
+      title: GuidanceExample
       type: object
     HTTPValidationError:
       properties:
@@ -1834,6 +2451,16 @@ components:
             type: string
           title: Open Actions
           type: array
+        open_items:
+          items:
+            type: string
+          title: Open Items
+          type: array
+        questions:
+          items:
+            type: string
+          title: Questions
+          type: array
       title: InternalCarryForward
       type: object
     InternalProxy:
@@ -1926,6 +2553,18 @@ components:
       type: object
     Meeting:
       properties:
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
         confidential:
           default: false
           title: Confidential
@@ -2010,6 +2649,18 @@ components:
           format: date-time
           title: Updated At
           type: string
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
       required:
       - id
       - title
@@ -2102,6 +2753,18 @@ components:
             $ref: '#/components/schemas/AgendaItem'
           title: Agenda
           type: array
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
         confidential:
           default: false
           title: Confidential
@@ -2190,6 +2853,18 @@ components:
           format: date-time
           title: Updated At
           type: string
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
       required:
       - id
       - title
@@ -2201,6 +2876,111 @@ components:
       - created_at
       - updated_at
       title: MeetingDetail
+      type: object
+    MeetingMinutes:
+      description: One set of minutes. `promises` is always empty on the shared minutes.
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decisions:
+          items:
+            $ref: '#/components/schemas/MinutesDecision'
+          title: Decisions
+          type: array
+        open_items:
+          items:
+            $ref: '#/components/schemas/MinutesOpenItem'
+          title: Open Items
+          type: array
+        promises:
+          items:
+            $ref: '#/components/schemas/MinutesPromise'
+          title: Promises
+          type: array
+        prompt_version:
+          title: Prompt Version
+          type: string
+        reason:
+          anyOf:
+          - enum:
+            - no_transcript
+            - budget
+            - model_error
+            type: string
+          - type: 'null'
+          title: Reason
+        scope:
+          enum:
+          - personal
+          - shared
+          title: Scope
+          type: string
+        status:
+          enum:
+          - ready
+          - empty
+          - unavailable
+          title: Status
+          type: string
+        summary:
+          title: Summary
+          type: string
+        unanswered_questions:
+          items:
+            $ref: '#/components/schemas/MinutesQuestion'
+          title: Unanswered Questions
+          type: array
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - scope
+      - status
+      - summary
+      - decisions
+      - open_items
+      - unanswered_questions
+      - promises
+      - prompt_version
+      - created_at
+      - updated_at
+      title: MeetingMinutes
+      type: object
+    MeetingMinutesView:
+      description: '`GET /api/v1/meetings/{id}/minutes`: the caller''s own minutes and the shared minutes.
+
+
+        `state`: `not_ended` before the meeting is over; `pending` once it ended and before the
+
+        shared minutes landed; `ready` when they did; `unavailable` when none could be made.'
+      properties:
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        mine:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingMinutes'
+          - type: 'null'
+        shared:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingMinutes'
+          - type: 'null'
+        state:
+          enum:
+          - ready
+          - pending
+          - unavailable
+          - not_ended
+          title: State
+          type: string
+      required:
+      - meeting_id
+      - state
+      title: MeetingMinutesView
       type: object
     MeetingPage:
       description: 'Cursor pagination, never OFFSET.
@@ -2289,6 +3069,10 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        minutes:
+          anyOf:
+          - $ref: '#/components/schemas/RecapMinutes'
+          - type: 'null'
         participant_names:
           items:
             type: string
@@ -2650,6 +3434,322 @@ components:
           title: Title
       title: MeetingUpdate
       type: object
+    MemoryCalibration:
+      properties:
+        agent:
+          title: Agent
+          type: string
+        personal:
+          description: True when tuned from your own feedback
+          title: Personal
+          type: boolean
+        samples:
+          description: Your items with feedback in the window
+          title: Samples
+          type: integer
+        surface:
+          description: Confidence above which this agent shows you something
+          title: Surface
+          type: number
+      required:
+      - agent
+      - surface
+      - personal
+      - samples
+      title: MemoryCalibration
+      type: object
+    MemoryOpen:
+      properties:
+        content:
+          title: Content
+          type: string
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: An ISO due date or a spoken due hint
+          title: Due
+      required:
+      - content
+      title: MemoryOpen
+      type: object
+    MemoryOpenAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+      required:
+      - id
+      - content
+      - due_date
+      - meeting_id
+      title: MemoryOpenAction
+      type: object
+    MemoryPromise:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - id
+      - content
+      - due_hint
+      - meeting_id
+      title: MemoryPromise
+      type: object
+    MemoryQuestion:
+      properties:
+        count:
+          description: How often the person asked or saved it
+          title: Count
+          type: integer
+        last_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last At
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - count
+      title: MemoryQuestion
+      type: object
+    MemoryTopic:
+      properties:
+        label:
+          title: Label
+          type: string
+        last_seen_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Seen At
+        mentions:
+          description: Feedback items that named it
+          title: Mentions
+          type: integer
+        pinned:
+          description: Added by the person; never fades
+          title: Pinned
+          type: boolean
+        weight:
+          description: Decayed weight; pinned topics are fixed
+          title: Weight
+          type: number
+      required:
+      - label
+      - weight
+      - mentions
+      - pinned
+      title: MemoryTopic
+      type: object
+    MinutesDecision:
+      properties:
+        decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The decision record this matches, when there is one.
+          title: Decision Id
+        status:
+          enum:
+          - agreed
+          - tentative
+          - deferred
+          - reversed
+          title: Status
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - status
+      title: MinutesDecision
+      type: object
+    MinutesOpenItem:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: As said in the meeting, e.g. 'Friday'.
+          title: Due
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: MinutesOpenItem
+      type: object
+    MinutesPromise:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        text:
+          title: Text
+          type: string
+        to_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To Name
+      required:
+      - text
+      title: MinutesPromise
+      type: object
+    MinutesQuestion:
+      properties:
+        asked_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asked By Name
+        asked_by_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Asked By User Id
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: MinutesQuestion
+      type: object
+    MinutesSource:
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/SourceAction'
+          title: Actions
+          type: array
+        agenda:
+          items:
+            $ref: '#/components/schemas/SourceAgendaItem'
+          title: Agenda
+          type: array
+        confidential:
+          title: Confidential
+          type: boolean
+        decisions:
+          items:
+            $ref: '#/components/schemas/SourceDecision'
+          title: Decisions
+          type: array
+        host_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Host User Id
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        participants:
+          items:
+            $ref: '#/components/schemas/SourceParticipant'
+          title: Participants
+          type: array
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        speakers:
+          additionalProperties:
+            format: uuid
+            type: string
+          title: Speakers
+          type: object
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+        turns:
+          items:
+            $ref: '#/components/schemas/SourceTurn'
+          title: Turns
+          type: array
+        turns_truncated:
+          title: Turns Truncated
+          type: boolean
+      required:
+      - meeting_id
+      - title
+      - status
+      - confidential
+      - host_user_id
+      - scheduled_start
+      - scheduled_end
+      - participants
+      - speakers
+      - turns
+      - turns_truncated
+      - decisions
+      - actions
+      - agenda
+      title: MinutesSource
+      type: object
     MyTask:
       description: 'One action item as the My Tasks screen needs it: the row plus its meeting''s title,
         so
@@ -2714,6 +3814,35 @@ components:
       required:
       - items
       title: MyTaskList
+      type: object
+    NoteFeedback:
+      properties:
+        recorded_at:
+          format: date-time
+          title: Recorded At
+          type: string
+        useful:
+          title: Useful
+          type: boolean
+        worklog_id:
+          format: uuid
+          title: Worklog Id
+          type: string
+      required:
+      - worklog_id
+      - useful
+      - recorded_at
+      title: NoteFeedback
+      type: object
+    NoteRating:
+      additionalProperties: false
+      properties:
+        useful:
+          title: Useful
+          type: boolean
+      required:
+      - useful
+      title: NoteRating
       type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
@@ -2816,6 +3945,101 @@ components:
       required:
       - user_ids
       title: ParticipantsAdd
+      type: object
+    PersonMemory:
+      properties:
+        calibration:
+          items:
+            $ref: '#/components/schemas/MemoryCalibration'
+          title: Calibration
+          type: array
+        learning_enabled:
+          title: Learning Enabled
+          type: boolean
+        muted_topics:
+          items:
+            type: string
+          title: Muted Topics
+          type: array
+        open_actions:
+          items:
+            $ref: '#/components/schemas/MemoryOpenAction'
+          title: Open Actions
+          type: array
+        open_promises:
+          items:
+            $ref: '#/components/schemas/MemoryPromise'
+          title: Open Promises
+          type: array
+        recurring_questions:
+          items:
+            $ref: '#/components/schemas/MemoryQuestion'
+          title: Recurring Questions
+          type: array
+        topics:
+          items:
+            $ref: '#/components/schemas/MemoryTopic'
+          title: Topics
+          type: array
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+      required:
+      - learning_enabled
+      - topics
+      - recurring_questions
+      - muted_topics
+      - open_actions
+      - open_promises
+      - calibration
+      - updated_at
+      title: PersonMemory
+      type: object
+    PersonMemoryUpdate:
+      additionalProperties: false
+      description: 'At least one field. Lists are applied in this order: forget, unmute, pin.'
+      properties:
+        forget_questions:
+          items:
+            maxLength: 300
+            minLength: 1
+            type: string
+          maxItems: 20
+          title: Forget Questions
+          type: array
+        forget_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 100
+          title: Forget Topics
+          type: array
+        learning_enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Learning Enabled
+        pin_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 20
+          title: Pin Topics
+          type: array
+        unmute_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 100
+          title: Unmute Topics
+          type: array
+      title: PersonMemoryUpdate
       type: object
     PostMeetingDigest:
       properties:
@@ -2935,6 +4159,85 @@ components:
       - expires_at
       - view_count
       title: PublicShare
+      type: object
+    RecapMinutes:
+      description: 'The meeting''s shared minutes as a stranger may read them: no ids, no promises.'
+      properties:
+        decisions:
+          items:
+            $ref: '#/components/schemas/RecapMinutesDecision'
+          title: Decisions
+          type: array
+        open_items:
+          items:
+            $ref: '#/components/schemas/RecapMinutesItem'
+          title: Open Items
+          type: array
+        summary:
+          title: Summary
+          type: string
+        unanswered_questions:
+          items:
+            $ref: '#/components/schemas/RecapMinutesQuestion'
+          title: Unanswered Questions
+          type: array
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - summary
+      - decisions
+      - open_items
+      - unanswered_questions
+      - updated_at
+      title: RecapMinutes
+      type: object
+    RecapMinutesDecision:
+      properties:
+        status:
+          title: Status
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - status
+      title: RecapMinutesDecision
+      type: object
+    RecapMinutesItem:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: RecapMinutesItem
+      type: object
+    RecapMinutesQuestion:
+      properties:
+        asked_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asked By Name
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: RecapMinutesQuestion
       type: object
     RecordAction:
       properties:
@@ -3403,6 +4706,12 @@ components:
     ShareLinkCreate:
       additionalProperties: false
       properties:
+        confirm_confidential:
+          default: false
+          description: The host confirms publishing the recap of a confidential meeting. Required (409
+            `confidential_confirmation_required`) for a confidential meeting's recap.
+          title: Confirm Confidential
+          type: boolean
         expires_in_days:
           default: 30
           description: How long the link works, 1 to 365 days. Default 30.
@@ -3468,6 +4777,116 @@ components:
       - actions
       title: SlackDigest
       type: object
+    SourceAction:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - assignee_id
+      - status
+      - due_date
+      title: SourceAction
+      type: object
+    SourceAgendaItem:
+      properties:
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - title
+      - status
+      title: SourceAgendaItem
+      type: object
+    SourceDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: SourceDecision
+      type: object
+    SourceParticipant:
+      properties:
+        attendance:
+          title: Attendance
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        role_in_meeting:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role In Meeting
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      - attendance
+      - role_in_meeting
+      title: SourceParticipant
+      type: object
+    SourceTurn:
+      properties:
+        end_ms:
+          title: End Ms
+          type: integer
+        speaker_id:
+          title: Speaker Id
+          type: string
+        start_ms:
+          title: Start Ms
+          type: integer
+        text:
+          title: Text
+          type: string
+      required:
+      - speaker_id
+      - start_ms
+      - end_ms
+      - text
+      title: SourceTurn
+      type: object
     SpeakerAssign:
       additionalProperties: false
       properties:
@@ -3478,6 +4897,118 @@ components:
       required:
       - user_id
       title: SpeakerAssign
+      type: object
+    StandInAnswer:
+      properties:
+        fill_id:
+          description: The `agent_collaborations` row this ask wrote.
+          format: uuid
+          title: Fill Id
+          type: string
+        outcome:
+          description: '`answered`, `no_answer` (nothing of that kind to share), or `denied` (your workspace''s
+            agent permissions do not allow this question).'
+          enum:
+          - answered
+          - no_answer
+          - denied
+          title: Outcome
+          type: string
+        query_class:
+          enum:
+          - meeting_context
+          - decision_lineage
+          - action_status
+          title: Query Class
+          type: string
+        question:
+          title: Question
+          type: string
+        sources:
+          items:
+            $ref: '#/components/schemas/StandInSource'
+          title: Sources
+          type: array
+        target_scope:
+          enum:
+          - self
+          - same_team
+          - department
+          - org
+          title: Target Scope
+          type: string
+      required:
+      - question
+      - outcome
+      - query_class
+      - target_scope
+      - sources
+      - fill_id
+      title: StandInAnswer
+      type: object
+    StandInAsk:
+      additionalProperties: false
+      properties:
+        question:
+          maxLength: 300
+          minLength: 1
+          title: Question
+          type: string
+      required:
+      - question
+      title: StandInAsk
+      type: object
+    StandInSource:
+      description: One record the answer cites, of the kind the question's class may return.
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        kind:
+          enum:
+          - decision
+          - action
+          - update
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        occurred_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Occurred At
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        text:
+          title: Text
+          type: string
+      required:
+      - kind
+      - text
+      title: StandInSource
       type: object
     StatusAnswer:
       additionalProperties: false
@@ -3595,6 +5126,12 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         priority:
           maximum: 3.0
           minimum: 1.0
@@ -3603,6 +5140,27 @@ components:
         question:
           title: Question
           type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -3616,6 +5174,11 @@ components:
           - saved
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -3994,6 +5557,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         relevance_score:
           anyOf:
           - type: number
@@ -4009,6 +5599,11 @@ components:
           format: uuid
           title: User Id
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
         window_id:
           title: Window Id
           type: string
@@ -4032,6 +5627,200 @@ components:
       required:
       - items
       title: WorklogList
+      type: object
+    WrapUp:
+      description: What is left before the meeting closes, and the shared deadline.
+      properties:
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
+        deadline:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: '`wrap_up_started_at` + 60 s, or null.'
+          title: Deadline
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        open_items:
+          description: Agenda items still pending or in progress.
+          items:
+            $ref: '#/components/schemas/AgendaItem'
+          title: Open Items
+          type: array
+        pending:
+          description: Surfaced cards still proposed, oldest first.
+          items:
+            $ref: '#/components/schemas/WrapUpCard'
+          title: Pending
+          type: array
+        seconds:
+          description: The length of the wrap-up (60).
+          title: Seconds
+          type: integer
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+        unowned_action_ids:
+          description: The pending action cards that have no owner yet.
+          items:
+            format: uuid
+            type: string
+          title: Unowned Action Ids
+          type: array
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
+      required:
+      - meeting_id
+      - status
+      - seconds
+      - wrap_up_started_at
+      - wrap_up_by
+      - deadline
+      - closed_at
+      - closed_by
+      - pending
+      - open_items
+      - unowned_action_ids
+      title: WrapUp
+      type: object
+    WrapUpCard:
+      description: A decision or action card nobody has confirmed or dismissed yet.
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - decision
+          - action
+          title: Kind
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+      required:
+      - id
+      - kind
+      - content
+      - created_at
+      title: WrapUpCard
+      type: object
+    WrapUpClose:
+      additionalProperties: false
+      properties:
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 'Who reviews the cards nobody confirmed (a participant). Default: you.'
+          title: Owner User Id
+        reason:
+          default: host
+          description: '`timer` when the wrap-up ran out, for the audit trail.'
+          enum:
+          - host
+          - timer
+          title: Reason
+          type: string
+      title: WrapUpClose
+      type: object
+    WrapUpClosed:
+      properties:
+        closed_at:
+          format: date-time
+          title: Closed At
+          type: string
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        moved_actions:
+          title: Moved Actions
+          type: integer
+        moved_decisions:
+          title: Moved Decisions
+          type: integer
+        review_owner_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Who now owns reviewing the leftover cards (null when none were left).
+          title: Review Owner Id
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      - status
+      - closed_at
+      - closed_by
+      - review_owner_id
+      - moved_decisions
+      - moved_actions
+      title: WrapUpClosed
       type: object
   securitySchemes:
     HTTPBearer:
@@ -4286,7 +6075,9 @@ paths:
       - actions
   /api/v1/actions/{action_id}/dismiss:
     post:
-      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      description: 'proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+
+        wave 2). Idempotent on re-dismiss (which records nothing).'
       operationId: dismiss_action
       parameters:
       - in: path
@@ -4682,7 +6473,9 @@ paths:
       - decisions
   /api/v1/decisions/{decision_id}/dismiss:
     post:
-      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      description: 'proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+
+        wave 2). Idempotent on re-dismiss (which records nothing).'
       operationId: dismiss_decision
       parameters:
       - in: path
@@ -4928,6 +6721,146 @@ paths:
       summary: Create Department
       tags:
       - org-hierarchy
+  /api/v1/erasures:
+    post:
+      description: 'authz: admin. Erase core-api''s data for one person or one meeting (module docstring).'
+      operationId: apply_erasure
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasureRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErasureApplied'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '404':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No such person or meeting in this workspace.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The meeting is live.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The typed confirmation does not match, or it is your own data.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Apply Erasure
+      tags:
+      - erasure
+  /api/v1/me/memory:
+    delete:
+      description: Forget everything learned about you, and scrub the text of your feedback.
+      operationId: forget_my_memory
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Forget My Memory
+      tags:
+      - memory
+    get:
+      description: What your agents remember about you across meetings. Only ever your own.
+      operationId: get_my_memory
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get My Memory
+      tags:
+      - memory
+    patch:
+      description: Pin, forget or unmute topics, forget questions, switch learning off or on.
+      operationId: update_my_memory
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonMemoryUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update My Memory
+      tags:
+      - memory
   /api/v1/meeting-templates:
     get:
       operationId: list_templates
@@ -5192,7 +7125,11 @@ paths:
 
         not `covered`, by position (`unfinished`); its open confirmed action items, oldest first, as
 
-        `Status: {content}` owned by the assignee (`open_action`). Both ids must name rows of this
+        `Status: {content}` owned by the assignee (`open_action`). Beside the items,
+
+        `open_questions`: the questions its shared minutes left unanswered. Both ids must name
+
+        rows of this
 
         tenant (422 naming the field). A confidential previous meeting contributes nothing for a
 
@@ -5390,12 +7327,81 @@ paths:
       summary: Replace Agenda
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/agenda/advance:
+    post:
+      description: '"Start next" (host or creator): every item now `in_progress` is finished with `outcome`
+
+        (`covered` by default, or `skipped`), then the first `pending` item by position starts. One
+
+        transaction with the meeting row locked, so two clicks apply one after the other and the
+
+        room never sees two items in progress. Every touched item becomes host-set. 409 once the
+
+        meeting has ended; an agenda with nothing left to start finishes the current item and
+
+        returns `current: null`.'
+      operationId: advance_agenda
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgendaAdvance'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgendaAdvanced'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Advance Agenda
+      tags:
+      - meetings
   /api/v1/meetings/{meeting_id}/agenda/{item_id}:
     patch:
-      description: 'The host marks an item (host or creator). Sets `status_source = ''host''`: from then
-        on
+      description: 'The host marks an item, extends it, or both (host or creator). Sets
 
-        the MeetingAgent''s updates to this item are ignored (the host wins, ADR-0038 D7).'
+        `status_source = ''host''`: from then on the MeetingAgent''s updates to this item are ignored
+
+        (the host wins, ADR-0038 D7).
+
+
+        Polish program, "the agenda as the spine": `in_progress` stamps `started_at` (once),
+
+        `covered`/`skipped` stamp `ended_at`, `pending` clears both; `extend_minutes` adds to
+
+        `extended_minutes` (422 past 240 in total). A meeting that is over is 409.'
       operationId: set_agenda_item_status
       parameters:
       - in: path
@@ -5514,7 +7520,9 @@ paths:
 
         Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
 
-        stored but never served; the surface threshold is the tenant''s, per agent.
+        stored but never served; the surface threshold is the workspace''s, per agent: the tenant''s
+
+        override or default, moved by the confirm/dismiss calibration (`learning.band_for`).
 
 
         `include_resolved=true` (polish program, shared candidate ledger) also returns the
@@ -5633,7 +7641,12 @@ paths:
 
         status request, or null). A confidential previous meeting is never a source for a caller
 
-        who was not in it (B2): they get the same empty answer as for no link.'
+        who was not in it (B2): they get the same empty answer as for no link.
+
+
+        Minutes for everyone: the open items and unanswered questions of the previous meeting''s
+
+        shared minutes (never anyone''s personal minutes).'
       operationId: carry_forward
       parameters:
       - in: path
@@ -5666,6 +7679,43 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Carry Forward
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/catch-up-summary:
+    get:
+      description: So far in this meeting, for someone joining late (participants).
+      operationId: catch_up_summary
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatchUpSummary'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Catch Up Summary
       tags:
       - meetings
   /api/v1/meetings/{meeting_id}/chat:
@@ -5905,9 +7955,11 @@ paths:
       - follow-ups
   /api/v1/meetings/{meeting_id}/follow-up/send:
     post:
-      description: 'Send the follow-up now. The host only, once the meeting has ended; pressing it again
+      description: 'Send the follow-up now, with the composer''s subject, body and guests (each optional:
 
-        reaches only guests added since. Honours `Idempotency-Key`.'
+        the draft and the saved guests otherwise). The host only, once the meeting has ended;
+
+        pressing it again reaches only guests added since. Honours `Idempotency-Key`.'
       operationId: send_follow_up
       parameters:
       - in: path
@@ -5925,6 +7977,14 @@ paths:
         required: false
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/FollowUpSend'
+              - type: 'null'
+              title: Body
       responses:
         '200':
           content:
@@ -5950,6 +8010,50 @@ paths:
       summary: Send Follow Up
       tags:
       - follow-ups
+  /api/v1/meetings/{meeting_id}/minutes:
+    get:
+      description: 'Your minutes (decisions with their status, open items with owners, unanswered
+
+        questions and your promises) and the shared minutes everyone in the meeting sees.'
+      operationId: get_minutes
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingMinutesView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant of this meeting.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Read a meeting's minutes
+      tags:
+      - minutes
   /api/v1/meetings/{meeting_id}/participants:
     post:
       description: 'Invite tenant users into an existing meeting. Only someone already in it may invite.
@@ -6222,6 +8326,9 @@ paths:
       tags:
       - share-links
     post:
+      description: 'The public recap: confirmed decisions and actions and the meeting''s shared minutes
+
+        (never anyone''s personal minutes or promises).'
       operationId: create_recap_link
       parameters:
       - in: path
@@ -6264,6 +8371,11 @@ paths:
             application/problem+json:
               schema: *id001
           description: Not a participant, or a confidential meeting you do not host.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: A confidential meeting's recap needs `confirm_confidential`.
         '422':
           content:
             application/problem+json:
@@ -6389,6 +8501,63 @@ paths:
       summary: Assign Speaker
       tags:
       - speakers
+  /api/v1/meetings/{meeting_id}/stand-ins/{user_id}/ask:
+    post:
+      operationId: ask_stand_in
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StandInAsk'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandInAnswer'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask the agent of someone who sent it instead of coming
+      tags:
+      - stand-ins
   /api/v1/meetings/{meeting_id}/transcript:
     get:
       description: 'Finals only, in spoken order. No `org_id` parameter: RLS scopes it to the caller.
@@ -6516,6 +8685,186 @@ paths:
       summary: List My Worklogs
       tags:
       - worklogs
+  /api/v1/meetings/{meeting_id}/wrap-up:
+    get:
+      description: What is left before the meeting closes (participants).
+      operationId: get_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Wrap Up
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/cancel:
+    post:
+      description: '"Keep the meeting going": the wrap-up closes and the meeting carries on.'
+      operationId: cancel_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Cancel Wrap Up
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/close:
+    post:
+      description: End the meeting for everyone and hand every card nobody confirmed to a named owner.
+      operationId: close_meeting
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/WrapUpClose'
+              - type: 'null'
+              title: Body
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUpClosed'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Close Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/start:
+    post:
+      description: 'The host opens the 60-second wrap-up. Idempotent: the first start time stands.'
+      operationId: start_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start Wrap Up
+      tags:
+      - meetings
   /api/v1/public/shares/{token}:
     get:
       description: 'No authentication: the signed token in the path is the credential. 404 for a token
@@ -6744,7 +9093,9 @@ paths:
 
         meeting. Re-hydrates the sidebar on every socket (re)connect. The 0.4-0.7 silent band is
 
-        stored but never served; the surface threshold is the tenant''s.'
+        stored but never served; the surface threshold is the caller''s calibrated one, else the
+
+        workspace''s (`learning.band_for`).'
       operationId: list_suggestions
       parameters:
       - description: The meeting the sidebar is open on
@@ -7145,6 +9496,57 @@ paths:
       summary: Add Team Member
       tags:
       - org-hierarchy
+  /api/v1/worklogs/{worklog_id}/feedback:
+    post:
+      description: 'Rate one of your own notes useful or not: your PersonalListenerAgent learns from it.'
+      operationId: rate_note
+      parameters:
+      - in: path
+        name: worklog_id
+        required: true
+        schema:
+          format: uuid
+          title: Worklog Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteRating'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteFeedback'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Rate Note
+      tags:
+      - worklogs
   /healthz:
     get:
       operationId: healthz
@@ -7294,6 +9696,47 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Action Status
+      tags:
+      - core-internal
+  /internal/agent-guidance:
+    get:
+      operationId: agent_guidance
+      parameters:
+      - in: query
+        name: user_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guidance'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Agent Guidance
       tags:
       - core-internal
   /internal/agent-policy:
@@ -7450,7 +9893,9 @@ paths:
       - core-internal
   /internal/meetings/{meeting_id}/follow-up/dispatch:
     post:
-      description: 'workflow-service, after the meeting ended: send the follow-up (or `disabled`).'
+      description: 'workflow-service, after the meeting ended: send the follow-up (or `disabled`, or
+
+        `waiting_for_minutes` while the meeting''s minutes are on their way).'
       operationId: dispatch_follow_up
       parameters:
       - in: path
@@ -7534,6 +9979,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Index Policy
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/minutes-source:
+    get:
+      operationId: minutes_source
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MinutesSource'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Minutes Source
       tags:
       - core-internal
   /internal/meetings/{meeting_id}/participants:
@@ -7836,6 +10320,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Create Status Requests
+      tags:
+      - core-internal
+  /internal/person-memory/{user_id}:
+    get:
+      operationId: person_memory
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Person Memory
       tags:
       - core-internal
   /internal/retrieval/records:

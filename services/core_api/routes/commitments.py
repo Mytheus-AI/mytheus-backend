@@ -31,7 +31,7 @@ MAX_COMMITMENTS = 200
 _SELECT = (
     "SELECT c.id, c.meeting_id, m.title AS meeting_title, "
     "m.scheduled_start AS meeting_scheduled_start, c.content, c.due_hint, c.status, "
-    "c.created_at, c.updated_at, c.done_at "
+    "c.created_at, c.updated_at, c.done_at, c.moment_id, c.action_item_id "
     "FROM commitments c JOIN meetings m ON m.id = c.meeting_id "
 )
 

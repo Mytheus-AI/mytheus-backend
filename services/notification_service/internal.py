@@ -1,5 +1,8 @@
 """notification-service internal routes (caller tokens, see `internal_auth.py`).
 
+- `GET /internal/email/status` (core-api): `{configured, provider}`, so core-api can tell the
+  host before they send whether external guests can be emailed at all (the follow-up composer's
+  "Email is not connected yet" state). Reads the environment only.
 - `POST /internal/email/send` (core-api): send one email to up to 20 addresses that are not
   users of the tenant, e.g. the external guests a host listed on a meeting follow-up. Users are
   never mailed through here: they get the `notifications` event, whose delivery honours their
@@ -108,6 +111,20 @@ def get_sender() -> EmailSender | None:
 def set_sender(sender: EmailSender | None, *, active: bool = True) -> None:
     global _sender_override, _override_set
     _sender_override, _override_set = sender, active
+
+
+class EmailStatus(BaseModel):
+    configured: bool
+    provider: Literal["resend", "smtp"] | None
+
+
+@router.get("/internal/email/status", response_model=EmailStatus)
+async def email_status(
+    _org_id: Annotated[uuid.UUID, Depends(core_caller)],
+) -> EmailStatus:
+    """Whether this server has an email provider (no secret or address is revealed)."""
+    sender = get_sender()
+    return EmailStatus(configured=sender is not None, provider=provider_name(sender))
 
 
 @router.post("/internal/email/send", response_model=EmailSendResult)

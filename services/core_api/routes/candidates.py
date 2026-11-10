@@ -18,7 +18,12 @@ tenants (gap 31, `services/core_api/visibility.py`).
 Status rules (409 `VERSION_CONFLICT` otherwise):
 - PATCH only while `proposed`.
 - confirm: `proposed` -> `confirmed`; already `confirmed` -> 200, no new event.
-- dismiss: `proposed` -> `dismissed`, no event; already `dismissed` -> 200.
+- dismiss: `proposed` -> `dismissed`, no decisions/actions event; already `dismissed` -> 200.
+
+Polish wave 2 (agents that learn): every real transition (an edit that changes a value, a
+confirm, a dismiss) also records one `agent_feedback` row and its `agent-feedback` event, in the
+same transaction (`services/core_api/learning.py`). A repeat that changes nothing records
+nothing. The reload read applies the workspace's calibrated threshold (`learning.band_for`).
 Rows are read `FOR UPDATE`, so a confirm racing a dismiss serialises and the loser gets 409.
 """
 
@@ -43,7 +48,8 @@ from libs.shared.authz import RequestContext, not_found, require_tier, tenant_se
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
-from services.core_api.confidence import thresholds
+from services.core_api.learning import band_for, edit_diff, record_feedback
+from services.core_api.meeting_ledger import mark_candidate
 from services.core_api.routes.chat import (
     _fetch_meeting_exists,
     _not_a_participant,
@@ -65,11 +71,15 @@ router = APIRouter(prefix="/api/v1")
 PRODUCER = "core-api"
 _EPOCH = date(1970, 1, 1)
 
+# polish program (one card per moment): the moment, the words and the why line ride every read
+_MOMENT_COLS = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
 _DECISION_COLS = (
-    "id, meeting_id, content, rationale, confidence, status, confirmed_by, supersedes, created_at"
+    "id, meeting_id, content, rationale, confidence, status, confirmed_by, supersedes, created_at, "
+    + _MOMENT_COLS
 )
 _ACTION_COLS = (
-    "id, meeting_id, content, assignee_id, due_date, confidence, status, confirmed_by, created_at"
+    "id, meeting_id, content, assignee_id, due_date, confidence, status, confirmed_by, created_at, "
+    + _MOMENT_COLS
 )
 
 # A meeting's candidates are bounded by its windows (~90 per hour per agent), so one page.
@@ -127,7 +137,8 @@ async def list_candidates(
     """Proposed, surfaced decision and action candidates for one meeting, oldest first.
 
     Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
-    stored but never served; the surface threshold is the tenant's, per agent.
+    stored but never served; the surface threshold is the workspace's, per agent: the tenant's
+    override or default, moved by the confirm/dismiss calibration (`learning.band_for`).
 
     `include_resolved=true` (polish program, shared candidate ledger) also returns the
     meeting's CONFIRMED decisions and actions, whatever their confidence (a person confirmed
@@ -135,11 +146,9 @@ async def list_candidates(
     and Actions in Notes mode after a reload. Dismissed rows are never returned.
     """
     await _require_meeting_participant(session, ctx, meeting_id)
-    overrides = (
-        await session.execute(text("SELECT agent_confidence_overrides FROM tenant_settings"))
-    ).scalar()
-    decision_surface, _ = thresholds(overrides, "DecisionAgent")
-    action_surface, _ = thresholds(overrides, "ActionAgent")
+    # The workspace's calibrated thresholds, the ones the agent decided `surfaced` with.
+    decision_surface, _ = await band_for(session, "DecisionAgent")
+    action_surface, _ = await band_for(session, "ActionAgent")
     params = {"m": str(meeting_id), "limit": MAX_CANDIDATES, "resolved": include_resolved}
     decisions = (
         (
@@ -230,8 +239,66 @@ async def get_candidate(
     return CandidateState(kind="action", **{k: action[k] for k in _STATE_ACTION})
 
 
-_STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by")
-_STATE_ACTION = ("id", "meeting_id", "status", "content", "assignee_id", "due_date", "confirmed_by")
+_MOMENT = ("moment_id", "why", "quote", "quote_speaker_id", "quote_start_ms", "quote_end_ms")
+_STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by", *_MOMENT)
+_STATE_ACTION = (
+    "id",
+    "meeting_id",
+    "status",
+    "content",
+    "assignee_id",
+    "due_date",
+    "confirmed_by",
+    *_MOMENT,
+)
+
+
+# --- feedback (polish wave 2: agents that learn) -------------------------------------------
+
+_AGENT_OF = {"decision": "DecisionAgent", "action": "ActionAgent"}
+
+
+async def _feedback(
+    session: AsyncSession,
+    ctx: RequestContext,
+    user_id: uuid.UUID,
+    kind: str,
+    action: str,
+    row: Any,
+    diff: dict[str, Any] | None = None,
+) -> None:
+    """One `agent_feedback` row + `agent-feedback` event for a real transition (a repeated
+    confirm or dismiss returned early and records nothing), in this transaction."""
+    await record_feedback(
+        session,
+        org_id=ctx.org_id,
+        user_id=user_id,
+        meeting_id=row["meeting_id"],
+        agent=_AGENT_OF[kind],
+        kind=kind,
+        candidate_id=row["id"],
+        action=action,
+        confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+        content=row["content"],
+        diff=diff,
+    )
+
+
+async def _feedback_edit(
+    session: AsyncSession,
+    ctx: RequestContext,
+    user_id: uuid.UUID,
+    kind: str,
+    before: dict[str, Any],
+    after: Any,
+    fields: dict[str, Any],
+) -> None:
+    """An edit is feedback only when a value actually changed: the diff of the PATCHed fields."""
+    diff = edit_diff(
+        {k: before.get(k) for k in fields}, {k: after[k] for k in fields if k in after}
+    )
+    if diff:
+        await _feedback(session, ctx, user_id, kind, "edit", after, diff)
 
 
 # --- decisions -----------------------------------------------------------------------------
@@ -244,7 +311,7 @@ async def update_decision(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> Decision:
-    row, _ = await _locked_row(session, ctx, "decisions", _DECISION_COLS, decision_id)
+    row, user_id = await _locked_row(session, ctx, "decisions", _DECISION_COLS, decision_id)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} decision can no longer be edited")
     fields = body.model_dump(exclude_unset=True)
@@ -253,8 +320,8 @@ async def update_decision(
         (
             await session.execute(
                 text(
-                    f"UPDATE decisions SET {sets} WHERE id = :id "  # noqa: S608
-                    f"RETURNING {_DECISION_COLS}"
+                    f"UPDATE decisions SET {sets}, edited_at = now() "  # noqa: S608
+                    f"WHERE id = :id RETURNING {_DECISION_COLS}"
                 ),
                 {**fields, "id": str(decision_id)},
             )
@@ -262,6 +329,16 @@ async def update_decision(
         .mappings()
         .one()
     )
+    # a person's edit is final for the agents: they never update this card again
+    await mark_candidate(
+        ctx.org_id,
+        updated["meeting_id"],
+        decision_id,
+        kind="decision",
+        status="edited",
+        text=updated["content"],
+    )
+    await _feedback_edit(session, ctx, user_id, "decision", row, updated, fields)
     return Decision(**dict(updated))
 
 
@@ -353,6 +430,10 @@ async def confirm_decision(
         },
         ip=ctx.ip,
     )
+    await mark_candidate(
+        ctx.org_id, confirmed["meeting_id"], decision_id, kind="decision", status="confirmed"
+    )
+    await _feedback(session, ctx, user_id, "decision", "confirm", confirmed)
     return Decision(**confirmed)
 
 
@@ -362,7 +443,8 @@ async def dismiss_decision(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> Decision:
-    """proposed -> dismissed. Emits nothing. Idempotent on re-dismiss."""
+    """proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+    wave 2). Idempotent on re-dismiss (which records nothing)."""
     row, user_id = await _locked_row(session, ctx, "decisions", _DECISION_COLS, decision_id)
     if row["status"] == "dismissed":
         return Decision(**row)
@@ -391,6 +473,10 @@ async def dismiss_decision(
         metadata={"meeting_id": str(dismissed["meeting_id"])},
         ip=ctx.ip,
     )
+    await mark_candidate(
+        ctx.org_id, dismissed["meeting_id"], decision_id, kind="decision", status="dismissed"
+    )
+    await _feedback(session, ctx, user_id, "decision", "dismiss", dismissed)
     return Decision(**dict(dismissed))
 
 
@@ -404,7 +490,7 @@ async def update_action(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> ActionItem:
-    row, _ = await _locked_row(session, ctx, "action_items", _ACTION_COLS, action_id)
+    row, user_id = await _locked_row(session, ctx, "action_items", _ACTION_COLS, action_id)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} action can no longer be edited")
     fields = body.model_dump(exclude_unset=True)
@@ -423,8 +509,8 @@ async def update_action(
         (
             await session.execute(
                 text(
-                    f"UPDATE action_items SET {sets} WHERE id = :id "  # noqa: S608
-                    f"RETURNING {_ACTION_COLS}"
+                    f"UPDATE action_items SET {sets}, edited_at = now() "  # noqa: S608
+                    f"WHERE id = :id RETURNING {_ACTION_COLS}"
                 ),
                 {**fields, "id": str(action_id)},
             )
@@ -432,6 +518,15 @@ async def update_action(
         .mappings()
         .one()
     )
+    await mark_candidate(
+        ctx.org_id,
+        updated["meeting_id"],
+        action_id,
+        kind="action",
+        status="edited",
+        text=updated["content"],
+    )
+    await _feedback_edit(session, ctx, user_id, "action", row, updated, fields)
     return ActionItem(**dict(updated))
 
 
@@ -489,7 +584,38 @@ async def confirm_action(
         metadata={"meeting_id": str(confirmed["meeting_id"])},
         ip=ctx.ip,
     )
+    await close_matching_promises(session, confirmed)
+    await mark_candidate(
+        ctx.org_id, confirmed["meeting_id"], action_id, kind="action", status="confirmed"
+    )
+    await _feedback(session, ctx, user_id, "action", "confirm", confirmed)
     return ActionItem(**confirmed)
+
+
+async def close_matching_promises(session: AsyncSession, action: dict[str, Any]) -> int:
+    """One card per moment: a confirmed action closes the promise its assignee made at the
+    same moment (the PersonalListener commitment and the ActionAgent candidate quote the same
+    words, so they carry the same `moment_id`). The promise becomes `done` and points at the
+    task that now tracks it (`action_item_id`). Only the assignee's own open promises of this
+    meeting; nothing without an assignee or a moment. Returns how many were closed."""
+    if action.get("assignee_id") is None or action.get("moment_id") is None:
+        return 0
+    closed = (
+        await session.execute(
+            text(
+                "UPDATE commitments SET status = 'done', done_at = now(), updated_at = now(), "
+                "action_item_id = :a WHERE meeting_id = :m AND moment_id = :mo "
+                "AND user_id = :u AND status = 'open' RETURNING id"
+            ),
+            {
+                "a": str(action["id"]),
+                "m": str(action["meeting_id"]),
+                "mo": str(action["moment_id"]),
+                "u": str(action["assignee_id"]),
+            },
+        )
+    ).all()
+    return len(closed)
 
 
 @router.post("/actions/{action_id}/dismiss", response_model=ActionItem, tags=["actions"])
@@ -498,7 +624,8 @@ async def dismiss_action(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> ActionItem:
-    """proposed -> dismissed. Emits nothing. Idempotent on re-dismiss."""
+    """proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+    wave 2). Idempotent on re-dismiss (which records nothing)."""
     row, user_id = await _locked_row(session, ctx, "action_items", _ACTION_COLS, action_id)
     if row["status"] == "dismissed":
         return ActionItem(**row)
@@ -527,6 +654,10 @@ async def dismiss_action(
         metadata={"meeting_id": str(dismissed["meeting_id"])},
         ip=ctx.ip,
     )
+    await mark_candidate(
+        ctx.org_id, dismissed["meeting_id"], action_id, kind="action", status="dismissed"
+    )
+    await _feedback(session, ctx, user_id, "action", "dismiss", dismissed)
     return ActionItem(**dict(dismissed))
 
 
