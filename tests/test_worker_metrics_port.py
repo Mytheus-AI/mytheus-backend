@@ -69,6 +69,13 @@ async def _meeting_consumer() -> None:
         await run_consumer()
 
 
+async def _notification_consumer() -> None:
+    from services.notification_service.consumer import run_consumer
+
+    with pytest.raises(_Stop):
+        await run_consumer()
+
+
 async def _tap_worker() -> None:
     from services.meeting_service.audio_tap_worker import run_worker
 
@@ -80,6 +87,10 @@ async def _tap_worker() -> None:
 WORKERS: dict[str, tuple[Callable[[], Awaitable[None]], str]] = {
     "core-api-consumer": (_core_api, "core-api-consumer"),
     "meeting-service-consumer": (_meeting_consumer, "meeting-service-consumer"),
+    "notification-service-consumer": (
+        _notification_consumer,
+        "notification-service-consumer",
+    ),
     "audio-tap-worker": (_tap_worker, "meeting-service-audio-tap-worker"),
 }
 
