@@ -11,6 +11,7 @@ from services.identity_tenant_service.pii_vault import routes as pii_vault_route
 from services.identity_tenant_service.routes import (
     auth,
     context,
+    internal_status,
     orgs,
     rbac,
     scim,
@@ -34,3 +35,5 @@ app.include_router(pii_vault_routes.router)
 # GET/POST /api/v1/agent-authz-scopes, DELETE /api/v1/agent-authz-scopes/{id},
 # POST /api/v1/agent-authz-scopes/template (A2A grants, ADR-0013, owner/admin only).
 app.include_router(a2a_routes.router)
+# POST /internal/tenant-status (INTERNAL, caller admin-ops-service; suspend/reinstate, P12).
+app.include_router(internal_status.router)

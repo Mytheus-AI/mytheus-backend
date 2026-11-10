@@ -4,8 +4,9 @@ Run with: uv run python -m services.workflow_service.worker
 
 Workers are stateless — Temporal owns workflow state. Scale on task-queue depth.
 
-The `meeting-events` consumer that starts and signals MeetingLifecycleWorkflow is a separate
-process: `python -m services.workflow_service.consumer`.
+The consumer that starts and signals MeetingLifecycleWorkflow (`meeting-events`) and starts
+ActionFollowUpWorkflow (`actions`) is a separate process: `python -m
+services.workflow_service.consumer`.
 """
 
 import asyncio
@@ -15,6 +16,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from services.workflow_service.activities import LifecycleActivities
+from services.workflow_service.followup_activities import FollowUpActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
@@ -28,8 +30,11 @@ _TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "mytheus-backend")
 
 async def main() -> None:
     client = await Client.connect(_TEMPORAL_ADDRESS, namespace=_TEMPORAL_NAMESPACE)
-    # MeetingLifecycleWorkflow's REST activities (P10). The other workflows are still stubs.
+    # MeetingLifecycleWorkflow's REST activities (P10, Slack touches P12) and
+    # ActionFollowUpWorkflow's (P12; these also need DATABASE_URL for the outbox). RTBF and
+    # dunning are still stubs.
     lifecycle = LifecycleActivities.from_env()
+    followup = FollowUpActivities.from_env()
     worker = Worker(
         client,
         task_queue=_TASK_QUEUE,
@@ -40,7 +45,7 @@ async def main() -> None:
             DunningSagaWorkflow,
             UsageRollupWorkflow,
         ],
-        activities=lifecycle.all(),
+        activities=[*lifecycle.all(), *followup.all()],
     )
     if await ensure_schedule(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")

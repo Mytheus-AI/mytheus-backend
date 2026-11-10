@@ -29,6 +29,18 @@ Steps, each an activity over REST (`services/workflow_service/activities.py`) wi
 
 All workflow state is in Temporal history, so the run survives a worker restart: the next worker
 replays history and resumes waiting at step 2.
+
+P12 adds two Slack touches (integration-service builds the Block Kit and emits the
+`notifications`; it answers `{sent: 0}` when the tenant has no Slack, so both are no-ops then):
+
+- Prep brief at `PREP_BRIEF_LEAD` (15 minutes) before the scheduled start: step 2's wait first
+  runs until that instant, then `send_prep_brief` fires once, then the wait continues to the
+  same `MAX_OPEN` bound. A meeting created inside the window gets its brief at once; one with no
+  scheduled start, or whose start has passed, or that ends first, gets none.
+- Meeting summary on `ended`, after post-processing: `send_meeting_summary`.
+
+Neither may fail the run (a failure is recorded in the output, like post-processing). Both are
+behind `workflow.patched` markers, so executions started before this change replay unchanged.
 """
 
 from __future__ import annotations
@@ -50,6 +62,10 @@ RETRY_POLICY = RetryPolicy(
 )
 ROOM_TIMEOUT = timedelta(seconds=30)
 POST_PROCESSING_TIMEOUT = timedelta(minutes=10)
+SLACK_TIMEOUT = timedelta(seconds=30)
+PREP_BRIEF_LEAD = timedelta(minutes=15)
+PREP_BRIEF_PATCH = "p12-prep-brief"
+SUMMARY_PATCH = "p12-meeting-summary"
 
 
 NEVER_ENDED = "MeetingNeverEnded"
@@ -59,18 +75,31 @@ def workflow_id_for(meeting_id: str) -> str:
     return f"meetinglifecycle-{meeting_id}"
 
 
+def parse_start(scheduled_start: object) -> datetime | None:
+    """The scheduled start as an aware datetime (naive = UTC), or None."""
+    if not isinstance(scheduled_start, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(scheduled_start)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def prep_brief_delay(now: datetime, scheduled_start: object) -> timedelta | None:
+    """How long to wait before the prep brief: None when there is no future start, zero when
+    the start is less than `PREP_BRIEF_LEAD` away. Pure, so the workflow stays deterministic."""
+    start = parse_start(scheduled_start)
+    if start is None or start <= now:
+        return None
+    return max(start - PREP_BRIEF_LEAD - now, timedelta(0))
+
+
 def wait_bound(now: datetime, scheduled_start: object) -> timedelta:
     """How long to wait for `ended`: `MAX_OPEN` past the scheduled start, or past `now` when
     there is none (or it has already passed). Pure, so the workflow stays deterministic."""
-    anchor = now
-    if isinstance(scheduled_start, str):
-        try:
-            parsed = datetime.fromisoformat(scheduled_start)
-        except ValueError:
-            parsed = None
-        if parsed is not None:
-            parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-            anchor = max(now, parsed)
+    start = parse_start(scheduled_start)
+    anchor = max(now, start) if start is not None else now
     return anchor + MAX_OPEN - now
 
 
@@ -86,6 +115,19 @@ class MeetingLifecycleWorkflow:
     @workflow.query(name="ended")
     def ended(self) -> bool:
         return self._ended
+
+    async def _slack(self, activity: str, args: list[str], out: dict[str, Any], key: str) -> None:
+        """One Slack touch; a failure is recorded under `{key}_error` and never fails the run."""
+        try:
+            out[key] = await workflow.execute_activity(
+                activity,
+                args=args,
+                start_to_close_timeout=SLACK_TIMEOUT,
+                retry_policy=RETRY_POLICY,
+            )
+        except ActivityError as exc:
+            workflow.logger.warning("%s failed for %s: %s", activity, args[0], exc)
+            out[f"{key}_error"] = str(exc.cause or exc)
 
     @workflow.run
     async def run(self, meeting_id: str, org_id: str) -> dict[str, Any]:
@@ -106,6 +148,16 @@ class MeetingLifecycleWorkflow:
                 workflow.logger.warning("open_meeting_room failed for %s: %s", meeting_id, exc)
                 out["room_open_error"] = str(exc.cause or exc)
 
+        prep_delay = prep_brief_delay(workflow.now(), scheduled_start)
+        if prep_delay is not None and not self._ended and workflow.patched(PREP_BRIEF_PATCH):
+            if prep_delay > timedelta(0):
+                try:
+                    await workflow.wait_condition(lambda: self._ended, timeout=prep_delay)
+                except TimeoutError:
+                    pass
+            if not self._ended:
+                await self._slack("send_prep_brief", args, out, "prep_brief")
+
         bound = wait_bound(workflow.now(), scheduled_start)
         try:
             await workflow.wait_condition(lambda: self._ended, timeout=bound)
@@ -124,6 +176,8 @@ class MeetingLifecycleWorkflow:
             except ActivityError as exc:
                 workflow.logger.warning("run_post_processing failed for %s: %s", meeting_id, exc)
                 out["post_meeting_error"] = str(exc.cause or exc)
+            if workflow.patched(SUMMARY_PATCH):
+                await self._slack("send_meeting_summary", args, out, "meeting_summary")
 
         out["room_close"] = await workflow.execute_activity(
             "close_meeting_room",

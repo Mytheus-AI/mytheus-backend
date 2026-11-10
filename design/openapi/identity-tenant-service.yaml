@@ -136,6 +136,24 @@ components:
       - items
       title: AgentAuthzTemplateResult
       type: object
+    ConfidenceThresholds:
+      additionalProperties: false
+      properties:
+        silent:
+          maximum: 1.0
+          minimum: 0.0
+          title: Silent
+          type: number
+        surface:
+          maximum: 1.0
+          minimum: 0.0
+          title: Surface
+          type: number
+      required:
+      - surface
+      - silent
+      title: ConfidenceThresholds
+      type: object
     DepartmentRef:
       properties:
         id:
@@ -651,23 +669,111 @@ components:
       type: object
     TenantSettings:
       properties:
+        agent_confidence_overrides:
+          additionalProperties:
+            $ref: '#/components/schemas/ConfidenceThresholds'
+          title: Agent Confidence Overrides
+          type: object
         pii_redaction_enabled:
           title: Pii Redaction Enabled
           type: boolean
+        retention_days_transcripts:
+          default: 365
+          title: Retention Days Transcripts
+          type: integer
+        retention_days_worklogs:
+          default: 365
+          title: Retention Days Worklogs
+          type: integer
       required:
       - pii_redaction_enabled
       title: TenantSettings
       type: object
     TenantSettingsUpdate:
       properties:
+        agent_confidence_overrides:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/ConfidenceThresholds'
+            type: object
+          - type: 'null'
+          description: Replaces the whole overrides object.
+          title: Agent Confidence Overrides
         pii_redaction_enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
           description: When true, ingestion redacts detected PII before the chunk reaches Postgres, the
             object store, or the bus.
           title: Pii Redaction Enabled
-          type: boolean
-      required:
-      - pii_redaction_enabled
+        retention_days_transcripts:
+          anyOf:
+          - maximum: 3650.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Retention Days Transcripts
+        retention_days_worklogs:
+          anyOf:
+          - maximum: 3650.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Retention Days Worklogs
       title: TenantSettingsUpdate
+      type: object
+    TenantStatusChange:
+      additionalProperties: false
+      properties:
+        reason:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Reason
+        staff_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Staff User Id
+        status:
+          enum:
+          - active
+          - suspended
+          title: Status
+          type: string
+      required:
+      - status
+      title: TenantStatusChange
+      type: object
+    TenantStatusResult:
+      properties:
+        changed:
+          title: Changed
+          type: boolean
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        previous:
+          enum:
+          - active
+          - suspended
+          title: Previous
+          type: string
+        status:
+          enum:
+          - active
+          - suspended
+          title: Status
+          type: string
+      required:
+      - org_id
+      - status
+      - previous
+      - changed
+      title: TenantStatusResult
       type: object
     UserContext:
       description: '`GET /context/{user_id}` response - the canonical `get_user_context()` shape (Plan
@@ -858,8 +964,8 @@ components:
       scheme: bearer
       type: http
     MytheusServiceToken:
-      description: INTERNAL ONLY. Per-caller shared secret from MYTHEUS_PII_VAULT_CALLER_TOKENS, sent
-        with `X-Mytheus-Service` (caller name) and `X-Mytheus-Org` (tenant). Never routed by api-gateway.
+      description: INTERNAL ONLY. Per-caller shared secret from MYTHEUS_IDENTITY_CALLER_TOKENS, sent with
+        `X-Mytheus-Service` (caller name) and `X-Mytheus-Org` (target tenant).
       in: header
       name: X-Mytheus-Service-Token
       type: apiKey
@@ -1114,6 +1220,52 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/tenant-status:
+    post:
+      operationId: change_tenant_status
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantStatusChange'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantStatusResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Change Tenant Status
+      tags:
+      - identity-internal
   /orgs:
     get:
       description: 'The organization the caller''s token is scoped to, and only that one.
