@@ -47,7 +47,8 @@ ALLOWED_CALLERS = frozenset({"meeting-service"})
 # agent-runtime-service reads related attendees (`internal_agents.py`, P10); workflow-service
 # reads the post-meeting digest (`internal_lifecycle.py`, P10 MeetingLifecycleWorkflow).
 # integration-service applies Jira status and reads the Slack digest
-# (`internal_integrations.py`, P12).
+# (`internal_integrations.py`, P12). embedding-service and search-service read a meeting's
+# index policy (`internal_policy.py`, polish plan: confidential meetings out of org-wide search).
 KNOWN_CALLERS = frozenset(
     {
         "meeting-service",
@@ -55,6 +56,8 @@ KNOWN_CALLERS = frozenset(
         "agent-runtime-service",
         "workflow-service",
         "integration-service",
+        "embedding-service",
+        "search-service",
     }
 )
 TOKENS_ENV = "MYTHEUS_CORE_CALLER_TOKENS"

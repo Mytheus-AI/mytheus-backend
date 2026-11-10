@@ -455,6 +455,15 @@ components:
       - items
       title: AgendaReplace
       type: object
+    AgentPolicy:
+      properties:
+        agent_confidence_overrides:
+          additionalProperties:
+            $ref: '#/components/schemas/ConfidenceBand'
+          title: Agent Confidence Overrides
+          type: object
+      title: AgentPolicy
+      type: object
     AttendanceUpdate:
       additionalProperties: false
       description: '`PUT /meetings/{id}/attendance` (ADR-0039 B5): the caller''s own attendance. A PUT,
@@ -881,6 +890,23 @@ components:
       required:
       - status
       title: CommitmentUpdate
+      type: object
+    ConfidenceBand:
+      properties:
+        silent:
+          maximum: 1.0
+          minimum: 0.0
+          title: Silent
+          type: number
+        surface:
+          maximum: 1.0
+          minimum: 0.0
+          title: Surface
+          type: number
+      required:
+      - surface
+      - silent
+      title: ConfidenceBand
       type: object
     ContextFill:
       properties:
@@ -1684,6 +1710,15 @@ components:
           title: Detail
           type: array
       title: HTTPValidationError
+      type: object
+    IndexPolicy:
+      properties:
+        confidential:
+          title: Confidential
+          type: boolean
+      required:
+      - confidential
+      title: IndexPolicy
       type: object
     InternalAgenda:
       properties:
@@ -7261,6 +7296,32 @@ paths:
       summary: Action Status
       tags:
       - core-internal
+  /internal/agent-policy:
+    get:
+      operationId: agent_policy
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentPolicy'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Agent Policy
+      tags:
+      - core-internal
   /internal/decisions/{decision_id}/record:
     get:
       operationId: decision_record_internal_decisions__decision_id__record_get
@@ -7435,6 +7496,45 @@ paths:
       summary: Dispatch Follow Up
       tags:
       - follow-ups
+      - core-internal
+  /internal/meetings/{meeting_id}/index-policy:
+    get:
+      operationId: index_policy
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexPolicy'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Index Policy
+      tags:
       - core-internal
   /internal/meetings/{meeting_id}/participants:
     get:

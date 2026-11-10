@@ -22,6 +22,7 @@ from services.core_api.routes import (
     internal_integrations,
     internal_lifecycle,
     internal_meetings,
+    internal_policy,
     internal_reach,
     internal_retrieval,
     meeting_templates,
@@ -52,6 +53,7 @@ app.include_router(my_tasks.router)
 app.include_router(suggestions.router)
 app.include_router(collaborations.router)
 app.include_router(internal_agents.router)
+app.include_router(internal_policy.router)
 app.include_router(internal_lifecycle.router)
 app.include_router(internal_integrations.router)
 app.include_router(meeting_templates.router)
