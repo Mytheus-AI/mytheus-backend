@@ -6,6 +6,7 @@ get_user_context (gRPC GetUserContext, org_id in metadata).
 """
 
 from libs.shared.app_factory import create_app
+from services.identity_tenant_service.a2a import routes as a2a_routes
 from services.identity_tenant_service.pii_vault import routes as pii_vault_routes
 from services.identity_tenant_service.routes import (
     auth,
@@ -30,3 +31,6 @@ app.include_router(rbac.router)  # GET /rbac/grants, PUT/DELETE /rbac/grants/{us
 # POST /pii-tokens/mint (INTERNAL, per-caller service secret; never routed by api-gateway) and
 # POST /pii-tokens/resolve (Clerk JWT, `admin` tier, audited).
 app.include_router(pii_vault_routes.router)
+# GET/POST /api/v1/agent-authz-scopes, DELETE /api/v1/agent-authz-scopes/{id},
+# POST /api/v1/agent-authz-scopes/template (A2A grants, ADR-0013, owner/admin only).
+app.include_router(a2a_routes.router)

@@ -108,3 +108,14 @@ ACTION_ACTION_COMPLETED = "action.completed"
 ACTION_SUGGESTION_ASKED = "suggestion.asked"
 ACTION_SUGGESTION_DISMISSED = "suggestion.dismissed"
 ACTION_SUGGESTION_SAVED = "suggestion.saved"
+# P10 (ADR-0013): an admin granting or revoking an A2A grant in `agent_authz_scopes`
+# (actor_type user), and core-api logging each agent-to-agent request (actor_type agent):
+# allowed (answered / no_answer / deadline_miss / rag_*), denied by the PDP (authz_denied), or
+# blocked as a tenant-boundary violation (org_spoof / foreign_org). `context_fill.dismissed` is
+# the requester dismissing a ContextGapAgent fill card.
+ACTION_A2A_GRANT_CREATE = "a2a.grant.create"
+ACTION_A2A_GRANT_REVOKE = "a2a.grant.revoke"
+ACTION_A2A_REQUEST_ALLOWED = "a2a.request.allowed"
+ACTION_A2A_REQUEST_DENIED = "a2a.request.denied"
+ACTION_A2A_REQUEST_BLOCKED = "a2a.request.blocked"
+ACTION_CONTEXT_FILL_DISMISSED = "context_fill.dismissed"
