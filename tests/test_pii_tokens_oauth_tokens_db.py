@@ -187,6 +187,27 @@ async def test_oauth_tokens_isolation_and_envelope_check(migrated_db):
     org_a, org_b = await _orgs(migrated_db)
     cipher = _vault()._cipher
     conn_id = uuid.uuid4()
+    # `connection_id` references `integration_connections` since migration 7c3e9a1f5b20.
+    su = create_async_engine(migrated_db)
+    try:
+        async with su.begin() as conn:
+            user_id = uuid.uuid4()
+            await conn.execute(
+                text(
+                    "INSERT INTO users (id, org_id, clerk_user_id, email) "
+                    "VALUES (:u, :o, :c, 't@x.io')"
+                ),
+                {"u": user_id, "o": org_a, "c": f"user_{user_id.hex[:12]}"},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO integration_connections (id, org_id, provider, installed_by) "
+                    "VALUES (:c, :o, 'slack', :u)"
+                ),
+                {"c": conn_id, "o": org_a, "u": user_id},
+            )
+    finally:
+        await su.dispose()
     blob = cipher.encrypt_str(
         org_a, "oauth_tokens.access_token", "ya29.x", {"connection_id": str(conn_id)}
     )
@@ -205,7 +226,7 @@ async def test_oauth_tokens_isolation_and_envelope_check(migrated_db):
                 await conn.execute(
                     text("SELECT set_config('app.current_org', :o, true)"), {"o": str(org_a)}
                 )
-                await conn.execute(ins, {"o": org_a, "c": uuid.uuid4(), "a": b"ya29.plaintext"})
+                await conn.execute(ins, {"o": org_a, "c": conn_id, "a": b"ya29.plaintext"})
         with pytest.raises(DBAPIError, match="row-level security"):
             async with app.connect() as conn, conn.begin():
                 await conn.execute(

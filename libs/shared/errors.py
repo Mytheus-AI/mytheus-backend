@@ -56,6 +56,10 @@ class ErrorCode(StrEnum):
     # meeting-service token-mint (Plan 3-4 section 3.1 step 4 / ADR-0018).
     NOT_A_PARTICIPANT = "NOT_A_PARTICIPANT"  # 403: caller is not a participant of this meeting
     CONSENT_REQUIRED = "CONSENT_REQUIRED"  # 428: tenant requires recording/transcription consent
+    # integration-service connect (P12 contract section 1).
+    PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED"  # 409: no app credentials on the server
+    PM_ALREADY_CONNECTED = "PM_ALREADY_CONNECTED"  # 409: R8, one project-management tool only
+    ACCOUNT_CONNECTED_ELSEWHERE = "ACCOUNT_CONNECTED_ELSEWHERE"  # 409: account held by a tenant
 
 
 # Fallback mapping for bare HTTPExceptions raised by application code and by FastAPI itself.

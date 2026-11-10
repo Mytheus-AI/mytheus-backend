@@ -16,6 +16,7 @@ from services.core_api.routes import (
     collaborations,
     decision_log,
     internal_agents,
+    internal_integrations,
     internal_lifecycle,
     internal_meetings,
     internal_retrieval,
@@ -44,6 +45,7 @@ app.include_router(suggestions.router)
 app.include_router(collaborations.router)
 app.include_router(internal_agents.router)
 app.include_router(internal_lifecycle.router)
+app.include_router(internal_integrations.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

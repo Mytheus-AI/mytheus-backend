@@ -45,8 +45,16 @@ ALLOWED_CALLERS = frozenset({"meeting-service"})
 # (`internal_retrieval.py`) but cannot report a room's state here.
 # agent-runtime-service reads related attendees (`internal_agents.py`, P10); workflow-service
 # reads the post-meeting digest (`internal_lifecycle.py`, P10 MeetingLifecycleWorkflow).
+# integration-service applies Jira status and reads the Slack digest
+# (`internal_integrations.py`, P12).
 KNOWN_CALLERS = frozenset(
-    {"meeting-service", "rag-service", "agent-runtime-service", "workflow-service"}
+    {
+        "meeting-service",
+        "rag-service",
+        "agent-runtime-service",
+        "workflow-service",
+        "integration-service",
+    }
 )
 TOKENS_ENV = "MYTHEUS_CORE_CALLER_TOKENS"
 SERVICE_HEADER = "x-mytheus-service"

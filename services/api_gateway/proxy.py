@@ -38,7 +38,7 @@ from starlette.background import BackgroundTask
 from starlette.responses import Response, StreamingResponse
 
 from libs.shared.errors import ErrorCode, problem_response
-from services.api_gateway.edge import route_for
+from services.api_gateway.edge import normalize_path, route_for
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,9 @@ def get_client(app: FastAPI) -> httpx.AsyncClient:
 async def forward(request: Request) -> Response:
     """Resolve the upstream for this path and stream the exchange through."""
     path = request.url.path
-    service = route_for(path)
+    # `edge_auth` already refuses these; checked again so the proxy can never be the hop that
+    # forwards a dot segment or a service's `/internal` surface.
+    service = route_for(path) if normalize_path(path) == path else None
     if service is None:
         return problem_response(404, ErrorCode.NOT_FOUND, f"No service owns {path}", instance=path)
 

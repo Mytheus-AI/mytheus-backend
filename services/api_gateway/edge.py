@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import logging
 import os
+from urllib.parse import unquote
 
 from fastapi import Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
@@ -52,8 +53,17 @@ PUBLIC_PREFIXES = (
     "/clerk/webhook",
     "/stripe/webhook",
     "/livekit/webhook",
-    "/oauth/",
+    # integration-service (P12). `/webhooks/{provider}` is verified per provider (Slack v0
+    # signature, Google channel token, Jira JWT). `/oauth/{provider}` is NOT here: the OAuth
+    # completion is a signed-in POST from the web app, bound to the user who started it.
+    # `/integrations` (the settings API) is JWT-gated like everything else.
+    "/webhooks/",
 )
+
+# Never forwarded, whatever the token: every service's service-to-service surface lives under
+# `/internal`, authenticated by caller tokens that only exist inside the network.
+INTERNAL_PREFIX = "/internal"
+
 
 # The gateway's own Prometheus endpoint (mounted by `create_app`). Deliberately NOT in
 # PUBLIC_PATHS and never in ROUTE_MAP: it is exempt from the bearer check only for an internal
@@ -99,6 +109,32 @@ def is_public(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
 
 
+def normalize_path(raw_path: str) -> str | None:
+    """The one path the gateway authenticates, routes and forwards, or None to refuse it.
+
+    The edge used to match `is_public` / `route_for` against the raw request path while httpx
+    normalized the upstream URL, so `/oauth/../internal/slack/token` passed as public and then
+    arrived upstream as `/internal/slack/token`. Every decision is now made on one canonical
+    form, decoded exactly once, and anything that could be read two ways is refused:
+
+    - an encoded slash or backslash (`%2f`, `%5c`, any case) in the raw path;
+    - a `%` left after one decode (double encoding, e.g. `%252e`);
+    - a backslash, an empty segment (`//`), or a `.` / `..` segment after decoding;
+    - anything under `/internal`.
+    """
+    lowered = raw_path.lower()
+    if "%2f" in lowered or "%5c" in lowered:
+        return None
+    path = unquote(raw_path)
+    if not path.startswith("/") or "%" in path or "\\" in path or "//" in path:
+        return None
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return None
+    if path == INTERNAL_PREFIX or path.startswith(INTERNAL_PREFIX + "/"):
+        return None
+    return path
+
+
 async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Response:
     """Pre-validate the token and resolve the tenant once, at the edge.
 
@@ -106,7 +142,16 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
     exception handlers the app factory installs, so a raise here would escape as an unhandled
     500 carrying whatever the exception said.
     """
-    if is_public(request.url.path):
+    raw = request.scope.get("raw_path") or request.scope["path"].encode()
+    path = normalize_path(raw.decode("latin-1") if isinstance(raw, bytes) else str(raw))
+    if path is None:
+        return problem_response(404, ErrorCode.NOT_FOUND, "Not found")
+    # From here on the request carries only the canonical path, so the routing decision, the
+    # auth decision and the forwarded URL can never disagree.
+    request.scope["path"] = path
+    request.scope["raw_path"] = path.encode("utf-8")
+
+    if is_public(path):
         return await call_next(request)
 
     if request.url.path == METRICS_PATH:
@@ -212,6 +257,9 @@ ROUTE_MAP: dict[str, str] = {
     "/admin/ops": "admin-ops-service",
     "/oauth": "integration-service",
     "/webhooks": "integration-service",
+    # The settings API (list, connect, disconnect). JWT-gated; owner/admin enforced by the
+    # service. `/internal/*` is deliberately absent, as for every service.
+    "/integrations": "integration-service",
 }
 
 
