@@ -1,11 +1,19 @@
-"""notification-service — unified delivery fabric (in-app / email / Slack).
+"""notification-service - unified delivery fabric (in-app / email / Slack).
 
-Async worker consumes notifications + agent-results; REST API is the durable read/dismiss side.
-Sole consumer authorized to fan notifications to external channels.
+Owns `notification_log` and `notification_preferences`. Sole consumer authorized to fan
+`notifications` out to external channels.
+
+Processes:
+- this app: `GET /notifications`, `PATCH /notifications/{id}`, `GET`/`PUT
+  /notifications/preferences` (the caller's own rows; `routes.py`)
+- `python -m services.notification_service.consumer`: the `agent-results` (ProactiveAgent
+  alerts) + `notifications` consumer, group `notification-service`, which writes
+  `notification_log`, delivers per channel preference and emits `notification-delivery-events`
+  receipts through the outbox
 """
 
 from libs.shared.app_factory import create_app
+from services.notification_service import routes
 
 app = create_app("notification-service")
-
-# TODO: add router for /notifications (read/dismiss REST surface)
+app.include_router(routes.router)
