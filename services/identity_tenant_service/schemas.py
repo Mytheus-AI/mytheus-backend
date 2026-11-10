@@ -8,11 +8,54 @@ matching `Meeting`/`Team`/`Department` in core-api's schemas).
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# ADR-0038 D1/D2 limits. `listen_for` / `ignore_topics`: at most 15 entries of 1 to 100 chars
+# each, trimmed and de-duplicated (case-insensitively, first spelling kept).
+MAX_TOPIC_ITEMS = 15
+MAX_TOPIC_CHARS = 100
+MAX_AGENT_NAME = 40
+MAX_AGENT_INSTRUCTIONS = 500
+# The UI's `isDoodleSeed`.
+AGENT_AVATAR_SEED_PATTERN = r"^[a-z0-9]{4,32}$"
+
+AgentPersonality = Literal["balanced", "concise", "detailed", "direct", "friendly"]
+
+_AGENT_FIELDS = frozenset(
+    {"agent_name", "agent_avatar_seed", "agent_personality", "agent_instructions"}
+)
+
+
+def _topic_list(raw: list[str] | None) -> list[str] | None:
+    if raw is None:
+        raise ValueError("cannot be null; send [] to clear")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        value = item.strip()
+        if not value:
+            raise ValueError("entries must not be empty")
+        if len(value) > MAX_TOPIC_CHARS:
+            raise ValueError(f"entries must be at most {MAX_TOPIC_CHARS} characters")
+        if value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        out.append(value)
+    if len(out) > MAX_TOPIC_ITEMS:
+        raise ValueError(f"at most {MAX_TOPIC_ITEMS} entries")
+    return out
+
+
+def _blank_to_none(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    value = raw.strip()
+    return value or None
 
 
 class UserProfileUpdate(BaseModel):
@@ -21,19 +64,74 @@ class UserProfileUpdate(BaseModel):
     path for it here would race the webhook rather than complement it. `role` here is the
     DOMAIN role (job title/function) on `users`, never `rbac_grants.tier` - see `libs/shared/
     authz.py`'s module docstring for why the two must never be conflated.
+
+    ADR-0038 adds the working profile (`listen_for`, `ignore_topics`: profile fields, same
+    authorization as `role`) and the agent persona (`agent_*`: self only, see the route). An
+    empty string for `agent_name` / `agent_avatar_seed` / `agent_instructions` stores NULL.
+    Every failure is a 422 whose `errors[].loc` names the field.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     role: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    # ADR-0038 D1 describes `skills` as "at most 30" and `bio` as "up to 1000". Those bounds are
+    # NOT tightened here: both are narrower than what this route already accepted, which the
+    # oasdiff gate rejects (`request-property-max-items-set`, `-max-length-decreased`) and which
+    # would 422 an existing client. Onboarding enforces the tighter bounds in the UI.
     skills: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = None
     bio: Annotated[str, Field(max_length=2000)] | None = None
+    listen_for: list[str] | None = None
+    ignore_topics: list[str] | None = None
+    agent_name: str | None = None
+    agent_avatar_seed: str | None = None
+    agent_personality: AgentPersonality | None = None
+    agent_instructions: str | None = None
+
+    @field_validator("listen_for", "ignore_topics")
+    @classmethod
+    def _topics(cls, v: list[str] | None) -> list[str] | None:
+        return _topic_list(v)
+
+    @field_validator("agent_name")
+    @classmethod
+    def _agent_name(cls, v: str | None) -> str | None:
+        value = _blank_to_none(v)
+        if value is not None and len(value) > MAX_AGENT_NAME:
+            raise ValueError(f"must be at most {MAX_AGENT_NAME} characters")
+        return value
+
+    @field_validator("agent_avatar_seed")
+    @classmethod
+    def _agent_avatar_seed(cls, v: str | None) -> str | None:
+        value = _blank_to_none(v)
+        if value is not None and not re.fullmatch(AGENT_AVATAR_SEED_PATTERN, value):
+            raise ValueError("must be 4 to 32 lowercase letters or digits")
+        return value
+
+    @field_validator("agent_personality")
+    @classmethod
+    def _agent_personality(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("cannot be null")
+        return v
+
+    @field_validator("agent_instructions")
+    @classmethod
+    def _agent_instructions(cls, v: str | None) -> str | None:
+        value = _blank_to_none(v)
+        if value is not None and len(value) > MAX_AGENT_INSTRUCTIONS:
+            raise ValueError(f"must be at most {MAX_AGENT_INSTRUCTIONS} characters")
+        return value
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> UserProfileUpdate:
         if not self.model_fields_set:
             raise ValueError("PATCH requires at least one field")
         return self
+
+    def agent_fields_set(self) -> bool:
+        """True if the body touches the persona, which only the person themselves may edit."""
+        return bool(self.model_fields_set & _AGENT_FIELDS)
 
 
 class UserProfile(BaseModel):
@@ -43,13 +141,21 @@ class UserProfile(BaseModel):
     skills: list[str]
     bio: str | None
     avatar_url: str | None
+    listen_for: list[str]
+    ignore_topics: list[str]
+    agent_name: str | None
+    agent_avatar_seed: str | None
+    agent_personality: AgentPersonality
+    agent_instructions: str | None
     created_at: datetime
     updated_at: datetime
 
 
 class Member(BaseModel):
     """One person in the caller's tenant: who to show in a members list or an invite picker.
-    Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display."""
+    Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.
+    `agent_name` / `agent_avatar_seed` let a meeting room label everyone's agent (ADR-0038 D3);
+    null means the UI's default ("{first name}'s agent", a seed derived from the user id)."""
 
     id: uuid.UUID
     clerk_user_id: str | None
@@ -57,6 +163,8 @@ class Member(BaseModel):
     avatar_url: str | None
     role: str | None
     tier: str | None
+    agent_name: str | None = None
+    agent_avatar_seed: str | None = None
 
 
 class MemberList(BaseModel):
@@ -115,6 +223,13 @@ class UserContext(BaseModel):
     department: DepartmentRef | None
     recent_meetings: list[MeetingRef]
     topics: list[str]
+    # ADR-0038 D4. Defaulted so a context cached before these fields existed (up to the 300 s
+    # TTL after a deploy) still validates instead of failing the read.
+    listen_for: list[str] = Field(default_factory=list)
+    ignore_topics: list[str] = Field(default_factory=list)
+    agent_name: str | None = None
+    agent_personality: str = "balanced"
+    agent_instructions: str | None = None
 
 
 # --- /orgs -------------------------------------------------------------------------------

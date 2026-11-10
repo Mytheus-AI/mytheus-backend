@@ -140,6 +140,13 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
             team_ids=[t["id"] for t in ctx["team"]],
             department_id=department["id"] if department else "",
             cache_expires_at=cache_expires_at_ms(),
+            # ADR-0038 D4. `.get` because a context cached before these fields existed is
+            # served until its TTL runs out; it reads as "no profile, default persona".
+            listen_for=list(ctx.get("listen_for") or []),
+            ignore_topics=list(ctx.get("ignore_topics") or []),
+            agent_name=ctx.get("agent_name") or "",
+            agent_personality=ctx.get("agent_personality") or "balanced",
+            agent_instructions=ctx.get("agent_instructions") or "",
         )
 
     async def Authorize(self, request: Any, context: Any) -> Any:

@@ -50,7 +50,10 @@ from services.identity_tenant_service.schemas import (
 
 router = APIRouter(tags=["users"])
 
-_USER_COLUMNS = "id, email, role, skills, bio, avatar_url, created_at, updated_at"
+_USER_COLUMNS = (
+    "id, email, role, skills, bio, avatar_url, listen_for, ignore_topics, agent_name, "
+    "agent_avatar_seed, agent_personality, agent_instructions, created_at, updated_at"
+)
 
 
 def _row_to_profile(row: Any) -> UserProfile:
@@ -91,7 +94,8 @@ async def list_members(
         (
             await session.execute(
                 text(
-                    "SELECT u.id, u.clerk_user_id, u.email, u.avatar_url, u.role, g.tier "
+                    "SELECT u.id, u.clerk_user_id, u.email, u.avatar_url, u.role, g.tier, "
+                    "u.agent_name, u.agent_avatar_seed "
                     "FROM users u LEFT JOIN rbac_grants g ON g.user_id = u.id "
                     "WHERE u.deleted_at IS NULL ORDER BY lower(u.email), u.id LIMIT :n"
                 ),
@@ -102,6 +106,18 @@ async def list_members(
         .all()
     )
     return MemberList(items=[Member(**dict(r)) for r in rows])
+
+
+@router.get("/users/me", response_model=UserProfile)
+async def read_my_profile(
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> UserProfile:
+    """authz: member. The caller's own profile, working profile and agent persona (ADR-0038
+    D3). A principal with no `users` row in this tenant is a 404, like any unknown user."""
+    if ctx.user_id is None:
+        raise not_found()
+    return _row_to_profile(await _fetch_user(session, ctx.user_id))
 
 
 @router.patch("/users/{user_id}", response_model=UserProfile)
@@ -122,6 +138,15 @@ async def update_user_profile(
             403,
             ErrorCode.FORBIDDEN_ROLE,
             "Editing another user's profile requires the admin role or above",
+        )
+
+    # ADR-0038 D3: the persona is the person's own. Not even an admin may rename or re-voice
+    # someone else's agent, so this check is not relaxed by tier.
+    if body.agent_fields_set() and ctx.user_id != user_id:
+        raise ProblemDetail(
+            403,
+            ErrorCode.FORBIDDEN_ROLE,
+            "Only the person themselves can change their agent",
         )
 
     fields = body.model_dump(exclude_unset=True)
@@ -151,7 +176,8 @@ async def update_user_profile(
         ip=ctx.ip,
     )
 
-    # get_user_context() caches role/skills/bio/avatar_url for this user; any of them changing
+    # get_user_context() caches role/skills/bio/avatar_url (and, since ADR-0038, the working
+    # profile and persona) for this user; any of them changing
     # makes the cached entry stale. Evicting here (rather than only relying on the 5-minute
     # TTL) is what "PATCH /users/{id} changing role evicts the key" (Plan 5-6 section 3.3
     # acceptance check) requires. Best-effort: see invalidate_user_context's docstring for why

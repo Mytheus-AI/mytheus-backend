@@ -24,6 +24,15 @@ meeting); `organizer_id` is the meeting's `created_by` (null when unknown).
 `{participants: [{user_id, name, rbac_tier}]}`, `name` the email, `rbac_tier` null when the user
 holds no grant. Ordered by email then id.
 
+ADR-0038 D6, for the `MeetingAgent`:
+
+`GET /internal/meetings/{meeting_id}/agenda`: `{host_user_id, previous_meeting_id,
+scheduled_start, scheduled_end, items: [{id, position, title, duration_minutes, status,
+status_source}], carry_forward: {decisions: [str], open_actions: [str]}}`. `items` ordered by
+`position`; `carry_forward` is the previous meeting's confirmed decisions and confirmed (open)
+action items as plain strings, empty when there is no link. `scheduled_*` are ISO-8601 or null
+(the agent's "70% of the scheduled time" rule).
+
 Service-to-service, the scheme `internal_meetings.py` and `internal_retrieval.py` use:
 `X-Mytheus-Service: agent-runtime-service`, its secret from `MYTHEUS_CORE_CALLER_TOKENS`
 (`agent-runtime-service=<32+ chars>`), the tenant in `X-Mytheus-Org`. Not routed by
@@ -33,10 +42,11 @@ Service-to-service, the scheme `internal_meetings.py` and `internal_retrieval.py
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Security
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from libs.shared.db import get_sessionmaker
@@ -87,6 +97,29 @@ class MeetingParticipant(BaseModel):
 
 class MeetingParticipants(BaseModel):
     participants: list[MeetingParticipant]
+
+
+class InternalAgendaItem(BaseModel):
+    id: uuid.UUID
+    position: int
+    title: str
+    duration_minutes: int | None
+    status: str
+    status_source: str | None
+
+
+class InternalCarryForward(BaseModel):
+    decisions: list[str] = Field(default_factory=list)
+    open_actions: list[str] = Field(default_factory=list)
+
+
+class InternalAgenda(BaseModel):
+    host_user_id: uuid.UUID | None
+    previous_meeting_id: uuid.UUID | None
+    scheduled_start: datetime | None
+    scheduled_end: datetime | None
+    items: list[InternalAgendaItem]
+    carry_forward: InternalCarryForward
 
 
 _RELATED = text("""
@@ -237,4 +270,81 @@ async def meeting_participants(
             participants=[
                 MeetingParticipant(user_id=r[0], name=str(r[1]), rbac_tier=r[2]) for r in rows
             ]
+        )
+
+
+@router.get("/internal/meetings/{meeting_id}/agenda", response_model=InternalAgenda)
+async def meeting_agenda(
+    meeting_id: uuid.UUID,
+    org_id: Annotated[uuid.UUID, Depends(agent_runtime_caller)],
+) -> InternalAgenda:
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        meeting = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT m.scheduled_start, m.scheduled_end, "
+                        "(SELECT p.id FROM meetings p WHERE p.id = m.previous_meeting_id "
+                        " AND p.deleted_at IS NULL) AS previous_meeting_id, "
+                        "(SELECT mp.user_id FROM meeting_participants mp "
+                        " WHERE mp.meeting_id = m.id AND mp.role_in_meeting = 'host' "
+                        " ORDER BY mp.user_id LIMIT 1) AS host_user_id "
+                        "FROM meetings m WHERE m.id = :m AND m.deleted_at IS NULL"
+                    ),
+                    {"m": str(meeting_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if meeting is None:
+            raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
+        items = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, position, title, duration_minutes, status, status_source "
+                        "FROM meeting_agenda_items WHERE meeting_id = :m ORDER BY position, id"
+                    ),
+                    {"m": str(meeting_id)},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        carry = InternalCarryForward()
+        previous = meeting["previous_meeting_id"]
+        if previous is not None:
+            carry.decisions = list(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT content FROM decisions WHERE meeting_id = :p "
+                            "AND status = 'confirmed' AND deleted_at IS NULL "
+                            "ORDER BY created_at, id"
+                        ),
+                        {"p": str(previous)},
+                    )
+                ).scalars()
+            )
+            carry.open_actions = list(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT content FROM action_items WHERE meeting_id = :p "
+                            "AND status = 'confirmed' AND deleted_at IS NULL "
+                            "ORDER BY created_at, id"
+                        ),
+                        {"p": str(previous)},
+                    )
+                ).scalars()
+            )
+        return InternalAgenda(
+            host_user_id=meeting["host_user_id"],
+            previous_meeting_id=previous,
+            scheduled_start=meeting["scheduled_start"],
+            scheduled_end=meeting["scheduled_end"],
+            items=[InternalAgendaItem(**dict(r)) for r in items],
+            carry_forward=carry,
         )

@@ -48,6 +48,14 @@ class Meeting(Base, TenantMixin, TimestampMixin):
     # from. The `integration-events` consumer upserts on (org_id, calendar_event_id), so a
     # redelivered or re-synced event patches the one meeting instead of creating another.
     calendar_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-0038 D5 (migration 0b91a00079a7): the earlier meeting this one follows up. One link
+    # per meeting; a chain of follow-ups is a chain of links. SET NULL so deleting the earlier
+    # meeting never deletes or blocks its follow-ups.
+    previous_meeting_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("meetings.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
@@ -61,6 +69,14 @@ class Meeting(Base, TenantMixin, TimestampMixin):
         CheckConstraint(
             "scheduled_end IS NULL OR scheduled_start IS NULL OR scheduled_end > scheduled_start",
             name="schedule_ordered",
+        ),
+        CheckConstraint(
+            "previous_meeting_id IS NULL OR previous_meeting_id <> id", name="not_own_follow_up"
+        ),
+        Index(
+            "ix_meetings_previous_meeting_id",
+            "previous_meeting_id",
+            postgresql_where=text("previous_meeting_id IS NOT NULL"),
         ),
     )
 

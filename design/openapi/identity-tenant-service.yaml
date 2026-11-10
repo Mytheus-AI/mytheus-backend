@@ -258,8 +258,22 @@ components:
     Member:
       description: 'One person in the caller''s tenant: who to show in a members list or an invite picker.
 
-        Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.'
+        Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.
+
+        `agent_name` / `agent_avatar_seed` let a meeting room label everyone''s agent (ADR-0038 D3);
+
+        null means the UI''s default ("{first name}''s agent", a seed derived from the user id).'
       properties:
+        agent_avatar_seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Avatar Seed
+        agent_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Name
         avatar_url:
           anyOf:
           - type: string
@@ -785,6 +799,20 @@ components:
 
         model is also what validates a value read back from Redis.'
       properties:
+        agent_instructions:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Instructions
+        agent_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Name
+        agent_personality:
+          default: balanced
+          title: Agent Personality
+          type: string
         avatar_url:
           anyOf:
           - type: string
@@ -799,6 +827,16 @@ components:
           anyOf:
           - $ref: '#/components/schemas/DepartmentRef'
           - type: 'null'
+        ignore_topics:
+          items:
+            type: string
+          title: Ignore Topics
+          type: array
+        listen_for:
+          items:
+            type: string
+          title: Listen For
+          type: array
         org_id:
           format: uuid
           title: Org Id
@@ -847,6 +885,30 @@ components:
       type: object
     UserProfile:
       properties:
+        agent_avatar_seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Avatar Seed
+        agent_instructions:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Instructions
+        agent_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Name
+        agent_personality:
+          enum:
+          - balanced
+          - concise
+          - detailed
+          - direct
+          - friendly
+          title: Agent Personality
+          type: string
         avatar_url:
           anyOf:
           - type: string
@@ -868,6 +930,16 @@ components:
           format: uuid
           title: Id
           type: string
+        ignore_topics:
+          items:
+            type: string
+          title: Ignore Topics
+          type: array
+        listen_for:
+          items:
+            type: string
+          title: Listen For
+          type: array
         role:
           anyOf:
           - type: string
@@ -889,6 +961,12 @@ components:
       - skills
       - bio
       - avatar_url
+      - listen_for
+      - ignore_topics
+      - agent_name
+      - agent_avatar_seed
+      - agent_personality
+      - agent_instructions
       - created_at
       - updated_at
       title: UserProfile
@@ -903,14 +981,63 @@ components:
 
         DOMAIN role (job title/function) on `users`, never `rbac_grants.tier` - see `libs/shared/
 
-        authz.py`''s module docstring for why the two must never be conflated.'
+        authz.py`''s module docstring for why the two must never be conflated.
+
+
+        ADR-0038 adds the working profile (`listen_for`, `ignore_topics`: profile fields, same
+
+        authorization as `role`) and the agent persona (`agent_*`: self only, see the route). An
+
+        empty string for `agent_name` / `agent_avatar_seed` / `agent_instructions` stores NULL.
+
+        Every failure is a 422 whose `errors[].loc` names the field.'
       properties:
+        agent_avatar_seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Avatar Seed
+        agent_instructions:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Instructions
+        agent_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Name
+        agent_personality:
+          anyOf:
+          - enum:
+            - balanced
+            - concise
+            - detailed
+            - direct
+            - friendly
+            type: string
+          - type: 'null'
+          title: Agent Personality
         bio:
           anyOf:
           - maxLength: 2000
             type: string
           - type: 'null'
           title: Bio
+        ignore_topics:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Ignore Topics
+        listen_for:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Listen For
         role:
           anyOf:
           - maxLength: 200
@@ -1900,6 +2027,32 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: List Members
+      tags:
+      - users
+  /users/me:
+    get:
+      description: 'authz: member. The caller''s own profile, working profile and agent persona (ADR-0038
+
+        D3). A principal with no `users` row in this tenant is a 404, like any unknown user.'
+      operationId: read_my_profile
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Read My Profile
       tags:
       - users
   /users/{user_id}:

@@ -206,7 +206,8 @@ def test_creator_comes_first_and_invitees_follow(client, tenant_a):
     )
     assert resp.status_code == 201, resp.text
     got = [(p["user_id"], p["role_in_meeting"]) for p in resp.json()["participants"]]
-    assert got == [(str(tenant_a.user_id), "host"), (str(invitee), None)]
+    # ADR-0038 D5: every participant who is not the host is an `attendee`.
+    assert got == [(str(tenant_a.user_id), "host"), (str(invitee), "attendee")]
 
 
 def test_validation_failure_writes_nothing(client, tenant_a):

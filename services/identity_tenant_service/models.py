@@ -78,8 +78,27 @@ class User(Base, TimestampMixin):
     )
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-0038 D1: the working profile PersonalListenerAgent listens with.
+    listen_for: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    ignore_topics: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    # ADR-0038 D2: the person's agent persona. A display label and a wording style, never an
+    # agent class or an identifier in events, logs or metrics.
+    agent_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_avatar_seed: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_personality: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'balanced'")
+    )
+    agent_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
+        CheckConstraint(
+            "agent_personality IN ('balanced', 'concise', 'detailed', 'direct', 'friendly')",
+            name="agent_personality",
+        ),
         # Per tenant, not globally (gap 13). A global unique on clerk_user_id makes one Clerk
         # user a member of exactly one Mytheus organization for all time, which Clerk itself
         # does not require: the same person can belong to several organizations, and the
