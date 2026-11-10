@@ -76,6 +76,9 @@ class FakeOAuth:
         self.provider = provider
         self.scopes = scopes
         self.challenges: dict[str, str] = {}
+        # Each exchange returns a fresh provider account unless a test pins one: one account can
+        # be live in only one tenant (uq_integration_connections_account).
+        self.account: str | None = None
         self.exchanges = 0
         self.refreshes = 0
         self.revoked: list[str] = []
@@ -98,7 +101,7 @@ class FakeOAuth:
             refresh_token=refresh,
             expires_in=3600,
             scopes=list(self.scopes),
-            external_account_id=ACCOUNTS[self.provider],
+            external_account_id=self.account or f"{ACCOUNTS[self.provider]}-{uuid.uuid4().hex[:8]}",
             extra={"site_url": "https://nexus.atlassian.net"} if self.provider == "jira" else {},
         )
 
@@ -122,6 +125,7 @@ class FakeCalendar:
         self.events: list[dict[str, Any]] = []
         self.list_calls: list[str | None] = []
         self.downloads: list[str] = []
+        self.owners: dict[str, list[str]] = {}
 
     async def watch(
         self, token: str, *, channel_id: str, address: str, channel_token: str
@@ -140,6 +144,9 @@ class FakeCalendar:
         self.list_calls.append(sync_token)
         return list(self.events), f"sync-{len(self.list_calls)}"
 
+    async def file_owners(self, token: str, *, file_id: str) -> list[str]:
+        return self.owners.get(file_id, [])
+
     async def download(self, token: str, *, file_id: str, mime_type: str | None) -> bytes:
         self.downloads.append(file_id)
         return b"%PDF-1.4 attachment bytes"
@@ -147,7 +154,7 @@ class FakeCalendar:
 
 class FakeSlack:
     async def auth_test(self, token: str) -> dict[str, Any]:
-        return {"ok": True, "team_id": ACCOUNTS["slack"]}
+        return {"ok": True}
 
 
 class FakeJira:
@@ -157,6 +164,7 @@ class FakeJira:
         self.webhooks: list[dict[str, Any]] = []
         self.deleted: list[list[int]] = []
         self.searches = 0
+        self.reads: list[str] = []
 
     async def first_project_key(self, token: str, cloud_id: str) -> str | None:
         return "NEX"
@@ -187,6 +195,15 @@ class FakeJira:
         self.issues.append(issue)
         self.created.append(fields)
         return {"id": issue["id"], "key": key}
+
+    async def get_issue(self, token: str, cloud_id: str, key: str) -> dict[str, Any] | None:
+        self.reads.append(key)
+        return next((i for i in self.issues if i["key"] == key), None)
+
+    def set_status(self, key: str, category: str) -> None:
+        for issue in self.issues:
+            if issue["key"] == key:
+                issue["fields"]["status"] = {"statusCategory": {"key": category}}
 
     async def account_id_for_email(self, token: str, cloud_id: str, email: str) -> str | None:
         return "acc-1" if email == "assignee@example.com" else None

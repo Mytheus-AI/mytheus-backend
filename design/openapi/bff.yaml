@@ -384,6 +384,7 @@ components:
       - CONSENT_REQUIRED
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
+      - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
     HTTPValidationError:
       properties:

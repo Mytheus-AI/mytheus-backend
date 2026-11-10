@@ -223,7 +223,13 @@ async def test_an_expiring_token_is_refreshed_and_versioned(factory):
 # --- Jira inbound ----------------------------------------------------------------------------
 
 
-def jira_delivery(t: Tenant, key: str, category: str, action: uuid.UUID) -> uuid.UUID:
+def jira_delivery(
+    t: Tenant, key: str, category: str, action: uuid.UUID, clients: Any = None
+) -> uuid.UUID:
+    """A verified `jira:issue_updated` inbox row. With `clients`, Jira's own copy of the issue
+    is moved to the same status (the worker re-reads it and trusts only that read)."""
+    if clients is not None:
+        clients.jira.set_status(key, category)
     rid = uuid.uuid4()
     payload = {
         "webhookEvent": "jira:issue_updated",
@@ -251,7 +257,7 @@ async def test_inbound_done_calls_core_once_and_the_echo_is_suppressed(factory):
     await push(factory, action_value(t, action, seed_meeting(t.org_id)), clients)
     core = fx.FakeCore()
 
-    first = jira_delivery(t, "NEX-1", "done", action)
+    first = jira_delivery(t, "NEX-1", "done", action, clients)
     assert await worker.process_row(t.org_id, first, clients=clients, core=core) == "processed"
     assert [(c[1], c[2], c[3]) for c in core.status_calls] == [(action, "done", "NEX-1")]
     [mapped] = _sql(
@@ -261,14 +267,14 @@ async def test_inbound_done_calls_core_once_and_the_echo_is_suppressed(factory):
     assert mapped["last_synced_status"] == "done"
 
     # A second delivery with the same status (Jira echoing, or a field edit) is suppressed.
-    echo = jira_delivery(t, "NEX-1", "done", action)
+    echo = jira_delivery(t, "NEX-1", "done", action, clients)
     assert await worker.process_row(t.org_id, echo, clients=clients, core=core) == "skipped"
     # "In progress" maps to confirmed, which differs from done: reopened in NEXUS.
-    reopened = jira_delivery(t, "NEX-1", "indeterminate", action)
+    reopened = jira_delivery(t, "NEX-1", "indeterminate", action, clients)
     assert await worker.process_row(t.org_id, reopened, clients=clients, core=core) == "processed"
     assert [c[2] for c in core.status_calls] == ["done", "confirmed"]
     # The initial "To Do" state equals the confirmed watermark: suppressed.
-    todo = jira_delivery(t, "NEX-1", "new", action)
+    todo = jira_delivery(t, "NEX-1", "new", action, clients)
     assert await worker.process_row(t.org_id, todo, clients=clients, core=core) == "skipped"
     assert len(core.status_calls) == 2
     statuses = _sql(
@@ -285,12 +291,53 @@ async def test_the_worker_drains_pending_rows_per_tenant(factory):
     action = uuid.uuid4()
     await push(factory, action_value(t, action, seed_meeting(t.org_id)), clients)
     core = fx.FakeCore()
-    jira_delivery(t, "NEX-1", "done", action)
-    jira_delivery(t, "NEX-1", "done", action)
+    jira_delivery(t, "NEX-1", "done", action, clients)
+    jira_delivery(t, "NEX-1", "done", action, clients)
     summary = await worker.drain_once(clients=clients, core=core, org_ids=[t.org_id])
     assert summary == {"processed": 1, "skipped": 1}
     assert len(core.status_calls) == 1
     assert await worker.drain_once(clients=clients, core=core, org_ids=[t.org_id]) == {}
+
+
+async def test_the_status_comes_from_jira_not_from_the_webhook_body(factory):
+    t = seed_tenant("owner")
+    clients = fx.fake_clients()
+    await connect(factory, t, "jira", f"cloud-{uuid.uuid4().hex[:6]}")
+    action = uuid.uuid4()
+    await push(factory, action_value(t, action, seed_meeting(t.org_id)), clients)
+    core = fx.FakeCore()
+    # The body claims Done; Jira itself still has the issue in To Do.
+    lying = jira_delivery(t, "NEX-1", "done", action)
+    assert await worker.process_row(t.org_id, lying, clients=clients, core=core) == "skipped"
+    assert core.status_calls == [] and clients.jira.reads == ["NEX-1"]
+
+
+async def test_a_nexus_label_on_another_issue_cannot_flip_the_action(factory):
+    t = seed_tenant("owner")
+    clients = fx.fake_clients()
+    await connect(factory, t, "jira", f"cloud-{uuid.uuid4().hex[:6]}")
+    action = uuid.uuid4()
+    await push(factory, action_value(t, action, seed_meeting(t.org_id)), clients)
+    # Someone copies the label onto an unrelated issue and closes it.
+    clients.jira.issues.append(
+        {
+            "id": "2",
+            "key": "NEX-2",
+            "fields": {
+                "labels": [f"nexus:{action}"],
+                "status": {"statusCategory": {"key": "done"}},
+            },
+        }
+    )
+    core = fx.FakeCore()
+    rid = jira_delivery(t, "NEX-2", "done", action)
+    assert await worker.process_row(t.org_id, rid, clients=clients, core=core) == "skipped"
+    assert core.status_calls == []
+    [mapped] = _sql(
+        "SELECT external_id, last_synced_status FROM integration_id_map WHERE org_id = %(o)s",
+        {"o": str(t.org_id)},
+    )
+    assert mapped == {"external_id": "NEX-1", "last_synced_status": "confirmed"}
 
 
 async def test_an_issue_this_tenant_did_not_create_is_ignored(factory):
@@ -316,7 +363,7 @@ async def test_a_failing_row_is_retried_then_parked(factory):
 
             raise CoreApiError(503, "HTTP 503")
 
-    rid = jira_delivery(t, "NEX-1", "done", action)
+    rid = jira_delivery(t, "NEX-1", "done", action, clients)
     for _ in range(worker.MAX_ATTEMPTS - 1):
         assert (
             await worker.process_row(t.org_id, rid, clients=clients, core=DownCore()) == "pending"
@@ -359,16 +406,20 @@ async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory):
     alice = seed_user(t)
     _sql("UPDATE users SET email = 'Alice@Example.com' WHERE id = %(u)s", {"u": str(alice.user_id)})
     clients = fx.fake_clients()
-    conn = await connect(factory, t, "google_calendar", "owner@example.com")
+    conn = await connect(factory, t, "google_calendar", f"o-{uuid.uuid4().hex[:6]}@example.com")
     event_id = f"evt{uuid.uuid4().hex[:8]}"
     clients.calendar.events = [
         calendar_event(
             event_id,
             ["alice@example.com", "guest@outside.com"],
-            attachments=[{"fileId": "f1", "title": "Plan.pdf", "mimeType": "application/pdf"}],
+            attachments=[
+                {"fileId": "f1", "title": "Plan.pdf", "mimeType": "application/pdf"},
+                {"fileId": "f2", "title": "Theirs.pdf", "mimeType": "application/pdf"},
+            ],
         ),
         {"id": "gone", "status": "cancelled"},
     ]
+    clients.calendar.owners = {"f1": ["alice@example.com"], "f2": ["guest@outside.com"]}
     blobs = MemoryStore()
     async with factory() as session, session.begin():
         await set_rls(session, t.org_id)
@@ -393,6 +444,11 @@ async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory):
         {"email": "guest@outside.com", "user_id": None},
     ]
     assert kinds["calendar_event_upserted"]["external_id"] == event_id
+    # The guest's file is listed on the meeting but never downloaded or ingested.
+    assert [(a["file_id"], a["object_key"]) for a in upsert["attachments"]] == [
+        ("f1", key),
+        ("f2", None),
+    ]
     [cursor] = _sql(
         "SELECT cursor FROM integration_cursors WHERE connection_id = %(c)s AND kind = 'gcal_sync'",
         {"c": str(conn.id)},
@@ -419,6 +475,33 @@ async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory):
         {"o": str(t.org_id)},
     )
     assert again[0]["n"] == 2
+
+
+async def test_an_event_organized_outside_the_tenant_is_not_ingested(factory):
+    t = seed_tenant("owner")
+    alice = seed_user(t)
+    _sql("UPDATE users SET email = 'alice@example.com' WHERE id = %(u)s", {"u": str(alice.user_id)})
+    clients = fx.fake_clients()
+    await connect(factory, t, "google_calendar", f"o-{uuid.uuid4().hex[:6]}@example.com")
+    clients.calendar.events = [
+        calendar_event(
+            "evt-outsider",
+            ["stranger@outside.com", "alice@example.com"],
+            attachments=[{"fileId": "f9", "title": "x.pdf", "mimeType": "application/pdf"}],
+        )
+    ]
+    clients.calendar.owners = {"f9": ["alice@example.com"]}
+    async with factory() as session, session.begin():
+        await set_rls(session, t.org_id)
+        await calendar.process(session, t.org_id, {}, "initial_sync", clients, MemoryStore())
+    assert (
+        _sql(
+            "SELECT 1 FROM outbox WHERE org_id = %(o)s AND topic = 'integration-events'",
+            {"o": str(t.org_id)},
+        )
+        == []
+    )
+    assert clients.calendar.downloads == []
 
 
 def upserted_value(
@@ -507,6 +590,26 @@ async def test_core_creates_and_patches_one_meeting_per_calendar_event(factory):
         )
         == 2
     )
+
+
+async def test_core_refuses_an_event_whose_organizer_is_not_a_tenant_user(factory):
+    t = seed_tenant("owner")
+    event_id = f"evt{uuid.uuid4().hex[:8]}"
+    payload = {
+        "meeting_id": str(calendar.meeting_id_for(t.org_id, event_id)),
+        "title": "Not ours",
+        "starts_at": "2026-11-12T10:00:00Z",
+        "ends_at": "2026-11-12T11:00:00Z",
+        "attendees": [{"email": "u@example.com", "user_id": str(t.user_id)}],
+        "organizer_email": "stranger@outside.com",
+        "attachments": [],
+    }
+    async with factory() as session, session.begin():
+        changed = await handle_integration_event(
+            session, fakeredis.aioredis.FakeRedis(), upserted_value(t, event_id, payload)
+        )
+    assert changed is False
+    assert _sql("SELECT 1 FROM meetings WHERE org_id = %(o)s", {"o": str(t.org_id)}) == []
 
 
 async def test_core_ignores_other_integration_events(factory):

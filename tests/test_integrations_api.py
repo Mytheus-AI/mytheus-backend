@@ -97,20 +97,29 @@ def connection_rows(org_id: uuid.UUID) -> list[dict[str, Any]]:
     return _sql("SELECT * FROM integration_connections WHERE org_id = %(o)s", {"o": str(org_id)})
 
 
-def connect_and_callback(client: TestClient, provider: str) -> Any:
+def start(client: TestClient, provider: str) -> str:
     r = client.post(f"/integrations/{provider}/connect")
     assert r.status_code == 200, r.text
-    state = fx.state_from(r.json()["authorize_url"])
-    return client.get(
-        f"/oauth/{provider}", params={"code": "auth-code", "state": state}, follow_redirects=False
-    )
+    return fx.state_from(r.json()["authorize_url"])
 
 
-def redirect_query(response: Any) -> dict[str, list[str]]:
-    assert response.status_code == 302, response.text
-    location = response.headers["location"]
-    assert location.startswith("https://app.mytheus.test/settings/integrations?")
-    return parse_qs(urlparse(location).query)
+def complete(client: TestClient, provider: str, state: str, code: str = "auth-code") -> Any:
+    """What the web app's callback page does, signed in, after the provider redirect."""
+    return client.post(f"/oauth/{provider}", json={"code": code, "state": state})
+
+
+def connect_and_callback(client: TestClient, provider: str) -> Any:
+    return complete(client, provider, start(client, provider))
+
+
+def ok(response: Any, provider: str) -> None:
+    assert response.status_code == 200, response.text
+    assert response.json() == {"provider": provider, "status": "active"}
+
+
+def refused(response: Any, status: int, reason: str) -> None:
+    assert response.status_code == status, response.text
+    assert response.json()["reason"] == reason
 
 
 # --- RLS -------------------------------------------------------------------------------------
@@ -249,7 +258,10 @@ def test_connect_stores_the_verifier_server_side_and_sends_only_the_challenge(cl
     r = client.post("/integrations/slack/connect")
     url = r.json()["authorize_url"]
     query = parse_qs(urlparse(url).query)
-    assert query["redirect_uri"] == ["https://api.mytheus.test/oauth/slack"]
+    # The provider sends the browser back to the web app, never straight to the API.
+    assert query["redirect_uri"] == [
+        "https://app.mytheus.test/settings/integrations/callback/slack"
+    ]
     state = query["state"][0]
     import redis as sync_redis
 
@@ -262,13 +274,12 @@ def test_connect_stores_the_verifier_server_side_and_sends_only_the_challenge(cl
     assert 0 < ttl <= 600
 
 
-def test_callback_connects_encrypts_tokens_and_never_returns_them(client, fakes):
+def test_completion_connects_encrypts_tokens_and_never_returns_them(client, fakes):
     t = admin_tenant()
-    response = connect_and_callback(client, "slack")
-    assert redirect_query(response) == {"connected": ["slack"]}
+    ok(connect_and_callback(client, "slack"), "slack")
 
     [row] = connection_rows(t.org_id)
-    assert row["status"] == "active" and row["external_account_id"] == "T0TEAM"
+    assert row["status"] == "active" and row["external_account_id"].startswith("T0TEAM")
     assert str(row["installed_by"]) == str(t.user_id)
     [tok] = _sql(
         "SELECT access_token_enc, token_version FROM oauth_tokens WHERE org_id = %(o)s",
@@ -304,7 +315,7 @@ def test_callback_connects_encrypts_tokens_and_never_returns_them(client, fakes)
 
 async def test_tokens_round_trip_through_the_envelope(client):
     t = admin_tenant()
-    connect_and_callback(client, "jira")
+    ok(connect_and_callback(client, "jira"), "jira")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from libs.shared.tenancy import set_rls
@@ -325,9 +336,11 @@ async def test_tokens_round_trip_through_the_envelope(client):
 
 def test_jira_post_install_registers_the_webhook_with_the_cloud_id(client, fakes):
     t = admin_tenant()
-    redirect_query(connect_and_callback(client, "jira"))
+    ok(connect_and_callback(client, "jira"), "jira")
+    [row] = connection_rows(t.org_id)
     hook = fakes.jira.webhooks[-1]
-    assert hook["url"] == "https://api.mytheus.test/webhooks/jira?cloud_id=cloud-123"
+    cloud = row["external_account_id"]
+    assert hook["url"] == f"https://api.mytheus.test/webhooks/jira?cloud_id={cloud}"
     [cursor] = _sql(
         "SELECT cursor, expires_at FROM integration_cursors WHERE org_id = %(o)s",
         {"o": str(t.org_id)},
@@ -337,7 +350,7 @@ def test_jira_post_install_registers_the_webhook_with_the_cloud_id(client, fakes
 
 def test_calendar_post_install_watches_and_queues_the_initial_sync(client, fakes):
     t = admin_tenant()
-    redirect_query(connect_and_callback(client, "google_calendar"))
+    ok(connect_and_callback(client, "google_calendar"), "google_calendar")
     watch = fakes.calendar.watches[-1]
     assert watch["address"] == "https://api.mytheus.test/webhooks/google_calendar"
     inbox = _sql(
@@ -349,53 +362,36 @@ def test_calendar_post_install_watches_and_queues_the_initial_sync(client, fakes
 
 def test_a_tampered_state_is_rejected(client):
     admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
+    state = start(client, "slack")
     body, sig = state.split(".")
-    tampered = f"{body[:-2]}AA.{sig}"
-    response = client.get(
-        "/oauth/slack", params={"code": "c", "state": tampered}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["invalid_state"]}
-    garbage = client.get("/oauth/slack", params={"code": "c", "state": "x"}, follow_redirects=False)
-    assert redirect_query(garbage) == {"error": ["invalid_state"]}
+    refused(complete(client, "slack", f"{body[:-2]}AA.{sig}"), 400, "invalid_state")
+    refused(complete(client, "slack", "x"), 400, "invalid_state")
 
 
 def test_an_expired_state_is_rejected(client):
     t = admin_tenant()
     old = mint_state(fx.STATE_SECRET.encode(), t.org_id, t.user_id, "slack", now=time.time() - 3600)
-    response = client.get(
-        "/oauth/slack", params={"code": "c", "state": old}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["state_expired"]}
+    refused(complete(client, "slack", old), 400, "state_expired")
     assert connection_rows(t.org_id) == []
 
 
 def test_a_state_is_single_use(client):
     t = admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
-    first = client.get("/oauth/slack", params={"code": "c", "state": state}, follow_redirects=False)
-    assert redirect_query(first) == {"connected": ["slack"]}
-    again = client.get("/oauth/slack", params={"code": "c", "state": state}, follow_redirects=False)
-    assert redirect_query(again) == {"error": ["invalid_state"]}
+    state = start(client, "slack")
+    ok(complete(client, "slack", state), "slack")
+    refused(complete(client, "slack", state), 400, "invalid_state")
     assert len(connection_rows(t.org_id)) == 1
 
 
 def test_a_state_for_another_provider_is_rejected(client):
     admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
-    response = client.get(
-        "/oauth/jira", params={"code": "c", "state": state}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["invalid_state"]}
+    state = start(client, "slack")
+    refused(complete(client, "jira", state), 400, "invalid_state")
 
 
 def test_a_pkce_mismatch_fails_the_exchange(client):
     t = admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
+    state = start(client, "slack")
     import redis as sync_redis
 
     key = state_key(t.org_id, state)
@@ -403,39 +399,67 @@ def test_a_pkce_mismatch_fails_the_exchange(client):
     pending = json.loads(redis.get(key))
     pending["verifier"] = "a-different-verifier-" + "x" * 40
     redis.set(key, json.dumps(pending), ex=600)
-    response = client.get(
-        "/oauth/slack", params={"code": "c", "state": state}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["exchange_failed"]}
+    refused(complete(client, "slack", state), 400, "exchange_failed")
     assert connection_rows(t.org_id) == []
 
 
-def test_a_provider_denial_redirects_with_access_denied(client):
+def test_another_admin_of_the_same_tenant_cannot_complete_my_state(client):
     t = admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
-    response = client.get(
-        "/oauth/slack", params={"error": "access_denied", "state": state}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["access_denied"]}
+    state = start(client, "slack")
+    other_admin = seed_user(t, "admin")
+    sign_in(other_admin)
+    refused(complete(client, "slack", state), 400, "invalid_state")
     assert connection_rows(t.org_id) == []
+    # The refused attempt did not burn the state: its owner can still finish.
+    sign_in(t)
+    ok(complete(client, "slack", state), "slack")
+    [row] = connection_rows(t.org_id)
+    assert str(row["installed_by"]) == str(t.user_id)
 
 
-def test_the_callback_rechecks_that_the_installer_is_still_an_admin(client):
+def test_a_user_of_another_tenant_cannot_complete_my_state(client):
+    """The login-CSRF shape: the attacker starts a connect in their tenant and gets a victim's
+    signed-in browser to finish it. The victim's session must not attach their account to the
+    attacker's tenant, nor connect anything in the victim's own tenant."""
+    attacker = admin_tenant()
+    state = start(client, "jira")
+    victim = admin_tenant()
+    refused(complete(client, "jira", state), 400, "invalid_state")
+    assert connection_rows(attacker.org_id) == [] and connection_rows(victim.org_id) == []
+
+
+def test_completion_requires_a_signed_in_owner_or_admin(client):
     t = admin_tenant()
-    r = client.post("/integrations/slack/connect")
-    state = fx.state_from(r.json()["authorize_url"])
+    state = start(client, "slack")
     _sql("UPDATE rbac_grants SET tier = 'member' WHERE user_id = %(u)s", {"u": str(t.user_id)})
-    response = client.get(
-        "/oauth/slack", params={"code": "c", "state": state}, follow_redirects=False
-    )
-    assert redirect_query(response) == {"error": ["access_denied"]}
+    r = complete(client, "slack", state)
+    assert r.status_code == 403 and r.json()["code"] == "FORBIDDEN_ROLE"
     assert connection_rows(t.org_id) == []
+
+
+def test_one_provider_account_is_live_in_one_tenant_at_a_time(client, fakes):
+    first = admin_tenant()
+    fakes.oauth["slack"].account = f"TSHARED{uuid.uuid4().hex[:6]}"
+    try:
+        ok(connect_and_callback(client, "slack"), "slack")
+        second = admin_tenant()
+        r = connect_and_callback(client, "slack")
+        refused(r, 409, "account_connected_elsewhere")
+        assert r.json()["code"] == "ACCOUNT_CONNECTED_ELSEWHERE"
+        assert connection_rows(second.org_id) == []
+        assert fakes.oauth["slack"].revoked == []  # the first tenant's install is untouched
+        # Once the first tenant disconnects, the account can move.
+        sign_in(first)
+        assert client.delete("/integrations/slack").status_code == 204
+        sign_in(second)
+        ok(connect_and_callback(client, "slack"), "slack")
+    finally:
+        fakes.oauth["slack"].account = None
 
 
 def test_disconnect_revokes_deletes_tokens_and_audits(client, fakes):
     t = admin_tenant()
-    connect_and_callback(client, "jira")
+    ok(connect_and_callback(client, "jira"), "jira")
     r = client.delete("/integrations/jira")
     assert r.status_code == 204
     [row] = connection_rows(t.org_id)
@@ -510,6 +534,21 @@ def _connect_row(t: Tenant, provider: str, account: str) -> uuid.UUID:
         {"c": str(cid), "o": str(t.org_id), "p": provider, "e": account, "u": str(t.user_id)},
     )
     return cid
+
+
+def test_the_database_holds_one_live_connection_per_provider_account():
+    a, b = seed_tenant(), seed_tenant()
+    account = f"TONE{uuid.uuid4().hex[:6]}"
+    _connect_row(a, "slack", account)
+    with pytest.raises(psycopg2.errors.UniqueViolation):
+        _connect_row(b, "slack", account)
+    _sql(
+        "UPDATE integration_connections SET status = 'disconnected' WHERE org_id = %(o)s",
+        {"o": str(a.org_id)},
+    )
+    _connect_row(b, "slack", account)  # a disconnected row no longer holds the account
+    rows = _app_sql("SELECT org_id FROM integration_connections", None, route=f"slack:{account}")
+    assert [str(r[0]) for r in rows] == [str(b.org_id)]
 
 
 def test_slack_webhook_verifies_dedupes_and_acks_fast(client, fakes):
@@ -588,20 +627,31 @@ def test_jira_webhook_verifies_the_atlassian_jwt(client):
     cloud = f"cloud-{uuid.uuid4().hex[:8]}"
     _connect_row(t, "jira", cloud)
     body = json.dumps({"webhookEvent": "jira:issue_updated", "issue": {"key": "NEX-1"}}).encode()
-    good = pyjwt.encode({"iss": "atlassian", "exp": int(time.time()) + 60}, fx.JIRA_SECRET)
-    headers = {
-        "Authorization": f"Bearer {good}",
-        "X-Atlassian-Webhook-Identifier": "wh-1",
-        "Content-Type": "application/json",
-    }
+    exp = int(time.time()) + 60
+
+    def signed(claims: dict[str, Any], secret: str = fx.JIRA_SECRET) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {pyjwt.encode(claims, secret)}",
+            "X-Atlassian-Webhook-Identifier": "wh-1",
+            "Content-Type": "application/json",
+        }
+
+    good = signed({"exp": exp, "context": {"cloudId": cloud}})
     url = f"/webhooks/jira?cloud_id={cloud}"
-    assert client.post(url, content=body, headers=headers).json() == {"status": "accepted"}
-    assert client.post(url, content=body, headers=headers).json() == {"status": "duplicate"}
-    forged = pyjwt.encode({"iss": "atlassian"}, "not-the-secret-but-long-enough-0123456789")
-    bad = client.post(url, content=body, headers={**headers, "Authorization": f"Bearer {forged}"})
-    assert bad.status_code == 401
+    assert client.post(url, content=body, headers=good).json() == {"status": "accepted"}
+    assert client.post(url, content=body, headers=good).json() == {"status": "duplicate"}
+    forged = signed({"exp": exp, "context": {"cloudId": cloud}}, "not-the-secret-" + "x" * 30)
+    assert client.post(url, content=body, headers=forged).status_code == 401
+    no_exp = signed({"context": {"cloudId": cloud}})
+    assert client.post(url, content=body, headers=no_exp).status_code == 401
+    other_cloud = signed({"exp": exp, "context": {"cloudId": "cloud-someone-else"}})
+    assert client.post(url, content=body, headers=other_cloud).status_code == 401
+    no_cloud_claim = signed({"exp": exp})
+    assert client.post(url, content=body, headers=no_cloud_claim).status_code == 401
     missing = client.post(url, content=body, headers={"X-Atlassian-Webhook-Identifier": "x"})
     assert missing.status_code == 401
+    no_route = client.post("/webhooks/jira", content=body, headers=good)
+    assert no_route.status_code == 401
     assert len(_inbox(t.org_id, "jira")) == 1
 
 
@@ -626,7 +676,7 @@ def test_slack_token_is_for_notification_service_only(client):
     assert r.headers["cache-control"] == "no-store"
     body = r.json()
     assert body["access_token"] == "xoxb-slack-ACCESS-secret"
-    assert body["team_id"] == "T0TEAM" and body["expires_in"] > 0
+    assert body["team_id"].startswith("T0TEAM") and body["expires_in"] > 0
     wf = _caller(t, "workflow-service", fx.CALLER_SECRET_WF)
     assert client.get("/internal/slack/token", headers=wf).status_code == 401
     wrong = _caller(t, "notification-service", "x" * 40)
@@ -694,28 +744,33 @@ def test_gateway_routes_the_three_integration_prefixes():
     assert edge.route_for("/internal/slack/token") is None
 
 
-def test_gateway_lets_oauth_and_webhooks_through_without_a_jwt_but_not_integrations(monkeypatch):
-    """Through the real `edge_auth` middleware: the callback and the webhooks reach the
-    service with no bearer token; the settings API is refused at the edge."""
+def _edge_app(monkeypatch: pytest.MonkeyPatch) -> Any:
     from fastapi import FastAPI
 
     monkeypatch.setenv("GATEWAY_SIGNING_KEY", "k")
     app = FastAPI()
     app.middleware("http")(edge.edge_auth)
+    app.state.reached = []
 
-    # authz: public - a stand-in upstream that only records that the edge let it through.
+    # authz: public - a stand-in upstream that only records what the edge let through.
     @app.api_route("/{path:path}", methods=["GET", "POST", "DELETE"])
     async def upstream(path: str) -> dict[str, str]:
+        app.state.reached.append(path)
         return {"reached": path}
 
-    with TestClient(app) as gw:
-        assert gw.get("/oauth/google_calendar?code=x&state=y").json() == {
-            "reached": "oauth/google_calendar"
-        }
+    return app
+
+
+def test_gateway_lets_only_webhooks_through_without_a_jwt(monkeypatch):
+    """Through the real `edge_auth` middleware: webhooks reach the service with no bearer
+    token; the OAuth completion and the settings API are refused at the edge."""
+    with TestClient(_edge_app(monkeypatch)) as gw:
         for provider in ("slack", "google_calendar", "jira"):
             r = gw.post(f"/webhooks/{provider}", content=b"{}")
             assert r.status_code == 200, provider
         for method, path in (
+            ("POST", "/oauth/slack"),
+            ("GET", "/oauth/google_calendar?code=x&state=y"),
             ("GET", "/integrations"),
             ("POST", "/integrations/slack/connect"),
             ("DELETE", "/integrations/slack"),
@@ -723,5 +778,91 @@ def test_gateway_lets_oauth_and_webhooks_through_without_a_jwt_but_not_integrati
             r = gw.request(method, path)
             assert r.status_code == 401, path
             assert r.json()["code"] == "AUTH_REQUIRED"
-    assert edge.is_public("/webhooks/slack") and edge.is_public("/oauth/jira")
+    assert edge.is_public("/webhooks/slack")
+    assert not edge.is_public("/oauth/jira")
     assert not edge.is_public("/integrations") and not edge.is_public("/integrationsx")
+
+
+TRAVERSALS = [
+    "/oauth/../internal/slack/token",
+    "/webhooks/../internal/slack/token",
+    "/webhooks/slack/../../internal/slack/token",
+    "/webhooks/%2e%2e/internal/slack/token",
+    "/webhooks/%2E%2E/internal/slack/token",
+    "/webhooks/%2e%2E/internal/slack/token",
+    "/webhooks/.%2e/internal/slack/token",
+    "/webhooks/./slack",
+    "/webhooks/%2e/slack",
+    "/webhooks/slack%2f..%2finternal",
+    "/webhooks/slack%2F..%2Finternal",
+    "/webhooks/slack%5c..%5cinternal",
+    "/webhooks/slack%5C..",
+    "/webhooks\\..\\internal/slack/token",
+    "/webhooks//slack",
+    "//internal/slack/token",
+    "/webhooks/%252e%252e/internal/slack/token",
+    "/internal/slack/token",
+    "/internal",
+    "/api/v1/meetings/../../internal/slack/token",
+]
+
+
+@pytest.mark.parametrize("raw", TRAVERSALS)
+def test_normalize_path_refuses_every_ambiguous_form(raw):
+    assert edge.normalize_path(raw) is None
+
+
+@pytest.mark.parametrize(
+    "raw", ["/webhooks/slack", "/integrations/jira/connect", "/oauth/slack", "/api/v1/meetings"]
+)
+def test_normalize_path_keeps_ordinary_paths(raw):
+    assert edge.normalize_path(raw) == raw
+
+
+async def _asgi(app: Any, method: str, raw_path: str, headers: list | None = None) -> int:
+    """Drive the ASGI app with an un-normalized path, as a raw socket client can send it
+    (httpx and the TestClient would normalize `..` away before it ever left the test)."""
+    from urllib.parse import unquote
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": unquote(raw_path),
+        "raw_path": raw_path.encode(),
+        "query_string": b"",
+        "headers": headers or [],
+        "client": ("127.0.0.1", 1),
+        "server": ("gateway", 80),
+    }
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await app(scope, receive, send)
+    return int(next(m["status"] for m in sent if m["type"] == "http.response.start"))
+
+
+@pytest.mark.parametrize("raw", TRAVERSALS)
+async def test_the_edge_refuses_traversal_before_auth_or_routing(raw, monkeypatch):
+    app = _edge_app(monkeypatch)
+    assert await _asgi(app, "GET", raw) == 404
+    assert app.state.reached == []  # nothing reached the upstream
+
+
+async def test_the_proxy_never_forwards_internal_or_dot_segments(monkeypatch):
+    """Belt and braces: the forwarding hop applies the same rule even without the edge."""
+    from fastapi import FastAPI
+
+    from services.api_gateway import proxy
+
+    app = FastAPI()
+    proxy.install(app)
+    for raw in ("/oauth/../internal/slack/token", "/internal/slack/token"):
+        assert await _asgi(app, "GET", raw) == 404
