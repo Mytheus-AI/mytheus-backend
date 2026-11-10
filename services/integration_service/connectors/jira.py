@@ -13,17 +13,17 @@ Outbound (`actions` consumer, `confirmed` only): if the tenant has an active Jir
    `{APP_BASE_URL}/meetings/{meeting_id}`, duedate, assignee by email -> accountId when Jira knows
    the email, label `nexus:{action_id}`. Store key/url with `last_synced_status = confirmed`.
 
-Inbound (webhook inbox row, `jira:issue_updated`): id map by issue key, else by the issue's
-`nexus:{uuid}` label (the key changes when an issue moves project) -> status map (statusCategory
-`done` -> done, anything else -> confirmed) -> if it equals `last_synced_status` drop it (loop
-suppression: the echo of a change NEXUS already knows about), else call core-api
-`POST /internal/actions/{id}/external-status` and only then store the new watermark.
-An issue that is in no id map of this tenant is ignored, whatever its labels say.
+Inbound (webhook inbox row, `jira:issue_updated`): id map by issue key only (a `nexus:` label
+is never trusted inbound: any Jira user can put one on any issue) -> re-read the issue from Jira
+with the tenant's token and take the status from that read, not from the webhook body -> status
+map (statusCategory `done` -> done, anything else -> confirmed) -> if it equals
+`last_synced_status` drop it (loop suppression: the echo of a change NEXUS already knows about),
+else call core-api `POST /internal/actions/{id}/external-status` and only then store the new
+watermark. An issue that is in no id map of this tenant is ignored, whatever its labels say.
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -42,7 +42,6 @@ PROVIDER = config.JIRA
 SITE_KIND = "jira_site"
 WEBHOOK_LIFETIME = timedelta(days=30)
 LABEL_PREFIX = "nexus:"
-_LABEL_RE = re.compile(r"^nexus:([0-9a-fA-F-]{36})$")
 _EPOCH = date(1970, 1, 1)
 
 
@@ -230,8 +229,13 @@ async def process_webhook(
     org_id: uuid.UUID,
     payload: dict[str, Any],
     core: CoreApiClient,
+    clients: Clients,
 ) -> str:
-    """Inbound for one `jira:issue_updated` delivery. Returns processed|skipped."""
+    """Inbound for one `jira:issue_updated` delivery. Returns processed|skipped.
+
+    The payload only says WHICH issue changed. The issue is looked up in this tenant's id map by
+    its key (never by a `nexus:` label, which any Jira user can add to any issue), then re-read
+    from Jira with the tenant's own token, and the status comes from that read."""
     if payload.get("webhookEvent") != "jira:issue_updated":
         return "skipped"
     issue = payload.get("issue")
@@ -243,22 +247,16 @@ async def process_webhook(
     key = str(issue["key"])
     link = await store.link_for_external(session, PROVIDER, "action", key)
     if link is None:
-        labels = (issue.get("fields") or {}).get("labels") or []
-        for label in labels:
-            match = _LABEL_RE.match(str(label))
-            if match:
-                link = await store.link_for_nexus(
-                    session, PROVIDER, "action", uuid.UUID(match.group(1))
-                )
-                if link is not None:
-                    break
-    if link is None:
         return "skipped"  # not an issue this tenant created
-    status = map_status(issue)
+    tokens = await store.access_token(session, conn, clients.oauth[PROVIDER])
+    site = _site(await store.get_cursor(session, conn.id, SITE_KIND), conn)
+    fetched = await clients.jira.get_issue(tokens.access_token, str(site["cloud_id"]), key)
+    if fetched is None or str(fetched.get("key")) != link.external_id:
+        return "skipped"  # gone, moved, or no longer the issue we created
+    status = map_status(fetched)
     if status == link.last_synced_status:
         return "skipped"  # loop suppression: NEXUS already has this status
     await core.external_status(org_id, link.nexus_id, status, key)
-    site = _site(await store.get_cursor(session, conn.id, SITE_KIND), conn)
     await store.put_link(
         session, org_id, PROVIDER, "action", link.nexus_id, key, _browse_url(site, key), status
     )

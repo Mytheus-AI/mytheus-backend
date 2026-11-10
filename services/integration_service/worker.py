@@ -71,7 +71,7 @@ async def _dispatch(
     if provider == config.SLACK:
         return await slack.process(session, payload)
     if provider == config.JIRA:
-        return await jira.process_webhook(session, org_id, payload, core)
+        return await jira.process_webhook(session, org_id, payload, core, clients)
     return "skipped"
 
 

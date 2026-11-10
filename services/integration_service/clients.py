@@ -266,6 +266,22 @@ class GoogleCalendarApi(_Http):
             if not page_token:
                 return events, body.get("nextSyncToken")
 
+    async def file_owners(self, token: str, *, file_id: str) -> list[str]:
+        """Lower-cased owner emails of a Drive file (empty for a shared-drive file)."""
+        body = await self.json(
+            self.provider,
+            "file_owners",
+            "GET",
+            f"{GOOGLE_DRIVE_API}/files/{file_id}",
+            headers=self._auth(token),
+            params={"fields": "owners(emailAddress)", "supportsAllDrives": "true"},
+        )
+        return [
+            str(o["emailAddress"]).lower()
+            for o in body.get("owners") or []
+            if isinstance(o, dict) and o.get("emailAddress")
+        ]
+
     async def download(self, token: str, *, file_id: str, mime_type: str | None) -> bytes:
         """Drive bytes for an attachment. Google-native docs are exported as PDF."""
         if mime_type and mime_type.startswith("application/vnd.google-apps."):
@@ -534,6 +550,25 @@ class JiraApi(_Http):
         )
         if not body.get("key"):
             raise ProviderError(self.provider, "create_issue", "no_key")
+        return body
+
+    async def get_issue(self, token: str, cloud_id: str, key: str) -> dict[str, Any] | None:
+        """The issue as Jira has it now (key, status, labels), or None if it is gone."""
+        response = await self.request(
+            self.provider,
+            "get_issue",
+            "GET",
+            f"{JIRA_API}/{cloud_id}/rest/api/3/issue/{key}",
+            headers=self._auth(token),
+            params={"fields": "status,labels"},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ProviderError(
+                self.provider, "get_issue", f"http_{response.status_code}", response.status_code
+            )
+        body: dict[str, Any] = response.json()
         return body
 
     async def account_id_for_email(self, token: str, cloud_id: str, email: str) -> str | None:

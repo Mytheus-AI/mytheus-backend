@@ -18,9 +18,11 @@ Per provider:
   (minted at `events.watch`), and must name the `X-Goog-Channel-ID` it arrived with. Delivery
   id = `{channel id}:{X-Goog-Message-Number}`.
 - Jira: the dynamic webhook carries an `Authorization` JWT signed HS256 with the app's client
-  secret (`JIRA_CLIENT_SECRET`). Tenant = the connection for the `cloud_id` query parameter we
-  registered the webhook URL with; the worker additionally only acts on issues in that tenant's
-  own id map. Delivery id = `X-Atlassian-Webhook-Identifier` (or the body hash).
+  secret (`JIRA_CLIENT_SECRET`), with `exp` required and a claim naming the same cloud as the
+  `cloud_id` query parameter we registered the webhook URL with. Tenant = that cloud's
+  connection. The payload is still not trusted for status: the worker re-reads the issue from
+  Jira with the tenant's own token and only acts on issue keys in that tenant's id map.
+  Delivery id = `X-Atlassian-Webhook-Identifier` (or the body hash).
 
 A verified request for a tenant we no longer have (disconnected, unknown workspace) gets 200 and
 is dropped, so the provider stops retrying; a request that fails verification gets 401.
@@ -77,23 +79,47 @@ def verify_slack(headers: Any, body: bytes, *, now: float | None = None) -> None
         raise _unauthorized()
 
 
-def verify_jira(headers: Any) -> None:
+# Where a cloud (site) id can appear in an Atlassian webhook JWT. The token must name the same
+# cloud as the `cloud_id` the webhook URL was registered with, so a token minted for one site
+# cannot be replayed against another tenant's route.
+_CLOUD_CLAIMS = ("cloudId", "cloud_id", "aud", "iss", "sub")
+
+
+def _claimed_clouds(claims: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    for key in _CLOUD_CLAIMS:
+        value = claims.get(key)
+        if isinstance(value, str):
+            found.add(value)
+        elif isinstance(value, list):
+            found.update(str(v) for v in value)
+    context = claims.get("context")
+    if isinstance(context, dict) and context.get("cloudId"):
+        found.add(str(context["cloudId"]))
+    return found
+
+
+def verify_jira(headers: Any, cloud_id: str) -> None:
+    """HS256 under the app's client secret, `exp` required, and the claims must name
+    `cloud_id`."""
     creds = config.credentials(config.JIRA)
-    if creds is None:
+    if creds is None or not cloud_id:
         raise _unauthorized()
     raw = headers.get("authorization", "")
     scheme, _, token = raw.partition(" ")
     if scheme.lower() not in ("bearer", "jwt") or not token:
         raise _unauthorized()
     try:
-        jwt.decode(
+        claims = jwt.decode(
             token,
             creds.client_secret,
             algorithms=["HS256"],
-            options={"verify_aud": False, "require": []},
+            options={"verify_aud": False, "require": ["exp"]},
         )
     except jwt.InvalidTokenError:
         raise _unauthorized() from None
+    if cloud_id not in _claimed_clouds(claims):
+        raise _unauthorized()
 
 
 def _json(body: bytes) -> dict[str, Any]:
@@ -177,11 +203,9 @@ async def receive(provider: str, request: Request) -> JSONResponse:
         )
 
     # Jira
-    verify_jira(headers)
     cloud_id = request.query_params.get("cloud_id", "")
+    verify_jira(headers, cloud_id)
     data = _json(body)
-    if not cloud_id:
-        return _ack("ignored")
     org_id = await _route(provider, cloud_id)
     if org_id is None:
         return _ack("ignored")
