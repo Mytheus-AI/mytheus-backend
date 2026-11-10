@@ -43,6 +43,7 @@ from services.meeting_service.routes import get_transport
 from services.meeting_service.transport import FakeTransport
 from services.workflow_service.activities import LifecycleActivities
 from services.workflow_service.consumer import PoisonMessage, handle_meeting_event
+from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.workflows.meeting_lifecycle import (
     MAX_OPEN,
     NEVER_ENDED,
@@ -50,6 +51,7 @@ from services.workflow_service.workflows.meeting_lifecycle import (
     wait_bound,
     workflow_id_for,
 )
+from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from tests.conftest import APP_URL
 from tests.test_chat_api import _sql, seed_meeting, seed_tenant
 
@@ -131,11 +133,16 @@ def activities(app: FastAPI, transport: httpx.AsyncBaseTransport | None = None) 
 
 
 def worker(client: Client, acts: LifecycleActivities, **options: Any) -> Worker:
+    # The consumer starts the sibling MeetingRemindersWorkflow (ADR-0039 B9) on `created`, so
+    # the worker hosts it too, its activities on the same in-process core-api.
+    reminders = ReminderActivities(
+        core_url=CORE, core_secret=SECRET, transport=acts._transport  # noqa: SLF001
+    )
     return Worker(
         client,
         task_queue=QUEUE,
-        workflows=[MeetingLifecycleWorkflow],
-        activities=acts.all(),
+        workflows=[MeetingLifecycleWorkflow, MeetingRemindersWorkflow],
+        activities=[*acts.all(), *reminders.all()],
         **options,
     )
 
