@@ -20,6 +20,10 @@ outbox:
   `mytheus-attachments/{org_id}/{meeting_id}/` - exactly the {meeting_id, object_key, filename}
   ingestion-service's consumer reads.
 
+Trust: an event becomes a meeting only when its organizer's email belongs to a user of THIS
+tenant, and an attachment is downloaded only when one of its Drive owners does. Anyone can send
+the connected account an invite, so neither the invite nor its files are trusted by default.
+
 Idempotency keys: `gcal:{event_id}:{updated}` for the upsert (one emit per event version) and
 `gcal:{event_id}:attachment:{file_id}` for an attachment (downloaded and ingested once). The
 `syncToken` advances only after the whole delta has been enqueued, in the same transaction.
@@ -194,6 +198,19 @@ async def _resolve_attendees(session: AsyncSession, emails: list[str]) -> dict[s
     return {str(r[0]): r[1] for r in rows}
 
 
+async def _owned_by_tenant(
+    session: AsyncSession, clients: Clients, access_token: str, file_id: str
+) -> bool:
+    """True when a Drive owner of the file is a user of this tenant. Files owned outside the
+    tenant (a guest's attachment, a shared drive with no user owner) are not ingested."""
+    try:
+        owners = await clients.calendar.file_owners(access_token, file_id=file_id)
+    except ProviderError as exc:
+        logger.warning("calendar attachment owner lookup failed: %s", exc)
+        return False
+    return bool(owners) and bool(await _resolve_attendees(session, sorted(owners)))
+
+
 async def _already_enqueued(session: AsyncSession, key: str) -> bool:
     row = (
         await session.execute(
@@ -227,6 +244,11 @@ async def _handle_event(
     matched = await _resolve_attendees(
         session, sorted(set(emails) | ({organizer_email} if organizer_email else set()))
     )
+    if organizer_email is None or organizer_email not in matched:
+        # Anyone can put the connected account on an invite. Only events organized by a user
+        # of this tenant become meetings; an outsider's invite never creates one, never makes
+        # the outsider an organizer, and never pulls their files into the tenant's index.
+        return False
 
     attachment_out: list[dict[str, Any]] = []
     for att in event.get("attachments") or []:
@@ -239,6 +261,8 @@ async def _handle_event(
         if attachments is not None:
             if await _already_enqueued(session, idem):
                 stored = key
+            elif not await _owned_by_tenant(session, clients, access_token, file_id):
+                pass  # an external file: listed on the meeting, never downloaded or ingested
             else:
                 try:
                     data = await clients.calendar.download(

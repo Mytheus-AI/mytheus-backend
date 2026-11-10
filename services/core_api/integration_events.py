@@ -6,9 +6,11 @@ Only `(google_calendar, calendar_event_upserted)` acts; every other integration 
 
 Upsert, keyed on `meetings (org_id, calendar_event_id)` (migration 7c3e9a1f5b20):
 
+- the organizer's email must match a user of this tenant, or the event is consumed with no
+  effect: an outsider's invite never creates a meeting or gets `created_by`/host;
 - no meeting for the event: INSERT with the event's deterministic `meeting_id` (uuid5 from
   integration-service, so the attachments it already ingested point at this meeting),
-  `created_by` = the organizer when their email matches a user of this tenant, plus a
+  `created_by` = that organizer, plus a
   `meeting-events` `created` outbox row (the MeetingLifecycleWorkflow starts from it) and a
   `meeting.created` audit row (actor_type `system`);
 - a meeting already exists: patch title and schedule while it is still `scheduled` (a live or
@@ -147,6 +149,10 @@ async def _upsert(session: AsyncSession, org_id: uuid.UUID, value: dict[str, Any
         else {}
     )
     organizer_id = users.get(organizer_email) if organizer_email else None
+    if organizer_id is None:
+        # Only an event organized by a user of this tenant becomes a meeting (integration-service
+        # already filters; checked again here because core-api owns `meetings`).
+        return False
 
     existing = (
         (
