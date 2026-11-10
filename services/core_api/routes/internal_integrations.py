@@ -117,8 +117,10 @@ async def external_status(
 class ActionStatus(BaseModel):
     status: str
     assignee_id: uuid.UUID | None
-    meeting_id: uuid.UUID | None  # null for a task created directly (Phase 4)
-    organizer_id: uuid.UUID | None  # the meeting's creator, or the task's creator
+    # The nil uuid for a task created directly (Phase 4), the same convention as the `actions`
+    # event; `organizer_id` is then the task's creator.
+    meeting_id: uuid.UUID
+    organizer_id: uuid.UUID | None
     due_date: date | None
     content: str
 
@@ -134,7 +136,9 @@ async def action_status(
             (
                 await session.execute(
                     text(
-                        "SELECT a.status, a.assignee_id, a.meeting_id, "
+                        "SELECT a.status, a.assignee_id, "
+                        "COALESCE(a.meeting_id, '00000000-0000-0000-0000-000000000000'::uuid) "
+                        "AS meeting_id, "
                         "COALESCE(m.created_by, a.confirmed_by) AS organizer_id, a.due_date, "
                         "a.content FROM action_items a "
                         "LEFT JOIN meetings m ON m.id = a.meeting_id "

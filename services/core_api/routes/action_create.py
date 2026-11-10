@@ -38,7 +38,7 @@ from services.core_api.routes.candidates import (
     _require_meeting_participant,
     enqueue_action_confirmed,
 )
-from services.core_api.routes.my_tasks import MyTask
+from services.core_api.routes.my_tasks import Task
 
 router = APIRouter(prefix="/api/v1", tags=["actions"])
 
@@ -79,7 +79,7 @@ async def _require_member(session: AsyncSession, user_id: uuid.UUID) -> None:
 
 @router.post(
     "/actions",
-    response_model=MyTask,
+    response_model=Task,
     status_code=status.HTTP_201_CREATED,
     summary="Create a task",
     description=(
@@ -93,7 +93,7 @@ async def create_action(
     body: ActionCreate,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
-) -> MyTask:
+) -> Task:
     if ctx.user_id is None:
         raise ProblemDetail(403, ErrorCode.FORBIDDEN_ROLE, "No local user for this account")
     if body.meeting_id is not None:
@@ -145,4 +145,4 @@ async def create_action(
                 text("SELECT title FROM meetings WHERE id = :m"), {"m": str(body.meeting_id)}
             )
         ).scalar()
-    return MyTask(**row, meeting_title=title)
+    return Task(**row, meeting_title=title)

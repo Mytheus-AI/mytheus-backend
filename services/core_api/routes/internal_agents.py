@@ -82,7 +82,7 @@ class DependsOn(BaseModel):
 class ActionContext(BaseModel):
     assignee_id: uuid.UUID | None
     assignee_name: str | None
-    meeting_id: uuid.UUID | None  # null for a task created directly (Phase 4)
+    meeting_id: uuid.UUID  # the nil uuid for a task created directly (Phase 4)
     organizer_id: uuid.UUID | None
     open_action_count: int
     depends_on: list[DependsOn]
@@ -200,7 +200,9 @@ async def action_context(
             (
                 await session.execute(
                     text(
-                        "SELECT a.assignee_id, a.meeting_id, "
+                        "SELECT a.assignee_id, "
+                        "COALESCE(a.meeting_id, '00000000-0000-0000-0000-000000000000'::uuid) "
+                        "AS meeting_id, "
                         "COALESCE(m.created_by, a.confirmed_by) AS created_by, u.email "
                         "FROM action_items a LEFT JOIN meetings m ON m.id = a.meeting_id "
                         "LEFT JOIN users u ON u.id = a.assignee_id AND u.deleted_at IS NULL "

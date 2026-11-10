@@ -91,8 +91,14 @@ def test_a_created_task_is_confirmed_mine_and_emitted_once(client):
         {"t": body["id"]},
     )
     assert len(audits) == 1 and audits[0]["metadata"]["via"] == "session"
-    mine = client.get("/api/v1/actions", params={"assignee_id": "me"}).json()["items"]
+    mine = client.get("/api/v1/actions/mine").json()["items"]
     assert [i["id"] for i in mine] == [body["id"]] and mine[0]["meeting_title"] is None
+    # The legacy list promises a meeting, so it leaves the task out; done still works on it.
+    legacy = client.get("/api/v1/actions", params={"assignee_id": "me"}).json()["items"]
+    assert legacy == []
+    done = client.post(f"/api/v1/actions/{body['id']}/done")
+    assert done.status_code == 200 and done.json()["status"] == "done"
+    assert done.json()["meeting_id"] == NIL and done.json()["meeting_title"] == ""
 
 
 def test_with_a_meeting_the_caller_must_be_a_participant(client):
