@@ -207,6 +207,61 @@ components:
       - scheduled_start
       title: BriefMeeting
       type: object
+    BriefMemory:
+      description: 'Polish wave 2, memory across meetings: what the caller''s agents remember about them,
+
+        ranked for this meeting (topics its title or agenda names come first).'
+      properties:
+        open_actions_total:
+          title: Open Actions Total
+          type: integer
+        open_promises:
+          items:
+            $ref: '#/components/schemas/BriefPromise'
+          title: Open Promises
+          type: array
+        recurring_questions:
+          items:
+            type: string
+          title: Recurring Questions
+          type: array
+        topics:
+          items:
+            type: string
+          title: Topics
+          type: array
+      required:
+      - topics
+      - recurring_questions
+      - open_promises
+      - open_actions_total
+      title: BriefMemory
+      type: object
+    BriefPromise:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - id
+      - content
+      - due_hint
+      - meeting_id
+      title: BriefPromise
+      type: object
     BriefProxy:
       properties:
         proxy_update:
@@ -804,6 +859,10 @@ components:
       properties:
         meeting:
           $ref: '#/components/schemas/BriefMeeting'
+        memory:
+          anyOf:
+          - $ref: '#/components/schemas/BriefMemory'
+          - type: 'null'
         my_agenda_items:
           items:
             $ref: '#/components/schemas/BriefAgendaItem'
@@ -1455,7 +1514,13 @@ paths:
     get:
       description: 'Before a meeting: the caller''s agenda items, their open actions from the previous
 
-        meeting with the latest status, their saved questions, and who sent their agent.'
+        meeting with the latest status, their saved questions, and who sent their agent. Since
+
+        polish wave 2 also `memory`: what their agents remember about them across meetings (top
+
+        topics, recurring questions, open promises, open actions count); null when empty or when
+
+        they switched learning off.'
       operationId: meeting_brief
       parameters:
       - in: path

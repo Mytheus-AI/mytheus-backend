@@ -5,7 +5,9 @@ Consumes: `agent-results` (Plan 7-9 section 3.3 step 3: `PersonalListenerAgent` 
 `proposed`, with no event; see `handle_agent_result`) and presence-events (analytics read
 model only; no domain write - Plan 3-4 section 3.3 step 5), and since P12 `integration-events`
 (`calendar_event_upserted` -> `meetings` + `meeting_participants`, see
-`services/core_api/integration_events.py`; every other integration event is a no-op here).
+`services/core_api/integration_events.py`; every other integration event is a no-op here), and
+since polish wave 2 `agent-feedback` (core-api's own feedback events, folded into
+`person_memory` by `services/core_api/person_memory.py`; inbox claim first, DLQ on poison).
 Presence itself stays owned by `realtime-gateway`/Redis; this consumer never writes
 `meeting_participants` or any table `core-api` treats as domain source of truth from the
 presence path.
@@ -78,6 +80,8 @@ from services.core_api.integration_events import (
     IntegrationEventPoison,
     handle_integration_event,
 )
+from services.core_api.learning import band_for
+from services.core_api.person_memory import FeedbackPoison, handle_agent_feedback
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
@@ -85,8 +89,11 @@ logger = logging.getLogger(__name__)
 TOPIC = "presence-events"
 AGENT_RESULTS = "agent-results"
 INTEGRATION_EVENTS = "integration-events"
+# Polish wave 2: a person's feedback on agent output folds into their `person_memory`
+# (`services/core_api/person_memory.py`).
+AGENT_FEEDBACK = "agent-feedback"
 # P12: calendar events become meetings (`services/core_api/integration_events.py`).
-TOPICS = [TOPIC, AGENT_RESULTS, INTEGRATION_EVENTS]
+TOPICS = [TOPIC, AGENT_RESULTS, INTEGRATION_EVENTS, AGENT_FEEDBACK]
 CONSUMER_GROUP = "core-api"
 
 # doc 08 section 6, the uniform confidence policy (see `services/core_api/confidence.py`).
@@ -317,7 +324,10 @@ async def _apply_agent_result(
         )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
-    surface, silent = _thresholds(visible[2], agent)
+    # The tenant's thresholds moved by the confirm/dismiss calibration (polish wave 2): the
+    # person's own for a note, suggestion or context fill, the workspace's otherwise. The same
+    # numbers `GET /internal/agent-policy` gives the agent and the reload routes apply.
+    surface, silent = await band_for(session, agent, user_id, visible[2], have_overrides=True)
     if is_context_fill:
         return await _persist_collaborations(
             session,
@@ -876,6 +886,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
             handler = {
                 AGENT_RESULTS: handle_agent_result,
                 INTEGRATION_EVENTS: handle_integration_event,
+                AGENT_FEEDBACK: handle_agent_feedback,
             }.get(topic_name, handle_presence_event)
             try:
                 value = decode(
@@ -884,7 +895,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 async with session_factory() as session, session.begin():
                     applied = await handler(session, redis, value)
                 record_processed(CONSUMER_GROUP, topic_name, "applied" if applied else "duplicate")
-            except (PoisonMessage, IntegrationEventPoison) as exc:
+            except (PoisonMessage, IntegrationEventPoison, FeedbackPoison) as exc:
                 logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)
                 dlq_producer.produce(
                     topic=f"{topic_name}.dlq",
