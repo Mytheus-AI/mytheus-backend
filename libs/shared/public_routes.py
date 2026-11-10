@@ -20,15 +20,16 @@ The two categories are different in kind, which is why they are two lists:
 - `PUBLIC_PREFIXES` are unauthenticated by design: liveness probes and the API's own
   documentation surface. They carry no tenant data.
 - `PUBLIC_CONTAINS` are NOT unauthenticated. They are authenticated by a mechanism a bearer
-  token cannot express: a Svix or LiveKit or Stripe signature over the raw request body, or an
-  OAuth redirect carrying a state parameter. They verify before they parse. "Public" here means
-  "does not take a Clerk JWT", never "anyone may call it".
+  token cannot express: a Svix or LiveKit or Stripe signature over the raw request body.
+  They verify before they parse. "Public" here means "does not take a Clerk JWT", never
+  "anyone may call it". (`/oauth/{provider}` was here until P12; it is now a signed-in POST
+  bound to the user who started the flow, and takes the JWT like any other route.)
 """
 
 from __future__ import annotations
 
 PUBLIC_PREFIXES = ("/healthz", "/health", "/openapi", "/docs", "/redoc")
-PUBLIC_CONTAINS = ("/webhook", "/oauth", "/clerk/", "/stripe/", "/livekit/", "/callback")
+PUBLIC_CONTAINS = ("/webhook", "/clerk/", "/stripe/", "/livekit/", "/callback")
 
 
 def is_public_path(path: str) -> bool:

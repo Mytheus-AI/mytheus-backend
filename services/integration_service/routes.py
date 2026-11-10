@@ -1,4 +1,4 @@
-"""integration-service public API: list, connect, disconnect, and the OAuth callback.
+"""integration-service public API: list, connect, disconnect, and the OAuth completion.
 
 - `GET /integrations` (owner/admin): one item per R8 provider, never token material.
 - `POST /integrations/{provider}/connect` (owner/admin) -> {authorize_url}. 404 for a provider
@@ -6,15 +6,23 @@
   app credentials for it, 409 `PM_ALREADY_CONNECTED` when another PM tool is connected.
 - `DELETE /integrations/{provider}` (owner/admin) -> 204: provider-side cleanup and revoke where
   the provider has one (best effort), tokens and cursors deleted, status `disconnected`, audited.
-- `GET /oauth/{provider}`: the canon callback. Public at the gateway and here (no Clerk JWT; it
-  is a browser redirect from the provider), authenticated by the signed `state` and the
-  single-use PKCE verifier. Always answers with a redirect to
-  `{APP_BASE_URL}/settings/integrations?connected={provider}` or `?error={reason}`, reason one of
-  access_denied, invalid_state, state_expired, exchange_failed, not_configured,
-  pm_already_connected, post_install_failed.
+- `POST /oauth/{provider}` {code, state} (owner/admin, JWT) -> {provider, status}: the canon path,
+  completing the flow. The provider redirects the browser to the web app page
+  `{APP_BASE_URL}/settings/integrations/callback/{provider}`, and that page, signed in, posts the
+  code and state here.
 
-RBAC is checked on connect (the `bff`/gateway path) AND re-checked on the callback against the
-user the state names, so a demoted admin's half-finished install does not complete.
+Why the completion takes the JWT. A public GET callback authenticated only by `state` lets an
+attacker start a connect in their own tenant and get a victim's browser to finish it, attaching
+the victim's Slack, Jira or Google account to the attacker's tenant (login CSRF in reverse). Now
+the state is honoured only for the signed-in user it was minted for, in the tenant it was minted
+in, and only while that user is still owner/admin; the verifier is popped only after those
+checks pass, so a mismatched attempt cannot burn the real user's state either.
+
+Errors are RFC 7807 with a `reason` extension the web app maps to copy: invalid_state,
+state_expired, exchange_failed (400 VALIDATION_FAILED); not_configured (409
+PROVIDER_NOT_CONFIGURED); pm_already_connected (409 PM_ALREADY_CONNECTED);
+account_connected_elsewhere (409 ACCOUNT_CONNECTED_ELSEWHERE); post_install_failed (502
+DEPENDENCY_UNAVAILABLE; the connection is kept as `degraded`).
 """
 
 from __future__ import annotations
@@ -24,14 +32,13 @@ import os
 import uuid
 from datetime import datetime
 from typing import Annotated, Any
-from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query, Response
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.audit import (
@@ -42,7 +49,6 @@ from libs.shared.audit import (
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
-from libs.shared.org_resolver import resolve_org_by_id
 from libs.shared.tenancy import set_rls
 from services.integration_service import config, store
 from services.integration_service.clients import ProviderError, get_clients
@@ -224,14 +230,27 @@ async def _provider_cleanup(session: AsyncSession, conn: store.Connection) -> No
         logger.warning("disconnect %s: revoke failed: %s", conn.provider, exc)
 
 
-# --- the callback ----------------------------------------------------------------------------
+# --- the OAuth completion --------------------------------------------------------------------
 
 
-def _back(provider: str, *, error: str | None = None) -> RedirectResponse:
-    query = {"error": error} if error else {"connected": provider}
-    return RedirectResponse(
-        f"{config.app_base_url()}/settings/integrations?{urlencode(query)}", status_code=302
-    )
+class OAuthCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=4096)
+    state: str = Field(min_length=1, max_length=2048)
+
+
+class OAuthResult(BaseModel):
+    provider: str
+    status: str
+
+
+def _fail(status: int, code: ErrorCode, reason: str, detail: str) -> ProblemDetail:
+    return ProblemDetail(status, code, detail, extra={"reason": reason})
+
+
+def _bad_state(reason: str = "invalid_state") -> ProblemDetail:
+    return _fail(400, ErrorCode.VALIDATION_FAILED, reason, "The authorization state is not valid")
 
 
 async def _still_admin(session: AsyncSession, user_id: uuid.UUID) -> bool:
@@ -248,81 +267,104 @@ async def _still_admin(session: AsyncSession, user_id: uuid.UUID) -> bool:
     return tier in ("admin", "owner")
 
 
-# authz: public - authenticated by the signed state + single-use PKCE verifier, not a JWT.
-@router.get("/oauth/{provider}", status_code=302, response_class=RedirectResponse)
-async def oauth_callback(
+_ACCOUNT_INDEX = "uq_integration_connections_account"
+
+
+@router.post("/oauth/{provider}", response_model=OAuthResult)
+async def oauth_complete(
     provider: str,
-    code: Annotated[str | None, Query()] = None,
-    state: Annotated[str | None, Query()] = None,
-    error: Annotated[str | None, Query()] = None,
-) -> RedirectResponse:
+    body: OAuthCompletion,
+    ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
+) -> OAuthResult:
     _known(provider)
     try:
-        parsed = verify_state(config.state_secret(), state or "")
+        parsed = verify_state(config.state_secret(), body.state)
     except StateError as exc:
-        return _back(provider, error=exc.reason)
-    if parsed.provider != provider:
-        return _back(provider, error="invalid_state")
+        raise _bad_state(exc.reason) from None
+    # Bound to the browser's signed-in user: same tenant, same user, same provider.
+    if (
+        parsed.provider != provider
+        or parsed.org_id != ctx.org_id
+        or ctx.user_id is None
+        or parsed.user_id != ctx.user_id
+    ):
+        raise _bad_state()
     async with get_redis() as redis:
-        stored = await redis.getdel(state_key(parsed.org_id, state or ""))
+        stored = await redis.getdel(state_key(parsed.org_id, body.state))
     if stored is None:
-        return _back(provider, error="invalid_state")  # expired or already used
+        raise _bad_state()  # expired or already used
     try:
         pending: dict[str, Any] = json.loads(stored)
     except ValueError:
-        return _back(provider, error="invalid_state")
+        raise _bad_state() from None
     if pending.get("provider") != provider or pending.get("user_id") != str(parsed.user_id):
-        return _back(provider, error="invalid_state")
-    if error or not code:
-        return _back(provider, error="access_denied")
+        raise _bad_state()
     if not config.is_configured(provider):
-        return _back(provider, error="not_configured")
+        raise _fail(409, ErrorCode.PROVIDER_NOT_CONFIGURED, "not_configured", "Not configured")
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session, session.begin():
-        if await resolve_org_by_id(session, parsed.org_id) is None:
-            return _back(provider, error="invalid_state")
-        await set_rls(session, parsed.org_id)
-        if not await _still_admin(session, parsed.user_id):
-            return _back(provider, error="access_denied")
+        await set_rls(session, ctx.org_id)
+        if not await _still_admin(session, ctx.user_id):
+            raise ProblemDetail(403, ErrorCode.FORBIDDEN_ROLE, "Owner or admin required")
         if await _other_pm_connected(session, provider):
-            return _back(provider, error="pm_already_connected")
+            raise _fail(
+                409,
+                ErrorCode.PM_ALREADY_CONNECTED,
+                "pm_already_connected",
+                "Another project-management tool is connected",
+            )
 
     clients = get_clients()
     try:
         grant = await clients.oauth[provider].exchange(
-            code=code,
+            code=body.code,
             code_verifier=str(pending.get("verifier", "")),
             redirect_uri=config.redirect_uri(provider),
         )
     except ProviderError as exc:
         logger.warning("oauth exchange failed for %s: %s", provider, exc)
-        return _back(provider, error="exchange_failed")
-
-    async with sessionmaker() as session, session.begin():
-        await set_rls(session, parsed.org_id)
-        conn = await store.upsert_connection(
-            session,
-            org_id=parsed.org_id,
-            provider=provider,
-            external_account_id=grant.external_account_id,
-            scopes=grant.scopes or list(clients.oauth[provider].scopes),
-            installed_by=parsed.user_id,
-        )
-        await store.store_tokens(session, conn, grant)
-        await audit(
-            session,
-            org_id=parsed.org_id,
-            actor_id=parsed.user_id,
-            action=ACTION_INTEGRATION_CONNECTED,
-            target_type="integration_connection",
-            target_id=conn.id,
-            metadata={"provider": provider, "scopes": conn.scopes},
-        )
+        raise _fail(
+            400, ErrorCode.VALIDATION_FAILED, "exchange_failed", "The provider refused the code"
+        ) from None
 
     try:
         async with sessionmaker() as session, session.begin():
-            await set_rls(session, parsed.org_id)
+            await set_rls(session, ctx.org_id)
+            conn = await store.upsert_connection(
+                session,
+                org_id=ctx.org_id,
+                provider=provider,
+                external_account_id=grant.external_account_id,
+                scopes=grant.scopes or list(clients.oauth[provider].scopes),
+                installed_by=ctx.user_id,
+            )
+            await store.store_tokens(session, conn, grant)
+            await audit(
+                session,
+                org_id=ctx.org_id,
+                actor_id=ctx.user_id,
+                action=ACTION_INTEGRATION_CONNECTED,
+                target_type="integration_connection",
+                target_id=conn.id,
+                metadata={"provider": provider, "scopes": conn.scopes},
+                ip=ctx.ip,
+            )
+    except IntegrityError as exc:
+        if _ACCOUNT_INDEX not in str(exc.orig):
+            raise
+        # The account belongs to another tenant's live connection. Nothing is written, and the
+        # grant is NOT revoked: for Slack it is the same bot install the other tenant uses.
+        raise _fail(
+            409,
+            ErrorCode.ACCOUNT_CONNECTED_ELSEWHERE,
+            "account_connected_elsewhere",
+            f"This {provider} account is already connected to another workspace",
+        ) from None
+
+    try:
+        async with sessionmaker() as session, session.begin():
+            await set_rls(session, ctx.org_id)
             if provider == config.GOOGLE_CALENDAR:
                 await calendar.post_install(session, conn, clients)
             elif provider == config.SLACK:
@@ -332,7 +374,12 @@ async def oauth_callback(
     except (ProviderError, store.NotConnected, ProblemDetail) as exc:
         logger.warning("post-install failed for %s: %s", provider, exc)
         async with sessionmaker() as session, session.begin():
-            await set_rls(session, parsed.org_id)
+            await set_rls(session, ctx.org_id)
             await store.set_status(session, conn.id, "degraded")
-        return _back(provider, error="post_install_failed")
-    return _back(provider)
+        raise _fail(
+            502,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "post_install_failed",
+            "Connected, but finishing the setup with the provider failed",
+        ) from None
+    return OAuthResult(provider=provider, status="active")

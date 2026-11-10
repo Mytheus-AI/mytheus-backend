@@ -5,10 +5,11 @@ section 0). An unconfigured provider is listed as `configured: false` and cannot
 
 Environment:
 
-    OAUTH_REDIRECT_BASE         public origin of the API, e.g. https://api.mytheus.cloud. The
-                                provider redirect URI is `{OAUTH_REDIRECT_BASE}/oauth/{provider}`
-                                and webhooks are `{OAUTH_REDIRECT_BASE}/webhooks/{provider}`.
-    APP_BASE_URL                the web app origin, for the post-callback redirect and links.
+    OAUTH_REDIRECT_BASE         public origin of the API, e.g. https://api.mytheus.cloud.
+                                Webhooks are `{OAUTH_REDIRECT_BASE}/webhooks/{provider}`.
+    APP_BASE_URL                the web app origin. The provider OAuth redirect URI is the app
+                                page `{APP_BASE_URL}/settings/integrations/callback/{provider}`;
+                                also the base of links in Jira and Slack.
     OAUTH_STATE_SECRET          HMAC key for the OAuth `state` and the Google channel token;
                                 32+ characters.
     GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
@@ -74,7 +75,9 @@ def redirect_base() -> str:
 
 
 def redirect_uri(provider: str) -> str:
-    return f"{redirect_base()}/oauth/{provider}"
+    """The provider's OAuth redirect target: the web app's callback page, which (signed in)
+    completes the flow with `POST /oauth/{provider}`. Register exactly this with each provider."""
+    return f"{app_base_url()}/settings/integrations/callback/{provider}"
 
 
 def webhook_url(provider: str) -> str:
