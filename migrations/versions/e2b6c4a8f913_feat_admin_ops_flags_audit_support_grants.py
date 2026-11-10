@@ -2,12 +2,12 @@
 
 The three admin-ops-service stores, plus two narrow identity seams the ops console needs.
 
-- `feature_flags`: `org_id` NULL is a global flag. Three policies, so each reach is stated:
-  `tenant_isolation` (the canonical one: a tenant session reads and writes only its own rows),
-  `global_flags_read` (a tenant session may READ global rows, never write them), and
-  `ops_console` (full access, only inside a transaction that set `app.ops_console = 'on'`
-  transaction-locally; admin-ops-service's staff-only flag routes are the only code that does).
-  `UNIQUE NULLS NOT DISTINCT (key, org_id)` makes "one global row per key" a constraint.
+- `feature_flags`: `org_id` NULL is a global flag. Two policies, so each reach is stated:
+  `tenant_isolation` is FOR SELECT only (a tenant session reads its own rows and the global
+  ones, and can write nothing), and `ops_console` (full access, only inside a transaction that
+  set `app.ops_console = 'on'` transaction-locally; admin-ops-service's staff-only flag routes
+  are the only code that does). `UNIQUE NULLS NOT DISTINCT (key, org_id)` makes "one global row
+  per key" a constraint.
 - `ops_audit_log`: staff activity. Not tenant-scoped (no `org_id`; `target_org_id` names the
   tenant a staff action was about), so no tenant policy; append-only by GRANT (SELECT, INSERT),
   the same mechanism as `audit_logs`. No foreign key on `target_org_id`: a staff call naming an
@@ -19,12 +19,23 @@ The three admin-ops-service stores, plus two narrow identity seams the ops conso
 - `set_organization_status(org, status)`: SECURITY DEFINER, so identity-tenant-service (the
   sole `tenant-events` producer) can flip `organizations.status` for suspend/reinstate while
   `mytheus_app` still holds no UPDATE on any `organizations` column (the column-grant carve-out
-  `test_app_role_insert_on_organizations_is_exactly_the_provisioning_columns` pins). EXECUTE is
-  revoked from PUBLIC and granted to `mytheus_app` only. It works because `organizations` is NO
-  FORCE ROW LEVEL SECURITY (migration a1c4e7f20b18), so the owner is not policied there.
+  `test_app_role_insert_on_organizations_is_exactly_the_provisioning_columns` pins). It works
+  because `organizations` is NO FORCE ROW LEVEL SECURITY (migration a1c4e7f20b18), so the owner
+  is not policied there. It accepts only 'active'/'suspended' and touches only `status` and
+  `updated_at` of one live row.
+
+  EXECUTE: revoked from PUBLIC, granted to `mytheus_app` only. RESIDUAL RISK, accepted and
+  recorded: this deployment has exactly three roles (`mytheus_app`, `mytheus_relay`,
+  `mytheus_admin`) and every service, identity included, connects as `mytheus_app`; there is
+  no role only identity uses, and adding one needs a new deploy secret and a bootstrap_roles
+  change outside this band. So any code running as `mytheus_app` could call it. The control is
+  that its single call site is identity's caller-token-checked `POST /internal/tenant-status`,
+  and `test_set_organization_status_is_reachable_only_through_identity` fails the build if
+  another call site, or another grantee, appears. The upgrade path is a dedicated identity
+  role holding the only EXECUTE grant.
 
 Revision ID: e2b6c4a8f913
-Revises: d4b8e2f61a37
+Revises: 7c3e9a1f5b20
 Create Date: 2026-11-10
 """
 
@@ -35,7 +46,7 @@ from alembic import op
 from migrations._grants import APP_ROLE, grant_append_only_table, grant_tenant_table
 
 revision: str = "e2b6c4a8f913"
-down_revision: Union[str, None] = "d4b8e2f61a37"
+down_revision: Union[str, None] = "7c3e9a1f5b20"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -70,14 +81,17 @@ def upgrade() -> None:
           CONSTRAINT ck_feature_flags_key_format CHECK (key ~ '^[a-z0-9][a-z0-9_.-]{0,99}$')
         );
         """)
-    _tenant_policy("feature_flags")
+    op.execute("ALTER TABLE feature_flags ENABLE ROW LEVEL SECURITY;")
+    op.execute("ALTER TABLE feature_flags FORCE ROW LEVEL SECURITY;")
     op.execute(
-        "CREATE POLICY global_flags_read ON feature_flags FOR SELECT USING (org_id IS NULL);"
+        "CREATE POLICY tenant_isolation ON feature_flags FOR SELECT "
+        f"USING (org_id IS NULL OR {_RLS_PREDICATE});"
     )
     op.execute(
         f"CREATE POLICY ops_console ON feature_flags USING ({_OPS_CONSOLE}) "
         f"WITH CHECK ({_OPS_CONSOLE});"
     )
+    grant_tenant_table(op, "feature_flags")
     op.execute(
         "COMMENT ON TABLE feature_flags IS "
         "'Feature flags (P12). org_id NULL = global. Written only by admin-ops-service staff "
