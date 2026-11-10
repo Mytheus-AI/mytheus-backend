@@ -764,6 +764,112 @@ components:
       - content
       title: CandidateState
       type: object
+    CaptureEnded:
+      properties:
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        status:
+          const: ended
+          default: ended
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      title: CaptureEnded
+      type: object
+    CaptureRefresh:
+      additionalProperties: false
+      properties:
+        consent_at:
+          format: date-time
+          title: Consent At
+          type: string
+      required:
+      - consent_at
+      title: CaptureRefresh
+      type: object
+    CaptureSession:
+      properties:
+        capture_token:
+          title: Capture Token
+          type: string
+        consent_at:
+          title: Consent At
+          type: string
+        encoding:
+          const: pcm_s16le
+          default: pcm_s16le
+          title: Encoding
+          type: string
+        expires_at:
+          description: Unix seconds; mint a fresh token after this.
+          title: Expires At
+          type: integer
+        ingest_url:
+          description: transcription-service's `/capture/audio` WebSocket.
+          title: Ingest Url
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        sample_rate:
+          default: 16000
+          title: Sample Rate
+          type: integer
+        source:
+          const: in_person
+          default: in_person
+          title: Source
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - meeting_id
+      - title
+      - capture_token
+      - expires_at
+      - ingest_url
+      - consent_at
+      title: CaptureSession
+      type: object
+    CaptureStart:
+      additionalProperties: false
+      properties:
+        consent:
+          description: The caller confirms everyone in the room knows it is being recorded.
+          title: Consent
+          type: boolean
+        consent_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: When they confirmed; now when omitted. At most a day old.
+          title: Consent At
+        title:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Title
+      required:
+      - consent
+      title: CaptureStart
+      type: object
+    CaptureStatus:
+      properties:
+        configured:
+          description: False until the server has a capture secret and URL.
+          title: Configured
+          type: boolean
+      required:
+      - configured
+      title: CaptureStatus
+      type: object
     CarryForward:
       description: '`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists
         and
@@ -2626,6 +2732,7 @@ components:
           - meet
           - teams
           - zoom
+          - in_person
           title: Source
           type: string
         status:
@@ -2726,6 +2833,7 @@ components:
             - meet
             - teams
             - zoom
+            - in_person
             type: string
           - type: 'null'
           title: Source
@@ -2830,6 +2938,7 @@ components:
           - meet
           - teams
           - zoom
+          - in_person
           title: Source
           type: string
         status:
@@ -3441,6 +3550,12 @@ components:
         agent:
           title: Agent
           type: string
+        dismissed:
+          default: 0
+          description: Of `samples`, about how many you dismissed (the recency-weighted dismiss share
+            times `samples`), for a plain-language "you dismissed 4 of the last 10"
+          title: Dismissed
+          type: integer
         personal:
           description: True when tuned from your own feedback
           title: Personal
@@ -6166,6 +6281,230 @@ paths:
       summary: Mark Done
       tags:
       - actions
+  /api/v1/actions/{action_id}/reopen:
+    post:
+      description: 'Move a `done` action back to `confirmed` (wave 3: the "done" Undo on web and phone,
+
+        and reopening a task finished by mistake).
+
+
+        For its assignee or its owner (the person who confirmed or created it, `confirmed_by`);
+
+        anyone else is 403, another tenant''s or a deleted task 404. Idempotent: an open
+
+        (`confirmed`) task answers 200 unchanged; a `proposed` or `dismissed` candidate is 409.
+
+        Audited (`action.reopened`); emits nothing, like `done` (the `actions` topic carries
+
+        confirmations only).'
+      operationId: reopen
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyTask'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Reopen
+      tags:
+      - actions
+  /api/v1/capture/sessions:
+    post:
+      description: 'authz: member. Start recording an in-person meeting on the caller''s phone.'
+      operationId: start_capture
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureStart'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSession'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start Capture
+      tags:
+      - capture
+  /api/v1/capture/sessions/{meeting_id}/end:
+    post:
+      description: 'authz: member (a participant of the meeting). End the recording and the meeting, with
+
+        its real start and end. Idempotent: an ended meeting answers 200 unchanged.'
+      operationId: end_capture
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureEnded'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: End Capture
+      tags:
+      - capture
+  /api/v1/capture/sessions/{meeting_id}/refresh:
+    post:
+      description: 'authz: member (a participant of the meeting). A fresh token for a running capture.'
+      operationId: refresh_capture
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureRefresh'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSession'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Refresh Capture
+      tags:
+      - capture
+  /api/v1/capture/status:
+    get:
+      description: 'authz: member. Whether in-person recording is connected on this server.'
+      operationId: capture_status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureStatus'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Capture Status
+      tags:
+      - capture
   /api/v1/chat:
     post:
       operationId: post_chat

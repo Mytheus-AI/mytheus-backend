@@ -6,6 +6,8 @@ Plan 7-9 section 3.6 step 6 and section 3.8 step 2; ADR-0031 D3.
   the `(org_id, assignee_id, status)` index, soonest due first, undated last. `assignee_id`
   accepts only `me`, so the route cannot be used to read someone else's task list. `status` is
   `confirmed` (open) or `done`; a `proposed` or `dismissed` candidate is never a task.
+- `POST /api/v1/actions/{id}/reopen` (wave 3) moves a `done` action back to `confirmed`, for its
+  assignee or its owner (`confirmed_by`); audited, emits nothing.
 - `POST /api/v1/actions/{id}/done` moves an action from `confirmed` to `done`, for its assignee
   or a tenant admin. It is idempotent (an already-done action answers 200 unchanged), refuses
   anything not yet confirmed (409), and emits NOTHING: the `actions` topic carries confirmations
@@ -28,7 +30,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.audit import ACTION_ACTION_COMPLETED, audit
+from libs.shared.audit import ACTION_ACTION_COMPLETED, ACTION_ACTION_REOPENED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 
@@ -207,3 +209,59 @@ async def mark_done(
         ip=ctx.ip,
     )
     return _legacy({**dict(row), "status": "done"})
+
+
+@router.post("/actions/{action_id}/reopen", response_model=MyTask)
+async def reopen(
+    action_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> MyTask:
+    """Move a `done` action back to `confirmed` (wave 3: the "done" Undo on web and phone,
+    and reopening a task finished by mistake).
+
+    For its assignee or its owner (the person who confirmed or created it, `confirmed_by`);
+    anyone else is 403, another tenant's or a deleted task 404. Idempotent: an open
+    (`confirmed`) task answers 200 unchanged; a `proposed` or `dismissed` candidate is 409.
+    Audited (`action.reopened`); emits nothing, like `done` (the `actions` topic carries
+    confirmations only).
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    _SELECT_ANY.replace("a.created_at ", "a.created_at, a.confirmed_by ", 1)
+                    + "WHERE a.id = :id AND a.deleted_at IS NULL FOR UPDATE OF a"
+                ),
+                {"id": str(action_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise not_found()
+    me = ctx.user_id
+    if me is None or me not in (row["assignee_id"], row["confirmed_by"]):
+        raise ProblemDetail(
+            403, ErrorCode.FORBIDDEN_ROLE, "Only the assignee or the task's owner can reopen it"
+        )
+    task = {k: v for k, v in dict(row).items() if k != "confirmed_by"}
+    if row["status"] == "confirmed":
+        return _legacy(task)
+    if row["status"] != "done":
+        raise ProblemDetail(409, ErrorCode.VERSION_CONFLICT, "Only a done task can be reopened")
+    await session.execute(
+        text("UPDATE action_items SET status = 'confirmed' WHERE id = :id AND status = 'done'"),
+        {"id": str(action_id)},
+    )
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        action=ACTION_ACTION_REOPENED,
+        target_type="action_item",
+        target_id=action_id,
+        ip=ctx.ip,
+    )
+    return _legacy({**task, "status": "confirmed"})

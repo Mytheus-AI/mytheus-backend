@@ -66,6 +66,13 @@ class AskCitation(BaseModel):
     speaker: str | None = None
     decision_id: uuid.UUID | None = None
     action_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = Field(
+        default=None, description="The company-brain document a `document` passage came from."
+    )
+    start_ms: int | None = Field(
+        default=None,
+        description="Where a `transcript` passage starts, in ms from the meeting's start.",
+    )
 
 
 class AskAnswer(BaseModel):
@@ -95,6 +102,12 @@ def _not_connected() -> ProblemDetail:
     )
 
 
+def _start_ms(raw: Any) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw < 0:
+        return None
+    return int(raw)
+
+
 def _citations(body: dict[str, Any]) -> list[AskCitation]:
     out: list[AskCitation] = []
     for p in body.get("answer_passages") or []:
@@ -110,6 +123,8 @@ def _citations(body: dict[str, Any]) -> list[AskCitation]:
                 speaker=cite.get("speaker"),
                 decision_id=cite.get("decision_id"),
                 action_id=cite.get("action_id"),
+                document_id=cite.get("document_id"),
+                start_ms=_start_ms(cite.get("start_ms")),
             )
         )
     return out
