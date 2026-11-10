@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 CTX_TTL = 300  # 5 minutes (canon, Plan 5-6 section 3.3)
 
 _SELECT_USER = text(
-    "SELECT id, role, skills, bio, avatar_url FROM users WHERE id = :uid AND deleted_at IS NULL"
+    "SELECT id, role, skills, bio, avatar_url, listen_for, ignore_topics, agent_name, "
+    "agent_personality, agent_instructions FROM users WHERE id = :uid AND deleted_at IS NULL"
 )
 
 _SELECT_TEAMS = text(
@@ -182,6 +183,13 @@ async def _compute(
             for m in meeting_rows
         ],
         "topics": _topics_for(user_row["role"]),
+        # ADR-0038 D4: what PersonalListenerAgent / QuestionAgent listen for and how they word
+        # their notes. The avatar seed is deliberately absent: no agent needs it.
+        "listen_for": list(user_row["listen_for"] or []),
+        "ignore_topics": list(user_row["ignore_topics"] or []),
+        "agent_name": user_row["agent_name"],
+        "agent_personality": user_row["agent_personality"] or "balanced",
+        "agent_instructions": user_row["agent_instructions"],
     }
 
 

@@ -308,10 +308,24 @@ def test_patch_updates_role_and_bio_and_returns_the_canonical_resource(client, m
     assert body["role"] == "staff engineer"
     assert body["bio"] == "builds things"
     assert body["id"] == str(member.user_id)
-    # Not a partial echo: avatar_url/email/created_at/updated_at all come back too.
-    assert {"id", "email", "role", "skills", "bio", "avatar_url", "created_at", "updated_at"} == (
-        set(body)
-    )
+    # Not a partial echo: avatar_url/email/created_at/updated_at all come back too, and since
+    # ADR-0038 the working profile and the agent persona.
+    assert {
+        "id",
+        "email",
+        "role",
+        "skills",
+        "bio",
+        "avatar_url",
+        "listen_for",
+        "ignore_topics",
+        "agent_name",
+        "agent_avatar_seed",
+        "agent_personality",
+        "agent_instructions",
+        "created_at",
+        "updated_at",
+    } == set(body)
 
 
 def test_avatar_url_is_not_a_writable_field(client, member):

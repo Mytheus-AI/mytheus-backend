@@ -43,4 +43,11 @@ message UserContext {
   repeated string team_ids = 9;
   string department_id = 10;
   int64 cache_expires_at = 11;  // unix ms; cached at nexus:{org_id}:user_ctx:{user_id} 5-min TTL
+  // ADR-0038 D4: the working profile and the agent persona. Empty string = not set
+  // (agent_personality is never empty: it defaults to "balanced").
+  repeated string listen_for    = 12;
+  repeated string ignore_topics = 13;
+  string agent_name             = 14;
+  string agent_personality      = 15;  // "balanced" | "concise" | "detailed" | "direct" | "friendly"
+  string agent_instructions     = 16;
 }
