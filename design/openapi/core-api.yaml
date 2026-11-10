@@ -60,6 +60,40 @@ components:
       - admins
       title: ActionContext
       type: object
+    ActionCreate:
+      additionalProperties: false
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Who owns it. Defaults to you; must be in this workspace.
+          title: Assignee Id
+        content:
+          description: What needs doing.
+          maxLength: 500
+          minLength: 1
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: Optional due date (YYYY-MM-DD).
+          title: Due Date
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Optional meeting it came from; you must be a participant.
+          title: Meeting Id
+      required:
+      - content
+      title: ActionCreate
+      type: object
     ActionItem:
       description: One `action_items` row. `proposed` until a participant confirms or dismisses it.
       properties:
@@ -888,6 +922,117 @@ components:
       - requests
       title: CreatedStatusRequests
       type: object
+    CrmAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: CrmAction
+      type: object
+    CrmDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: CrmDecision
+      type: object
+    CrmDigest:
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/CrmAction'
+          title: Actions
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/CrmDecision'
+          title: Decisions
+          type: array
+        guest_emails:
+          items:
+            type: string
+          title: Guest Emails
+          type: array
+        link:
+          title: Link
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        participant_emails:
+          items:
+            type: string
+          title: Participant Emails
+          type: array
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          title: Status
+          type: string
+        tenant_domains:
+          items:
+            type: string
+          title: Tenant Domains
+          type: array
+        title:
+          title: Title
+          type: string
+      required:
+      - meeting_id
+      - title
+      - status
+      - participant_emails
+      - guest_emails
+      - tenant_domains
+      - decisions
+      - actions
+      - link
+      title: CrmDigest
+      type: object
     Decision:
       description: One `decisions` row. `proposed` until a participant confirms or dismisses it.
       properties:
@@ -1024,6 +1169,75 @@ components:
       - status
       - created_at
       title: DecisionLogEntry
+      type: object
+    DecisionRecord:
+      description: One confirmed decision with its lineage and the meeting it was made in.
+      properties:
+        confirmed_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirmed By Name
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        kind:
+          const: decision_record
+          default: decision_record
+          title: Kind
+          type: string
+        lineage:
+          items:
+            $ref: '#/components/schemas/LineageStep'
+          title: Lineage
+          type: array
+        meeting_actions:
+          items:
+            $ref: '#/components/schemas/RecordAction'
+          title: Meeting Actions
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Meeting Start
+        meeting_title:
+          title: Meeting Title
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          enum:
+          - confirmed
+          - superseded
+          title: Status
+          type: string
+      required:
+      - decision_id
+      - content
+      - status
+      - decided_at
+      - meeting_id
+      - meeting_title
+      - lineage
+      - meeting_actions
+      title: DecisionRecord
       type: object
     DecisionUpdate:
       additionalProperties: false
@@ -1230,6 +1444,164 @@ components:
       - changed
       title: ExternalStatusResult
       type: object
+    FollowUp:
+      description: A meeting's follow-up settings as one participant sees them.
+      properties:
+        can_send:
+          description: Host, meeting ended, follow-up on.
+          title: Can Send
+          type: boolean
+        enabled:
+          title: Enabled
+          type: boolean
+        guest_emails:
+          items:
+            type: string
+          title: Guest Emails
+          type: array
+        is_host:
+          description: Whether the caller may change settings and send.
+          title: Is Host
+          type: boolean
+        last_result:
+          anyOf:
+          - $ref: '#/components/schemas/FollowUpDispatch'
+          - type: 'null'
+        last_sent_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Sent At
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_status:
+          title: Meeting Status
+          type: string
+        share_link:
+          anyOf:
+          - $ref: '#/components/schemas/FollowUpShareLink'
+          - type: 'null'
+      required:
+      - meeting_id
+      - enabled
+      - guest_emails
+      - is_host
+      - can_send
+      - meeting_status
+      title: FollowUp
+      type: object
+    FollowUpDispatch:
+      description: What one dispatch did.
+      properties:
+        email_configured:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          description: Whether the server could email the guests; null when there were none.
+          title: Email Configured
+        guests:
+          items:
+            $ref: '#/components/schemas/GuestDelivery'
+          title: Guests
+          type: array
+        participants_notified:
+          default: 0
+          title: Participants Notified
+          type: integer
+        sent_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Sent At
+        share_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The public recap page, or null when links are not configured.
+          title: Share Url
+        status:
+          description: '`sent`; `disabled` (the host turned the follow-up off); `unavailable` (the meeting
+            has no host who can share its recap).'
+          enum:
+          - sent
+          - disabled
+          - unavailable
+          title: Status
+          type: string
+      required:
+      - status
+      title: FollowUpDispatch
+      type: object
+    FollowUpShareLink:
+      properties:
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        url:
+          title: Url
+          type: string
+        view_count:
+          title: View Count
+          type: integer
+      required:
+      - id
+      - url
+      - expires_at
+      - view_count
+      title: FollowUpShareLink
+      type: object
+    FollowUpUpdate:
+      additionalProperties: false
+      properties:
+        enabled:
+          description: Send the follow-up when the meeting ends.
+          title: Enabled
+          type: boolean
+        guest_emails:
+          description: External guests to email the recap to (people who are not users).
+          items:
+            type: string
+          maxItems: 20
+          title: Guest Emails
+          type: array
+      required:
+      - enabled
+      title: FollowUpUpdate
+      type: object
+    GuestDelivery:
+      properties:
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why a guest was skipped or failed, e.g. `not_configured` (no email provider on
+            the server).
+          title: Detail
+        recipient:
+          title: Recipient
+          type: string
+        status:
+          enum:
+          - pending
+          - sent
+          - failed
+          - skipped
+          title: Status
+          type: string
+      required:
+      - recipient
+      - status
+      title: GuestDelivery
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -1392,6 +1764,56 @@ components:
       - text
       - answered_at
       title: LatestStatus
+      type: object
+    LineageStep:
+      description: 'One decision in the chain around the subject, oldest first.
+
+
+        `visible` is false for a decision from a meeting the viewer was not in: its id and content
+
+        are withheld and only its place in the chain is kept.'
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content
+        decided_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Decided At
+        decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Decision Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        relation:
+          enum:
+          - earlier
+          - subject
+          - later
+          title: Relation
+          type: string
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        visible:
+          title: Visible
+          type: boolean
+      required:
+      - relation
+      - visible
+      title: LineageStep
       type: object
     Meeting:
       properties:
@@ -1697,6 +2119,71 @@ components:
       required:
       - participants
       title: MeetingParticipants
+      type: object
+    MeetingRecap:
+      description: A meeting's confirmed outcome, as its viewer may see it.
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/RecordAction'
+          title: Actions
+          type: array
+        agenda:
+          items:
+            $ref: '#/components/schemas/RecordAgendaItem'
+          title: Agenda
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/RecordDecision'
+          title: Decisions
+          type: array
+        host_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Host Name
+        kind:
+          const: meeting_recap
+          default: meeting_recap
+          title: Kind
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        participant_names:
+          items:
+            type: string
+          title: Participant Names
+          type: array
+        scheduled_end:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled End
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - meeting_id
+      - title
+      - status
+      - participant_names
+      - agenda
+      - decisions
+      - actions
+      title: MeetingRecap
       type: object
     MeetingRef:
       description: The earlier meeting a meeting follows up (ADR-0038 D6).
@@ -2272,6 +2759,127 @@ components:
       - status
       - code
       type: object
+    PublicShare:
+      description: What a share page renders. Exactly one of `recap` / `decision` is set, per `kind`.
+      properties:
+        decision:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionRecord'
+          - type: 'null'
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        kind:
+          enum:
+          - meeting_recap
+          - decision_record
+          title: Kind
+          type: string
+        recap:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingRecap'
+          - type: 'null'
+        shared_at:
+          format: date-time
+          title: Shared At
+          type: string
+        shared_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Shared By Name
+        view_count:
+          title: View Count
+          type: integer
+      required:
+      - kind
+      - shared_at
+      - expires_at
+      - view_count
+      title: PublicShare
+      type: object
+    RecordAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        status:
+          enum:
+          - confirmed
+          - done
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: RecordAction
+      type: object
+    RecordAgendaItem:
+      properties:
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        status:
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - title
+      - status
+      title: RecordAgendaItem
+      type: object
+    RecordDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          enum:
+          - confirmed
+          - superseded
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      - decided_at
+      title: RecordDecision
+      type: object
     RecordsRequest:
       additionalProperties: false
       properties:
@@ -2498,6 +3106,185 @@ components:
       - id
       - email
       title: ScopePerson
+      type: object
+    SearchHit:
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          description: The meeting, decision or action id.
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - meeting
+          - decision
+          - action
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        occurred_at:
+          description: Meeting start (or creation) / recorded time.
+          format: date-time
+          title: Occurred At
+          type: string
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        text:
+          description: The meeting title, or the decision / action text.
+          title: Text
+          type: string
+      required:
+      - kind
+      - id
+      - text
+      - occurred_at
+      title: SearchHit
+      type: object
+    SearchResults:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SearchHit'
+          title: Items
+          type: array
+        query:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Query
+      required:
+      - query
+      - items
+      title: SearchResults
+      type: object
+    ShareLink:
+      properties:
+        can_revoke:
+          description: Whether the caller may revoke this link.
+          title: Can Revoke
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          format: uuid
+          title: Created By
+          type: string
+        created_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By Name
+        decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Decision Id
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - meeting_recap
+          - decision_record
+          title: Kind
+          type: string
+        last_viewed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Viewed At
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        state:
+          enum:
+          - active
+          - expired
+          - revoked
+          title: State
+          type: string
+        token:
+          description: The signed token in the URL; the public read takes it.
+          title: Token
+          type: string
+        url:
+          description: 'The public page to send: `{APP_BASE_URL}/s/{token}`.'
+          title: Url
+          type: string
+        view_count:
+          title: View Count
+          type: integer
+      required:
+      - id
+      - kind
+      - url
+      - token
+      - meeting_id
+      - created_by
+      - created_at
+      - expires_at
+      - state
+      - view_count
+      - can_revoke
+      title: ShareLink
+      type: object
+    ShareLinkCreate:
+      additionalProperties: false
+      properties:
+        expires_in_days:
+          default: 30
+          description: How long the link works, 1 to 365 days. Default 30.
+          maximum: 365.0
+          minimum: 1.0
+          title: Expires In Days
+          type: integer
+      title: ShareLinkCreate
+      type: object
+    ShareLinkList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ShareLink'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ShareLinkList
       type: object
     SlackDigest:
       properties:
@@ -2776,6 +3563,71 @@ components:
       - saved
       title: SuggestionList
       type: object
+    Task:
+      description: One of your action items, with or without a meeting behind it.
+      properties:
+        assignee_id:
+          format: uuid
+          title: Assignee Id
+          type: string
+        confidence:
+          title: Confidence
+          type: number
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Null for a task created directly, with no meeting.
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        status:
+          enum:
+          - confirmed
+          - done
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - assignee_id
+      - status
+      - confidence
+      - created_at
+      title: Task
+      type: object
+    TaskList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Task'
+          title: Items
+          type: array
+      required:
+      - items
+      title: TaskList
+      type: object
     Team:
       properties:
         created_at:
@@ -3047,9 +3899,11 @@ components:
   securitySchemes:
     HTTPBearer:
       bearerFormat: JWT
-      description: Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
+      description: 'Clerk-issued RS256 session token, verified against cached JWKS at `api-gateway` and
         re-verified in the service tier. `org_id` is derived from the token and is never accepted from
-        a path, query, body or client header.
+        a path, query, body or client header. The public API (meetings, decisions, actions, commitments,
+        search, ask, MCP) also accepts a personal access token, `mytheus_pat_...`, created under `/api/v1/api-tokens`:
+        it acts as its owner, `read` tokens may only read, and each token is rate limited at the gateway.'
       scheme: bearer
       type: http
     MytheusServiceToken:
@@ -3108,6 +3962,94 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: List My Tasks
+      tags:
+      - actions
+    post:
+      description: Create a confirmed task for yourself or a colleague, optionally tied to a meeting you
+        were in. It is confirmed at once (you asked for it) and flows to the knowledge graph, follow-up
+        reminders and Jira like a confirmed action. Requires a session or a `read_write` API token. Honours
+        `Idempotency-Key`.
+      operationId: create_action
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create a task
+      tags:
+      - actions
+  /api/v1/actions/mine:
+    get:
+      description: 'Your confirmed (open) or done tasks, soonest due first, undated last. Unlike `GET
+        /api/v1/actions?assignee_id=me`, this includes tasks created directly with no meeting (`meeting_id:
+        null`).'
+      operationId: list_all_my_tasks
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: confirmed
+          enum:
+          - confirmed
+          - done
+          title: Status
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: My tasks, including ones with no meeting
       tags:
       - actions
   /api/v1/actions/{action_id}:
@@ -3646,6 +4588,141 @@ paths:
       summary: Dismiss Decision
       tags:
       - decisions
+  /api/v1/decisions/{decision_id}/record:
+    get:
+      description: A confirmed (or superseded) decision, the decisions it replaced and that replaced it,
+        and the meeting's actions. Steps from meetings you were not in are withheld.
+      operationId: decision_record_api_v1_decisions__decision_id__record_get
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionRecord'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: A decision with its lineage
+      tags:
+      - public-api
+  /api/v1/decisions/{decision_id}/share-links:
+    get:
+      operationId: list_decision_links
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLinkList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List a decision record's share links
+      tags:
+      - share-links
+    post:
+      operationId: create_decision_link
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/ShareLinkCreate'
+              - type: 'null'
+              title: Body
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant, or a confidential meeting you do not host.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Share links are not configured on this server.
+      summary: Share a decision record
+      tags:
+      - share-links
   /api/v1/departments:
     get:
       operationId: list_departments
@@ -4476,6 +5553,140 @@ paths:
       summary: List Context Fills
       tags:
       - collaborations
+  /api/v1/meetings/{meeting_id}/follow-up:
+    get:
+      description: The meeting's follow-up settings, recap link and last result. Participants only.
+      operationId: get_follow_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Follow Up
+      tags:
+      - follow-ups
+    put:
+      description: Turn the follow-up on or off and set the external guests. The host only.
+      operationId: put_follow_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FollowUpUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Follow Up
+      tags:
+      - follow-ups
+  /api/v1/meetings/{meeting_id}/follow-up/send:
+    post:
+      description: 'Send the follow-up now. The host only, once the meeting has ended; pressing it again
+
+        reaches only guests added since. Honours `Idempotency-Key`.'
+      operationId: send_follow_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUpDispatch'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Send Follow Up
+      tags:
+      - follow-ups
   /api/v1/meetings/{meeting_id}/participants:
     post:
       description: 'Invite tenant users into an existing meeting. Only someone already in it may invite.
@@ -4673,6 +5884,141 @@ paths:
       summary: Check Participant
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/recap:
+    get:
+      description: Agenda with status, confirmed decisions and confirmed or done actions with owners.
+        Participants only. Proposed candidates never appear.
+      operationId: meeting_recap
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingRecap'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: A meeting's confirmed outcome
+      tags:
+      - public-api
+  /api/v1/meetings/{meeting_id}/share-links:
+    get:
+      operationId: list_meeting_links
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLinkList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List a meeting's share links
+      tags:
+      - share-links
+    post:
+      operationId: create_recap_link
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/ShareLinkCreate'
+              - type: 'null'
+              title: Body
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLink'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant, or a confidential meeting you do not host.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Share links are not configured on this server.
+      summary: Share a meeting recap
+      tags:
+      - share-links
   /api/v1/meetings/{meeting_id}/speakers:
     get:
       description: 'The read half of the speaker-mapping UI (plan 3-4 section 3.8 step 3), which needs
@@ -4907,6 +6253,135 @@ paths:
       summary: List My Worklogs
       tags:
       - worklogs
+  /api/v1/public/shares/{token}:
+    get:
+      description: 'No authentication: the signed token in the path is the credential. 404 for a token
+        that does not verify or a record that is gone; 410 with `reason` `expired` or `revoked` for a
+        link that was valid. Each read increments the link''s view count.'
+      operationId: read_share
+      parameters:
+      - in: path
+        name: token
+        required: true
+        schema:
+          maxLength: 200
+          minLength: 10
+          title: Token
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicShare'
+          description: Successful Response
+        '404':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unknown or invalid link.
+        '410':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The link expired or was revoked (`reason`).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security: []
+      summary: Read a shared recap or decision record
+      tags:
+      - public-shares
+  /api/v1/search:
+    get:
+      operationId: search
+      parameters:
+      - description: Text to find. Omit for recent meetings.
+        in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 200
+            minLength: 2
+            type: string
+          - type: 'null'
+          description: Text to find. Omit for recent meetings.
+          title: Q
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 20
+          maximum: 50
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Search your meetings, decisions and actions
+      tags:
+      - public-api
+  /api/v1/share-links/{link_id}:
+    delete:
+      description: The link's creator, the meeting's host, or a workspace admin. Idempotent.
+      operationId: revoke_link
+      parameters:
+      - in: path
+        name: link_id
+        required: true
+        schema:
+          format: uuid
+          title: Link Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Revoke a share link
+      tags:
+      - share-links
   /api/v1/status-requests:
     get:
       description: The caller's own requests, the soonest meeting first (at most 200).
@@ -5558,6 +7033,54 @@ paths:
       summary: Action Status
       tags:
       - core-internal
+  /internal/decisions/{decision_id}/record:
+    get:
+      operationId: decision_record_internal_decisions__decision_id__record_get
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: The users.id the record is built for.
+        in: query
+        name: viewer
+        required: true
+        schema:
+          description: The users.id the record is built for.
+          format: uuid
+          title: Viewer
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionRecord'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Decision Record
+      tags:
+      - core-internal
   /internal/meetings/{meeting_id}/agenda:
     get:
       operationId: meeting_agenda
@@ -5596,6 +7119,94 @@ paths:
       - MytheusServiceToken: []
       summary: Meeting Agenda
       tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/crm-digest:
+    get:
+      operationId: crm_digest
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrmDigest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Crm Digest
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/follow-up/dispatch:
+    post:
+      description: 'workflow-service, after the meeting ended: send the follow-up (or `disabled`).'
+      operationId: dispatch_follow_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowUpDispatch'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Dispatch Follow Up
+      tags:
+      - follow-ups
       - core-internal
   /internal/meetings/{meeting_id}/participants:
     get:

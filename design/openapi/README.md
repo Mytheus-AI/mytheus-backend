@@ -72,3 +72,40 @@ there was no contract in it.
 The gateway's real contract is the union of the documents in this directory, rewritten under
 its own prefixes. Nothing here computes that union. A client should be generated per service
 and pointed at the gateway origin, which is what both clients already do.
+
+## The public API (personal access tokens and MCP)
+
+Since Phase 4 a subset of these documents is the **public API**: callable from scripts, CRMs
+and MCP clients with a personal access token instead of a browser session. Everything below is
+served through the gateway origin; each path's operation, models and errors are in the service
+document named.
+
+| Area | Operations | Document |
+| --- | --- | --- |
+| Tokens (session only) | `GET/POST /api/v1/api-tokens`, `DELETE /api/v1/api-tokens/{id}` | `identity-tenant-service.yaml` |
+| Meetings | `GET /api/v1/meetings`, `GET /api/v1/meetings/{id}`, `GET /api/v1/meetings/{id}/recap`, `GET /api/v1/meetings/{id}/transcript`, `GET /api/v1/meetings/{id}/candidates`, share links | `core-api.yaml` |
+| Decisions | `GET /api/v1/decisions`, `GET /api/v1/decisions/{id}/record`, confirm / dismiss / edit candidates | `core-api.yaml` |
+| Actions | `POST /api/v1/actions` (create a confirmed task), `GET /api/v1/actions/mine`, `GET /api/v1/actions?assignee_id=me`, `POST /api/v1/actions/{id}/done` | `core-api.yaml` |
+| Promises | `GET /api/v1/commitments`, `PATCH /api/v1/commitments/{id}` | `core-api.yaml` |
+| Search | `GET /api/v1/search?q=` | `core-api.yaml` |
+| Ask | `POST /api/v1/ask` (cited answer across your meetings) | `bff.yaml` |
+| MCP | `POST /mcp` (Streamable HTTP, JSON-RPC) | `bff.yaml` |
+| Share pages | `GET /api/v1/public/shares/{token}` (no auth: the token is the credential) | `core-api.yaml` |
+
+Rules, enforced at the gateway and again in every service (`libs/shared/pat.py`):
+
+- `Authorization: Bearer mytheus_pat_...`. A token acts as its owner: same tenant, same RBAC
+  tier, same participant scoping, so it can never see more than its owner can in the app.
+- Only the paths above (plus `/mcp`). Anything else, including token management, admin,
+  billing, RBAC, integrations and `/bff/*`, is 403 `FORBIDDEN_ROLE` with `reason:
+  not_public_api`.
+- `read` tokens: GET, plus `POST /api/v1/ask` and `POST /mcp` (whose `create_action` tool
+  checks the scope). `read_write` tokens may also write. A write with a read token is 403 with
+  `reason: read_only_token`.
+- Every bad token (unknown, revoked, expired, edited, deleted user, suspended workspace) is the
+  same 401 `AUTH_REQUIRED` "Invalid token".
+- Rate limit: `PAT_RATE_LIMIT_PER_MINUTE` per token (default 120), fixed one-minute windows in
+  Redis shared by all gateway replicas. Every response carries `X-RateLimit-Limit`,
+  `X-RateLimit-Remaining` and `X-RateLimit-Reset`; over the limit is 429 `RATE_LIMITED` with
+  `Retry-After`.
+- Mutating POSTs honour `Idempotency-Key`, as for sessions.
