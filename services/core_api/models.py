@@ -68,6 +68,18 @@ class Meeting(Base, TenantMixin, TimestampMixin):
     # 'meet' / 'teams' / 'zoom' is an external call captured by the browser extension, for which
     # meeting-service opens no room and mints no token.
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'mytheus'"))
+    # Polish program, close-out ritual (migration d0e1f2a3b4c5): the host's 60-second wrap-up and
+    # who closed the meeting through it.
+    wrap_up_started_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    wrap_up_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
