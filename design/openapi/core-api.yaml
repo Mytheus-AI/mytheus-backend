@@ -533,15 +533,13 @@ components:
           - type: 'null'
           title: Extend Minutes
         status:
-          anyOf:
-          - enum:
-            - pending
-            - in_progress
-            - covered
-            - skipped
-            type: string
-          - type: 'null'
+          enum:
+          - pending
+          - in_progress
+          - covered
+          - skipped
           title: Status
+          type: string
       title: AgendaItemStatusUpdate
       type: object
     AgendaReplace:
