@@ -133,6 +133,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         status:
           enum:
           - proposed
@@ -141,6 +168,11 @@ components:
           - dismissed
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -216,6 +248,42 @@ components:
       - due_date
       - content
       title: ActionStatus
+      type: object
+    AgendaAdvance:
+      additionalProperties: false
+      description: '`POST /meetings/{id}/agenda/advance` ("Start next"): every item now `in_progress`
+        is
+
+        finished with `outcome`, and the first `pending` item by position starts.'
+      properties:
+        outcome:
+          default: covered
+          enum:
+          - covered
+          - skipped
+          title: Outcome
+          type: string
+      title: AgendaAdvance
+      type: object
+    AgendaAdvanced:
+      description: '`POST /meetings/{id}/agenda/advance`: the rows that changed (finished, then started),
+        in
+
+        position order, and the item now in progress (null when the agenda is done).'
+      properties:
+        current:
+          anyOf:
+          - $ref: '#/components/schemas/AgendaItem'
+          - type: 'null'
+        items:
+          items:
+            $ref: '#/components/schemas/AgendaItem'
+          title: Items
+          type: array
+      required:
+      - items
+      - current
+      title: AgendaAdvanced
       type: object
     AgendaDraft:
       properties:
@@ -294,6 +362,16 @@ components:
           - type: integer
           - type: 'null'
           title: Duration Minutes
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        extended_minutes:
+          default: 0
+          title: Extended Minutes
+          type: integer
         goal_id:
           anyOf:
           - format: uuid
@@ -313,6 +391,12 @@ components:
         position:
           title: Position
           type: integer
+        started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Started At
         status:
           enum:
           - pending
@@ -423,20 +507,34 @@ components:
       type: object
     AgendaItemStatusUpdate:
       additionalProperties: false
-      description: '`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
+      description: '`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item, extends it, or both.
 
-        `status_source = ''host''`, after which the MeetingAgent never changes it.'
+        Sets `status_source = ''host''`, after which the MeetingAgent never changes it.
+
+
+        `extend_minutes` (polish program, "the agenda as the spine") adds minutes to the item''s plan
+
+        in the room; the original `duration_minutes` is kept and the total added is
+
+        `extended_minutes` on the item (at most 240). At least one of the two fields is required.'
       properties:
+        extend_minutes:
+          anyOf:
+          - maximum: 60.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Extend Minutes
         status:
-          enum:
-          - pending
-          - in_progress
-          - covered
-          - skipped
+          anyOf:
+          - enum:
+            - pending
+            - in_progress
+            - covered
+            - skipped
+            type: string
+          - type: 'null'
           title: Status
-          type: string
-      required:
-      - status
       title: AgendaItemStatusUpdate
       type: object
     AgendaReplace:
@@ -455,12 +553,42 @@ components:
       - items
       title: AgendaReplace
       type: object
+    AgentGuidance:
+      properties:
+        examples:
+          items:
+            $ref: '#/components/schemas/GuidanceExample'
+          title: Examples
+          type: array
+        scope:
+          enum:
+          - workspace
+          - person
+          title: Scope
+          type: string
+      required:
+      - scope
+      - examples
+      title: AgentGuidance
+      type: object
     AgentPolicy:
       properties:
         agent_confidence_overrides:
           additionalProperties:
             $ref: '#/components/schemas/ConfidenceBand'
           title: Agent Confidence Overrides
+          type: object
+        calibration:
+          additionalProperties:
+            $ref: '#/components/schemas/CalibrationDetail'
+          title: Calibration
+          type: object
+        user_overrides:
+          additionalProperties:
+            additionalProperties:
+              $ref: '#/components/schemas/ConfidenceBand'
+            type: object
+          title: User Overrides
           type: object
       title: AgentPolicy
       type: object
@@ -493,6 +621,30 @@ components:
       required:
       - attendance
       title: AttendanceUpdate
+      type: object
+    CalibrationDetail:
+      properties:
+        dismiss_rate:
+          description: Decayed share of dismisses
+          maximum: 1.0
+          minimum: 0.0
+          title: Dismiss Rate
+          type: number
+        samples:
+          description: Items with feedback in the window
+          minimum: 0.0
+          title: Samples
+          type: integer
+        surface:
+          anyOf:
+          - type: number
+          - type: 'null'
+          description: The calibrated surface threshold; null below the minimum
+          title: Surface
+      required:
+      - samples
+      - dismiss_rate
+      title: CalibrationDetail
       type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first. With
@@ -557,6 +709,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -565,6 +744,11 @@ components:
         status:
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - kind
@@ -664,6 +848,120 @@ components:
       - id
       - question
       title: CarryForwardQuestion
+      type: object
+    CatchUpActionLine:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      - assignee_id
+      - due_date
+      - created_at
+      title: CatchUpActionLine
+      type: object
+    CatchUpDecisionLine:
+      properties:
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+      required:
+      - id
+      - content
+      - confirmed_by
+      - created_at
+      title: CatchUpDecisionLine
+      type: object
+    CatchUpSummary:
+      description: '`GET /meetings/{id}/catch-up-summary`: so far in this meeting.'
+      properties:
+        action_count:
+          title: Action Count
+          type: integer
+        actions:
+          items:
+            $ref: '#/components/schemas/CatchUpActionLine'
+          title: Actions
+          type: array
+        agenda_done:
+          description: Agenda items covered or skipped.
+          title: Agenda Done
+          type: integer
+        agenda_total:
+          title: Agenda Total
+          type: integer
+        current_item:
+          anyOf:
+          - $ref: '#/components/schemas/AgendaItem'
+          - type: 'null'
+          description: The item in progress, if any.
+        decision_count:
+          title: Decision Count
+          type: integer
+        decisions:
+          items:
+            $ref: '#/components/schemas/CatchUpDecisionLine'
+          title: Decisions
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      - status
+      - decision_count
+      - action_count
+      - decisions
+      - actions
+      - agenda_done
+      - agenda_total
+      - current_item
+      title: CatchUpSummary
       type: object
     ChatHistory:
       description: '`GET /meetings/:id/chat`: the meeting''s most recent chat messages, oldest first.'
@@ -807,6 +1105,12 @@ components:
     Commitment:
       description: One of the caller's own promises. Never served to anyone else.
       properties:
+        action_item_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Action Item Id
         content:
           title: Content
           type: string
@@ -844,6 +1148,12 @@ components:
           - type: string
           - type: 'null'
           title: Meeting Title
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         status:
           enum:
           - open
@@ -890,6 +1200,39 @@ components:
       required:
       - status
       title: CommitmentUpdate
+      type: object
+    CompactMemory:
+      properties:
+        learning_enabled:
+          title: Learning Enabled
+          type: boolean
+        open_actions:
+          items:
+            $ref: '#/components/schemas/MemoryOpen'
+          title: Open Actions
+          type: array
+        open_promises:
+          items:
+            $ref: '#/components/schemas/MemoryOpen'
+          title: Open Promises
+          type: array
+        recurring_questions:
+          items:
+            type: string
+          title: Recurring Questions
+          type: array
+        topics:
+          items:
+            type: string
+          title: Topics
+          type: array
+      required:
+      - learning_enabled
+      - topics
+      - recurring_questions
+      - open_actions
+      - open_promises
+      title: CompactMemory
       type: object
     ConfidenceBand:
       properties:
@@ -1159,6 +1502,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -1178,6 +1548,11 @@ components:
             type: string
           - type: 'null'
           title: Supersedes
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -1769,6 +2144,39 @@ components:
       - status
       title: GuestDelivery
       type: object
+    Guidance:
+      properties:
+        agents:
+          additionalProperties:
+            $ref: '#/components/schemas/AgentGuidance'
+          title: Agents
+          type: object
+      title: Guidance
+      type: object
+    GuidanceExample:
+      properties:
+        action:
+          enum:
+          - confirm
+          - dismiss
+          - edit
+          title: Action
+          type: string
+        before:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'action=edit: the agent''s wording'
+          title: Before
+        text:
+          description: The item as the person left it (redacted, short)
+          title: Text
+          type: string
+      required:
+      - action
+      - text
+      title: GuidanceExample
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -1993,6 +2401,18 @@ components:
       type: object
     Meeting:
       properties:
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
         confidential:
           default: false
           title: Confidential
@@ -2077,6 +2497,18 @@ components:
           format: date-time
           title: Updated At
           type: string
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
       required:
       - id
       - title
@@ -2169,6 +2601,18 @@ components:
             $ref: '#/components/schemas/AgendaItem'
           title: Agenda
           type: array
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
         confidential:
           default: false
           title: Confidential
@@ -2257,6 +2701,18 @@ components:
           format: date-time
           title: Updated At
           type: string
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
       required:
       - id
       - title
@@ -2717,6 +3173,148 @@ components:
           title: Title
       title: MeetingUpdate
       type: object
+    MemoryCalibration:
+      properties:
+        agent:
+          title: Agent
+          type: string
+        personal:
+          description: True when tuned from your own feedback
+          title: Personal
+          type: boolean
+        samples:
+          description: Your items with feedback in the window
+          title: Samples
+          type: integer
+        surface:
+          description: Confidence above which this agent shows you something
+          title: Surface
+          type: number
+      required:
+      - agent
+      - surface
+      - personal
+      - samples
+      title: MemoryCalibration
+      type: object
+    MemoryOpen:
+      properties:
+        content:
+          title: Content
+          type: string
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: An ISO due date or a spoken due hint
+          title: Due
+      required:
+      - content
+      title: MemoryOpen
+      type: object
+    MemoryOpenAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+      required:
+      - id
+      - content
+      - due_date
+      - meeting_id
+      title: MemoryOpenAction
+      type: object
+    MemoryPromise:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - id
+      - content
+      - due_hint
+      - meeting_id
+      title: MemoryPromise
+      type: object
+    MemoryQuestion:
+      properties:
+        count:
+          description: How often the person asked or saved it
+          title: Count
+          type: integer
+        last_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last At
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      - count
+      title: MemoryQuestion
+      type: object
+    MemoryTopic:
+      properties:
+        label:
+          title: Label
+          type: string
+        last_seen_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Seen At
+        mentions:
+          description: Feedback items that named it
+          title: Mentions
+          type: integer
+        pinned:
+          description: Added by the person; never fades
+          title: Pinned
+          type: boolean
+        weight:
+          description: Decayed weight; pinned topics are fixed
+          title: Weight
+          type: number
+      required:
+      - label
+      - weight
+      - mentions
+      - pinned
+      title: MemoryTopic
+      type: object
     MyTask:
       description: 'One action item as the My Tasks screen needs it: the row plus its meeting''s title,
         so
@@ -2781,6 +3379,35 @@ components:
       required:
       - items
       title: MyTaskList
+      type: object
+    NoteFeedback:
+      properties:
+        recorded_at:
+          format: date-time
+          title: Recorded At
+          type: string
+        useful:
+          title: Useful
+          type: boolean
+        worklog_id:
+          format: uuid
+          title: Worklog Id
+          type: string
+      required:
+      - worklog_id
+      - useful
+      - recorded_at
+      title: NoteFeedback
+      type: object
+    NoteRating:
+      additionalProperties: false
+      properties:
+        useful:
+          title: Useful
+          type: boolean
+      required:
+      - useful
+      title: NoteRating
       type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
@@ -2883,6 +3510,101 @@ components:
       required:
       - user_ids
       title: ParticipantsAdd
+      type: object
+    PersonMemory:
+      properties:
+        calibration:
+          items:
+            $ref: '#/components/schemas/MemoryCalibration'
+          title: Calibration
+          type: array
+        learning_enabled:
+          title: Learning Enabled
+          type: boolean
+        muted_topics:
+          items:
+            type: string
+          title: Muted Topics
+          type: array
+        open_actions:
+          items:
+            $ref: '#/components/schemas/MemoryOpenAction'
+          title: Open Actions
+          type: array
+        open_promises:
+          items:
+            $ref: '#/components/schemas/MemoryPromise'
+          title: Open Promises
+          type: array
+        recurring_questions:
+          items:
+            $ref: '#/components/schemas/MemoryQuestion'
+          title: Recurring Questions
+          type: array
+        topics:
+          items:
+            $ref: '#/components/schemas/MemoryTopic'
+          title: Topics
+          type: array
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+      required:
+      - learning_enabled
+      - topics
+      - recurring_questions
+      - muted_topics
+      - open_actions
+      - open_promises
+      - calibration
+      - updated_at
+      title: PersonMemory
+      type: object
+    PersonMemoryUpdate:
+      additionalProperties: false
+      description: 'At least one field. Lists are applied in this order: forget, unmute, pin.'
+      properties:
+        forget_questions:
+          items:
+            maxLength: 300
+            minLength: 1
+            type: string
+          maxItems: 20
+          title: Forget Questions
+          type: array
+        forget_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 100
+          title: Forget Topics
+          type: array
+        learning_enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Learning Enabled
+        pin_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 20
+          title: Pin Topics
+          type: array
+        unmute_topics:
+          items:
+            maxLength: 80
+            minLength: 1
+            type: string
+          maxItems: 100
+          title: Unmute Topics
+          type: array
+      title: PersonMemoryUpdate
       type: object
     PostMeetingDigest:
       properties:
@@ -3546,6 +4268,118 @@ components:
       - user_id
       title: SpeakerAssign
       type: object
+    StandInAnswer:
+      properties:
+        fill_id:
+          description: The `agent_collaborations` row this ask wrote.
+          format: uuid
+          title: Fill Id
+          type: string
+        outcome:
+          description: '`answered`, `no_answer` (nothing of that kind to share), or `denied` (your workspace''s
+            agent permissions do not allow this question).'
+          enum:
+          - answered
+          - no_answer
+          - denied
+          title: Outcome
+          type: string
+        query_class:
+          enum:
+          - meeting_context
+          - decision_lineage
+          - action_status
+          title: Query Class
+          type: string
+        question:
+          title: Question
+          type: string
+        sources:
+          items:
+            $ref: '#/components/schemas/StandInSource'
+          title: Sources
+          type: array
+        target_scope:
+          enum:
+          - self
+          - same_team
+          - department
+          - org
+          title: Target Scope
+          type: string
+      required:
+      - question
+      - outcome
+      - query_class
+      - target_scope
+      - sources
+      - fill_id
+      title: StandInAnswer
+      type: object
+    StandInAsk:
+      additionalProperties: false
+      properties:
+        question:
+          maxLength: 300
+          minLength: 1
+          title: Question
+          type: string
+      required:
+      - question
+      title: StandInAsk
+      type: object
+    StandInSource:
+      description: One record the answer cites, of the kind the question's class may return.
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        kind:
+          enum:
+          - decision
+          - action
+          - update
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        occurred_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Occurred At
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        text:
+          title: Text
+          type: string
+      required:
+      - kind
+      - text
+      title: StandInSource
+      type: object
     StatusAnswer:
       additionalProperties: false
       properties:
@@ -3662,6 +4496,12 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         priority:
           maximum: 3.0
           minimum: 1.0
@@ -3670,6 +4510,27 @@ components:
         question:
           title: Question
           type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -3683,6 +4544,11 @@ components:
           - saved
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -4061,6 +4927,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         relevance_score:
           anyOf:
           - type: number
@@ -4076,6 +4969,11 @@ components:
           format: uuid
           title: User Id
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
         window_id:
           title: Window Id
           type: string
@@ -4099,6 +4997,200 @@ components:
       required:
       - items
       title: WorklogList
+      type: object
+    WrapUp:
+      description: What is left before the meeting closes, and the shared deadline.
+      properties:
+        closed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Closed At
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
+        deadline:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: '`wrap_up_started_at` + 60 s, or null.'
+          title: Deadline
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        open_items:
+          description: Agenda items still pending or in progress.
+          items:
+            $ref: '#/components/schemas/AgendaItem'
+          title: Open Items
+          type: array
+        pending:
+          description: Surfaced cards still proposed, oldest first.
+          items:
+            $ref: '#/components/schemas/WrapUpCard'
+          title: Pending
+          type: array
+        seconds:
+          description: The length of the wrap-up (60).
+          title: Seconds
+          type: integer
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+        unowned_action_ids:
+          description: The pending action cards that have no owner yet.
+          items:
+            format: uuid
+            type: string
+          title: Unowned Action Ids
+          type: array
+        wrap_up_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Wrap Up By
+        wrap_up_started_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Wrap Up Started At
+      required:
+      - meeting_id
+      - status
+      - seconds
+      - wrap_up_started_at
+      - wrap_up_by
+      - deadline
+      - closed_at
+      - closed_by
+      - pending
+      - open_items
+      - unowned_action_ids
+      title: WrapUp
+      type: object
+    WrapUpCard:
+      description: A decision or action card nobody has confirmed or dismissed yet.
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - decision
+          - action
+          title: Kind
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+      required:
+      - id
+      - kind
+      - content
+      - created_at
+      title: WrapUpCard
+      type: object
+    WrapUpClose:
+      additionalProperties: false
+      properties:
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 'Who reviews the cards nobody confirmed (a participant). Default: you.'
+          title: Owner User Id
+        reason:
+          default: host
+          description: '`timer` when the wrap-up ran out, for the audit trail.'
+          enum:
+          - host
+          - timer
+          title: Reason
+          type: string
+      title: WrapUpClose
+      type: object
+    WrapUpClosed:
+      properties:
+        closed_at:
+          format: date-time
+          title: Closed At
+          type: string
+        closed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Closed By
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        moved_actions:
+          title: Moved Actions
+          type: integer
+        moved_decisions:
+          title: Moved Decisions
+          type: integer
+        review_owner_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Who now owns reviewing the leftover cards (null when none were left).
+          title: Review Owner Id
+        status:
+          enum:
+          - scheduled
+          - live
+          - ended
+          - cancelled
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      - status
+      - closed_at
+      - closed_by
+      - review_owner_id
+      - moved_decisions
+      - moved_actions
+      title: WrapUpClosed
       type: object
   securitySchemes:
     HTTPBearer:
@@ -4353,7 +5445,9 @@ paths:
       - actions
   /api/v1/actions/{action_id}/dismiss:
     post:
-      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      description: 'proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+
+        wave 2). Idempotent on re-dismiss (which records nothing).'
       operationId: dismiss_action
       parameters:
       - in: path
@@ -4749,7 +5843,9 @@ paths:
       - decisions
   /api/v1/decisions/{decision_id}/dismiss:
     post:
-      description: proposed -> dismissed. Emits nothing. Idempotent on re-dismiss.
+      description: 'proposed -> dismissed. No decisions/actions event; one `agent-feedback` record (polish
+
+        wave 2). Idempotent on re-dismiss (which records nothing).'
       operationId: dismiss_decision
       parameters:
       - in: path
@@ -5049,6 +6145,92 @@ paths:
       summary: Apply Erasure
       tags:
       - erasure
+  /api/v1/me/memory:
+    delete:
+      description: Forget everything learned about you, and scrub the text of your feedback.
+      operationId: forget_my_memory
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Forget My Memory
+      tags:
+      - memory
+    get:
+      description: What your agents remember about you across meetings. Only ever your own.
+      operationId: get_my_memory
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get My Memory
+      tags:
+      - memory
+    patch:
+      description: Pin, forget or unmute topics, forget questions, switch learning off or on.
+      operationId: update_my_memory
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonMemoryUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update My Memory
+      tags:
+      - memory
   /api/v1/meeting-templates:
     get:
       operationId: list_templates
@@ -5511,12 +6693,81 @@ paths:
       summary: Replace Agenda
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/agenda/advance:
+    post:
+      description: '"Start next" (host or creator): every item now `in_progress` is finished with `outcome`
+
+        (`covered` by default, or `skipped`), then the first `pending` item by position starts. One
+
+        transaction with the meeting row locked, so two clicks apply one after the other and the
+
+        room never sees two items in progress. Every touched item becomes host-set. 409 once the
+
+        meeting has ended; an agenda with nothing left to start finishes the current item and
+
+        returns `current: null`.'
+      operationId: advance_agenda
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgendaAdvance'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgendaAdvanced'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Advance Agenda
+      tags:
+      - meetings
   /api/v1/meetings/{meeting_id}/agenda/{item_id}:
     patch:
-      description: 'The host marks an item (host or creator). Sets `status_source = ''host''`: from then
-        on
+      description: 'The host marks an item, extends it, or both (host or creator). Sets
 
-        the MeetingAgent''s updates to this item are ignored (the host wins, ADR-0038 D7).'
+        `status_source = ''host''`: from then on the MeetingAgent''s updates to this item are ignored
+
+        (the host wins, ADR-0038 D7).
+
+
+        Polish program, "the agenda as the spine": `in_progress` stamps `started_at` (once),
+
+        `covered`/`skipped` stamp `ended_at`, `pending` clears both; `extend_minutes` adds to
+
+        `extended_minutes` (422 past 240 in total). A meeting that is over is 409.'
       operationId: set_agenda_item_status
       parameters:
       - in: path
@@ -5635,7 +6886,9 @@ paths:
 
         Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
 
-        stored but never served; the surface threshold is the tenant''s, per agent.
+        stored but never served; the surface threshold is the workspace''s, per agent: the tenant''s
+
+        override or default, moved by the confirm/dismiss calibration (`learning.band_for`).
 
 
         `include_resolved=true` (polish program, shared candidate ledger) also returns the
@@ -5787,6 +7040,43 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Carry Forward
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/catch-up-summary:
+    get:
+      description: So far in this meeting, for someone joining late (participants).
+      operationId: catch_up_summary
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatchUpSummary'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Catch Up Summary
       tags:
       - meetings
   /api/v1/meetings/{meeting_id}/chat:
@@ -6510,6 +7800,63 @@ paths:
       summary: Assign Speaker
       tags:
       - speakers
+  /api/v1/meetings/{meeting_id}/stand-ins/{user_id}/ask:
+    post:
+      operationId: ask_stand_in
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StandInAsk'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandInAnswer'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask the agent of someone who sent it instead of coming
+      tags:
+      - stand-ins
   /api/v1/meetings/{meeting_id}/transcript:
     get:
       description: 'Finals only, in spoken order. No `org_id` parameter: RLS scopes it to the caller.
@@ -6637,6 +7984,186 @@ paths:
       summary: List My Worklogs
       tags:
       - worklogs
+  /api/v1/meetings/{meeting_id}/wrap-up:
+    get:
+      description: What is left before the meeting closes (participants).
+      operationId: get_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Wrap Up
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/cancel:
+    post:
+      description: '"Keep the meeting going": the wrap-up closes and the meeting carries on.'
+      operationId: cancel_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Cancel Wrap Up
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/close:
+    post:
+      description: End the meeting for everyone and hand every card nobody confirmed to a named owner.
+      operationId: close_meeting
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/WrapUpClose'
+              - type: 'null'
+              title: Body
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUpClosed'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Close Meeting
+      tags:
+      - meetings
+  /api/v1/meetings/{meeting_id}/wrap-up/start:
+    post:
+      description: 'The host opens the 60-second wrap-up. Idempotent: the first start time stands.'
+      operationId: start_wrap_up
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WrapUp'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start Wrap Up
+      tags:
+      - meetings
   /api/v1/public/shares/{token}:
     get:
       description: 'No authentication: the signed token in the path is the credential. 404 for a token
@@ -6865,7 +8392,9 @@ paths:
 
         meeting. Re-hydrates the sidebar on every socket (re)connect. The 0.4-0.7 silent band is
 
-        stored but never served; the surface threshold is the tenant''s.'
+        stored but never served; the surface threshold is the caller''s calibrated one, else the
+
+        workspace''s (`learning.band_for`).'
       operationId: list_suggestions
       parameters:
       - description: The meeting the sidebar is open on
@@ -7266,6 +8795,57 @@ paths:
       summary: Add Team Member
       tags:
       - org-hierarchy
+  /api/v1/worklogs/{worklog_id}/feedback:
+    post:
+      description: 'Rate one of your own notes useful or not: your PersonalListenerAgent learns from it.'
+      operationId: rate_note
+      parameters:
+      - in: path
+        name: worklog_id
+        required: true
+        schema:
+          format: uuid
+          title: Worklog Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteRating'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteFeedback'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Rate Note
+      tags:
+      - worklogs
   /healthz:
     get:
       operationId: healthz
@@ -7415,6 +8995,47 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Action Status
+      tags:
+      - core-internal
+  /internal/agent-guidance:
+    get:
+      operationId: agent_guidance
+      parameters:
+      - in: query
+        name: user_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guidance'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Agent Guidance
       tags:
       - core-internal
   /internal/agent-policy:
@@ -7957,6 +9578,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Create Status Requests
+      tags:
+      - core-internal
+  /internal/person-memory/{user_id}:
+    get:
+      operationId: person_memory
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Person Memory
       tags:
       - core-internal
   /internal/retrieval/records:
