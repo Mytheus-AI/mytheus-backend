@@ -124,7 +124,7 @@ class DashboardTask(BaseModel):
     """One of the caller's open (confirmed, not done) action items, for Your tasks."""
 
     id: uuid.UUID
-    meeting_id: uuid.UUID
+    meeting_id: uuid.UUID | None  # null for a task created directly, with no meeting
     meeting_title: str | None
     content: str
     due_date: date | None
@@ -282,9 +282,9 @@ async def dashboard(
             return []
         found = await rows(
             "SELECT a.id, a.meeting_id, m.title AS meeting_title, a.content, a.due_date, "
-            "a.created_at FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
+            "a.created_at FROM action_items a LEFT JOIN meetings m ON m.id = a.meeting_id "
             "WHERE a.assignee_id = :u AND a.status = 'confirmed' "
-            "AND a.deleted_at IS NULL AND m.deleted_at IS NULL "
+            "AND a.deleted_at IS NULL AND (a.meeting_id IS NULL OR m.deleted_at IS NULL) "
             "ORDER BY a.due_date ASC NULLS LAST, a.created_at ASC, a.id ASC LIMIT :limit",
             {"u": me, "limit": MAX_TASKS},
         )

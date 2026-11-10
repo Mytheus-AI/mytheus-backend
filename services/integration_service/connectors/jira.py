@@ -157,6 +157,17 @@ def _browse_url(site: dict[str, Any], key: str) -> str | None:
     return f"{str(base).rstrip('/')}/browse/{key}" if base else None
 
 
+# The `actions` event's `meeting_id` for a task created directly (`POST /api/v1/actions`): the
+# schema requires a uuid, and core-api sends the nil uuid when there is no meeting.
+_NO_MEETING = "00000000-0000-0000-0000-000000000000"
+
+
+def _source_url(meeting_id: Any) -> str:
+    if not meeting_id or str(meeting_id) == _NO_MEETING:
+        return f"{config.app_base_url()}/tasks"
+    return f"{config.app_base_url()}/meetings/{meeting_id}"
+
+
 async def push_action(
     session: AsyncSession, org_id: uuid.UUID, action: dict[str, Any], clients: Clients
 ) -> str:
@@ -193,9 +204,7 @@ async def push_action(
         "project": {"key": site.get("project_key")},
         "issuetype": {"name": "Task"},
         "summary": content[:250],
-        "description": _description(
-            content, f"{config.app_base_url()}/meetings/{action.get('meeting_id')}"
-        ),
+        "description": _description(content, _source_url(action.get("meeting_id"))),
         "labels": [label],
     }
     due = _due(action.get("due_date"))

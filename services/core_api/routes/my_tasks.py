@@ -24,7 +24,7 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,8 +44,10 @@ class MyTask(BaseModel):
     the page can say where the task came from without a second round trip."""
 
     id: uuid.UUID
-    meeting_id: uuid.UUID
-    meeting_title: str
+    meeting_id: uuid.UUID | None = Field(
+        default=None, description="Null for a task created directly, with no meeting behind it."
+    )
+    meeting_title: str | None = None
     content: str
     assignee_id: uuid.UUID
     due_date: date | None = None
@@ -61,7 +63,7 @@ class MyTaskList(BaseModel):
 _SELECT = (
     "SELECT a.id, a.meeting_id, m.title AS meeting_title, a.content, a.assignee_id, "
     "a.due_date, a.status, a.confidence, a.created_at "
-    "FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
+    "FROM action_items a LEFT JOIN meetings m ON m.id = a.meeting_id "
 )
 
 
@@ -79,7 +81,7 @@ async def list_my_tasks(
             await session.execute(
                 text(
                     _SELECT + "WHERE a.assignee_id = :u AND a.status = :s "
-                    "AND a.deleted_at IS NULL AND m.deleted_at IS NULL "
+                    "AND a.deleted_at IS NULL AND (a.meeting_id IS NULL OR m.deleted_at IS NULL) "
                     "ORDER BY a.due_date ASC NULLS LAST, a.created_at ASC, a.id ASC LIMIT :limit"
                 ),
                 {"u": str(ctx.user_id), "s": status, "limit": MAX_TASKS},

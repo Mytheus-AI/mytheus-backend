@@ -462,3 +462,37 @@ async def dismiss_action(
         ip=ctx.ip,
     )
     return ActionItem(**dict(dismissed))
+
+
+async def enqueue_action_confirmed(
+    session: AsyncSession, org_id: uuid.UUID, row: dict[str, Any]
+) -> None:
+    """The ONE `actions` outbox row for a confirmed action, for a task a person created
+    directly (`routes/action_create.py`, Phase 4): the same payload and idempotency key as
+    `confirm_action`, so the knowledge graph, the follow-up workflow and Jira treat a created
+    task exactly like a confirmed candidate. Lives here because this module is the only
+    producer of `actions` (`test_only_the_confirm_routes_enqueue_decisions_or_actions`).
+
+    `actions.meeting_id` is a required uuid in the Avro schema; a task with no meeting carries
+    the nil uuid, which consumers read as "no meeting".
+    """
+    due: date | None = row["due_date"]
+    meeting = row["meeting_id"]
+    await enqueue(
+        session,
+        EventEnvelope(
+            topic="actions",
+            payload={
+                "action_id": str(row["id"]),
+                "meeting_id": str(meeting) if meeting else str(uuid.UUID(int=0)),
+                "content": row["content"],
+                "assignee_id": str(row["assignee_id"]) if row["assignee_id"] else None,
+                "due_date": (due - _EPOCH).days if due is not None else None,
+                "confidence": float(row["confidence"]),
+                "status": "confirmed",
+            },
+            org_id=str(org_id),
+            producer=PRODUCER,
+            idempotency_key=f"action:{row['id']}:confirmed",
+        ),
+    )
