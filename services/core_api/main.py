@@ -17,6 +17,7 @@ from services.core_api.routes import (
     collaborations,
     commitments,
     decision_log,
+    erasure,
     followups,
     internal_agents,
     internal_integrations,
@@ -79,6 +80,7 @@ app.include_router(stand_ins.router)
 # and the internal guidance and person-memory reads for agent-runtime-service.
 app.include_router(me_memory.router)
 app.include_router(internal_learning.router)
+app.include_router(erasure.router)  # admin-only; reached through admin-ops-service
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

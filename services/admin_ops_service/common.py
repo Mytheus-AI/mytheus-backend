@@ -39,6 +39,7 @@ SERVICE_NAME = "admin-ops-service"
 STAFF_ENV = "MYTHEUS_STAFF_USER_IDS"
 IDENTITY_TOKENS_ENV = "MYTHEUS_IDENTITY_CALLER_TOKENS"
 IDENTITY_URL_ENV = "UPSTREAM_IDENTITY_TENANT_SERVICE"
+CORE_URL_ENV = "CORE_API_URL"
 
 
 # --- identity --------------------------------------------------------------------------------
@@ -51,6 +52,19 @@ def identity_transport() -> httpx.AsyncBaseTransport | None:
 
 
 IdentityTransport = Annotated[httpx.AsyncBaseTransport | None, Depends(identity_transport)]
+
+
+def core_transport() -> httpx.AsyncBaseTransport | None:
+    """FastAPI dependency: the transport core-api calls use (the erasure leg). None = real
+    network; tests override it with an in-process transport to the real core-api routers."""
+    return None
+
+
+CoreTransport = Annotated[httpx.AsyncBaseTransport | None, Depends(core_transport)]
+
+
+def _core_base() -> str:
+    return os.environ.get(CORE_URL_ENV, "http://core-api:8000").rstrip("/")
 
 
 def _identity_base() -> str:
@@ -66,7 +80,8 @@ def own_identity_secret() -> str | None:
 
 
 def _passthrough(response: httpx.Response) -> ProblemDetail:
-    """Identity's RFC 7807 answer, re-raised with the same status, code and detail."""
+    """The upstream's RFC 7807 answer, re-raised with the same status, code, detail and
+    `reason` extension (identity's and core-api's share the one error model)."""
     try:
         body = response.json()
     except ValueError:
@@ -83,7 +98,9 @@ def _passthrough(response: httpx.Response) -> ProblemDetail:
             "identity-tenant-service refused or failed the request",
         )
     detail = body.get("detail") if isinstance(body.get("detail"), str) else error_code.value
-    return ProblemDetail(response.status_code, error_code, detail)
+    reason = body.get("reason")
+    extra = {"reason": reason} if isinstance(reason, str) else None
+    return ProblemDetail(response.status_code, error_code, detail, extra=extra)
 
 
 async def forward_to_identity(
@@ -108,6 +125,32 @@ async def forward_to_identity(
         raise ProblemDetail(
             503, ErrorCode.DEPENDENCY_UNAVAILABLE, "identity-tenant-service unreachable"
         ) from exc
+    if response.status_code >= 300:
+        raise _passthrough(response)
+    return response
+
+
+async def forward_to_core(
+    request: Request,
+    method: str,
+    path: str,
+    transport: httpx.AsyncBaseTransport | None,
+    json_body: dict[str, Any] | None = None,
+) -> httpx.Response:
+    """Call core-api as the CALLER (their bearer token), like `forward_to_identity`: core-api
+    re-verifies the token and applies its own tier check; its 4xx comes back unchanged."""
+    headers = {}
+    if auth := request.headers.get("authorization"):
+        headers["Authorization"] = auth
+    if fwd := request.headers.get("x-forwarded-for"):
+        headers["X-Forwarded-For"] = fwd
+    try:
+        async with httpx.AsyncClient(transport=transport, timeout=30.0) as client:
+            response = await client.request(
+                method, f"{_core_base()}{path}", headers=headers, json=json_body
+            )
+    except httpx.HTTPError as exc:
+        raise ProblemDetail(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "core-api unreachable") from exc
     if response.status_code >= 300:
         raise _passthrough(response)
     return response

@@ -217,6 +217,108 @@ components:
       - count
       title: DlqCount
       type: object
+    Erasure:
+      description: One completed erasure, as recorded in `audit_logs` (`data_erasure.completed`).
+      properties:
+        anonymized:
+          additionalProperties:
+            type: integer
+          title: Anonymized
+          type: object
+        erased:
+          additionalProperties:
+            type: integer
+          title: Erased
+          type: object
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The person's email or the meeting's title; null when no longer readable.
+          title: Label
+        requested_at:
+          format: date-time
+          title: Requested At
+          type: string
+        requested_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Requested By
+        revoked_share_links:
+          default: 0
+          title: Revoked Share Links
+          type: integer
+        revoked_tokens:
+          default: 0
+          title: Revoked Tokens
+          type: integer
+        status:
+          const: completed
+          default: completed
+          title: Status
+          type: string
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - id
+      - kind
+      - target_id
+      - requested_at
+      title: Erasure
+      type: object
+    ErasureCreate:
+      additionalProperties: false
+      description: Erase one person's, or one meeting's, data in this workspace.
+      properties:
+        confirm:
+          description: 'Typed confirmation: the person''s email, or the meeting''s title (`Untitled meeting`
+            when it has none). Case and outer spaces are ignored.'
+          maxLength: 320
+          minLength: 1
+          title: Confirm
+          type: string
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        target_id:
+          description: The person's `users.id`, or the meeting's id.
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - kind
+      - target_id
+      - confirm
+      title: ErasureCreate
+      type: object
+    ErasureList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Erasure'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ErasureList
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -1211,6 +1313,78 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Request Data Export
+      tags:
+      - admin-tenant
+  /admin/tenant/erasures:
+    get:
+      description: 'authz: admin. Completed erasures, newest first. A person''s label is their email read
+        now
+
+        from `users` (RLS-scoped); null when they are gone.'
+      operationId: list_erasures
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErasureList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Erasures
+      tags:
+      - admin-tenant
+    post:
+      description: 'authz: admin. Erase one person''s or one meeting''s data (see the module docstring).
+
+        core-api''s 404 / 409 (meeting live) / 422 (confirmation mismatch, own data) pass through.'
+      operationId: create_erasure
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasureCreate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erasure'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Erasure
       tags:
       - admin-tenant
   /admin/tenant/members:

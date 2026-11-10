@@ -156,3 +156,8 @@ ACTION_MEETING_CLOSED = "meeting.closed"
 # Polish program, "Agents that stand in properly": a participant asking the agent of someone who
 # sent it instead of coming. Allowed or denied by the A2A PDP; either way it is a compliance fact.
 ACTION_STAND_IN_ASKED = "stand_in.asked"
+# Data erasure (Workspace > Data and privacy). core-api records its own share
+# (`POST /api/v1/erasures`, row counts); admin-ops-service records the whole request once every
+# leg has run (`POST /admin/tenant/erasures`), and that row is what the console lists.
+ACTION_DATA_ERASURE_APPLIED = "data_erasure.applied"
+ACTION_DATA_ERASURE_COMPLETED = "data_erasure.completed"
