@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
 
@@ -71,6 +72,7 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.core_api import minutes as minutes_mod
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
@@ -127,6 +129,17 @@ _MEETING_UPDATE = ("MeetingAgent", "meeting_update")
 _AGENT_AGENDA_STATUSES = frozenset({"in_progress", "covered"})
 MAX_AGENDA_NOTE_CHARS = 300
 MAX_AGENDA_UPDATES = 20
+
+# Minutes for everyone: after the meeting ended, one MeetingAgent `minutes` record per
+# participant and one shared record (`user_id` = the nil uuid), into `meeting_minutes`
+# (`services/core_api/minutes.py`). When the shared minutes land and the automatic follow-up is
+# waiting for them (`meeting_followups.awaiting_minutes_since`), the follow-up is sent once the
+# transaction has committed (`AFTER_COMMIT`, drained by `run_consumer`).
+_MINUTES = ("MeetingAgent", "minutes")
+
+# Work to run after the current message's transaction commits (never inside it: it calls other
+# services). `run_consumer` drains it after the commit and clears it on a rollback.
+AFTER_COMMIT: list[Callable[[], Awaitable[Any]]] = []
 
 # ADR-0039 B6/C3: PersonalListenerAgent records carry `payload_json.commitments`
 # (`[{content, due_hint}]`, at most 5): promises the participant made, private to `user_id`.
@@ -280,11 +293,13 @@ async def _apply_agent_result(
     is_suggestion = (agent, kind) == _SUGGESTION
     is_context_fill = (agent, kind) == _CONTEXT_FILL
     is_meeting_update = (agent, kind) == _MEETING_UPDATE
+    is_minutes = (agent, kind) == _MINUTES
     if (
         candidate_table is None
         and not is_suggestion
         and not is_context_fill
         and not is_meeting_update
+        and not is_minutes
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
         # Anything else - including an agent class or kind this consumer has never heard of -
@@ -300,6 +315,8 @@ async def _apply_agent_result(
     # unknown (P10 contract 5.9). Only a context_fill may, and only the nil uuid: any other
     # meeting id is checked against the tenant like every other result.
     unknown_meeting = is_context_fill and meeting_id == NIL_UUID
+    # The shared minutes are for nobody in particular: they carry the nil user.
+    shared_minutes = is_minutes and user_id == NIL_UUID
     visible = (
         await session.execute(
             text(
@@ -310,13 +327,17 @@ async def _apply_agent_result(
             {"m": str(meeting_id), "u": str(user_id)},
         )
     ).one()
-    if (not visible[0] and not unknown_meeting) or not visible[1]:
+    if (not visible[0] and not unknown_meeting) or (not visible[1] and not shared_minutes):
         raise PoisonMessage(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
         )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
+    if is_minutes:
+        return await _persist_minutes(
+            session, org_id, meeting_id, None if shared_minutes else user_id, value
+        )
     surface, silent = _thresholds(visible[2], agent)
     if is_context_fill:
         return await _persist_collaborations(
@@ -674,6 +695,52 @@ async def _apply_agenda_updates(
     return changed
 
 
+async def _persist_minutes(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    value: dict[str, Any],
+) -> bool:
+    """Upsert one set of minutes (`minutes.persist`: validated, clipped, participants only).
+    For the shared minutes, a follow-up waiting for them is queued to go out after commit."""
+    payload = minutes_mod.parse_payload(value.get("payload_json"))
+    if payload is None:
+        return False  # nothing to file; the inbox claim keeps a redelivery a no-op
+    written = await minutes_mod.persist(session, org_id, meeting_id, user_id, payload)
+    if written and user_id is None:
+        waiting = (
+            await session.execute(
+                text(
+                    "UPDATE meeting_followups SET awaiting_minutes_since = NULL, "
+                    "updated_at = now() WHERE meeting_id = :m "
+                    "AND awaiting_minutes_since IS NOT NULL AND enabled RETURNING 1"
+                ),
+                {"m": str(meeting_id)},
+            )
+        ).first()
+        if waiting is not None:
+            AFTER_COMMIT.append(lambda: _send_follow_up(org_id, meeting_id))
+    return written
+
+
+async def _send_follow_up(org_id: uuid.UUID, meeting_id: uuid.UUID) -> None:
+    from services.core_api.routes.followups import dispatch
+
+    try:
+        await dispatch(org_id, meeting_id, actor_id=None, automatic=True)
+    except Exception:  # noqa: BLE001 - the host can still send it; never stop the consumer
+        logger.exception("deferred follow-up for meeting %s failed", meeting_id)
+
+
+async def drain_after_commit() -> None:
+    """Run (and clear) the work queued by the message that just committed."""
+    jobs = list(AFTER_COMMIT)
+    AFTER_COMMIT.clear()
+    for job in jobs:
+        await job()
+
+
 def _bounded_text(raw: Any, limit: int) -> str | None:
     if not isinstance(raw, str):
         return None
@@ -881,8 +948,10 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 value = decode(
                     deserializer, raw_value, SerializationContext(topic_name, MessageField.VALUE)
                 )
+                AFTER_COMMIT.clear()
                 async with session_factory() as session, session.begin():
                     applied = await handler(session, redis, value)
+                await drain_after_commit()
                 record_processed(CONSUMER_GROUP, topic_name, "applied" if applied else "duplicate")
             except (PoisonMessage, IntegrationEventPoison) as exc:
                 logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)

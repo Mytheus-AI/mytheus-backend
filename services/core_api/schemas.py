@@ -120,14 +120,34 @@ class CarryForwardQuestion(BaseModel):
     question: str
 
 
+class CarryForwardOpenItem(BaseModel):
+    """An open item from the previous meeting's shared minutes (minutes for everyone)."""
+
+    text: str
+    owner_user_id: uuid.UUID | None = None
+    owner_name: str | None = None
+    due: str | None = None
+
+
+class CarryForwardOpenQuestion(BaseModel):
+    """A question the previous meeting left unanswered, from its shared minutes."""
+
+    text: str
+    asked_by_name: str | None = None
+
+
 class CarryForward(BaseModel):
     """`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists and
-    `previous_meeting: null` when the meeting follows up nothing."""
+    `previous_meeting: null` when the meeting follows up nothing. `open_items` and
+    `unanswered_questions` come from the previous meeting's shared minutes (empty until they
+    exist)."""
 
     previous_meeting: MeetingRef | None
     decisions: list[CarryForwardDecision]
     open_actions: list[CarryForwardAction]
     saved_questions: list[CarryForwardQuestion]
+    open_items: list[CarryForwardOpenItem] = Field(default_factory=list)
+    unanswered_questions: list[CarryForwardOpenQuestion] = Field(default_factory=list)
 
 
 class MeetingCreate(BaseModel):
@@ -724,6 +744,11 @@ class AgendaDraftItem(BaseModel):
 
 class AgendaDraft(BaseModel):
     items: list[AgendaDraftItem]
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="Questions the previous meeting's shared minutes left unanswered, for the "
+        "host to add as items (minutes for everyone).",
+    )
 
 
 # --- ADR-0039 B6: promises ------------------------------------------------------------------

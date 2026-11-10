@@ -130,6 +130,24 @@ components:
       - results
       title: EmailSendResult
       type: object
+    EmailStatus:
+      properties:
+        configured:
+          title: Configured
+          type: boolean
+        provider:
+          anyOf:
+          - enum:
+            - resend
+            - smtp
+            type: string
+          - type: 'null'
+          title: Provider
+      required:
+      - configured
+      - provider
+      title: EmailStatus
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -462,6 +480,33 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Send Email
+      tags:
+      - notification-internal
+  /internal/email/status:
+    get:
+      description: Whether this server has an email provider (no secret or address is revealed).
+      operationId: email_status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailStatus'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Email Status
       tags:
       - notification-internal
   /notifications:

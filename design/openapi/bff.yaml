@@ -207,6 +207,83 @@ components:
       - scheduled_start
       title: BriefMeeting
       type: object
+    BriefMinutes:
+      description: 'What the previous meeting''s minutes left open (minutes for everyone): its shared
+        open
+
+        items (the caller''s own first, `mine`) and unanswered questions, and the caller''s own
+
+        promises from their personal minutes of it.'
+      properties:
+        my_promises:
+          items:
+            $ref: '#/components/schemas/BriefPromise'
+          title: My Promises
+          type: array
+        open_items:
+          items:
+            $ref: '#/components/schemas/BriefOpenItem'
+          title: Open Items
+          type: array
+        unanswered_questions:
+          items:
+            type: string
+          title: Unanswered Questions
+          type: array
+      required:
+      - open_items
+      - unanswered_questions
+      - my_promises
+      title: BriefMinutes
+      type: object
+    BriefOpenItem:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        mine:
+          default: false
+          title: Mine
+          type: boolean
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: BriefOpenItem
+      type: object
+    BriefPromise:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        text:
+          title: Text
+          type: string
+        to_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To Name
+      required:
+      - text
+      title: BriefPromise
+      type: object
     BriefProxy:
       properties:
         proxy_update:
@@ -817,6 +894,10 @@ components:
         previous_meeting:
           anyOf:
           - $ref: '#/components/schemas/PreviousMeeting'
+          - type: 'null'
+        previous_minutes:
+          anyOf:
+          - $ref: '#/components/schemas/BriefMinutes'
           - type: 'null'
         proxies:
           items:
@@ -1455,7 +1536,9 @@ paths:
     get:
       description: 'Before a meeting: the caller''s agenda items, their open actions from the previous
 
-        meeting with the latest status, their saved questions, and who sent their agent.'
+        meeting with the latest status, their saved questions, who sent their agent, and what the
+
+        previous meeting''s minutes left open (`previous_minutes`, null without minutes).'
       operationId: meeting_brief
       parameters:
       - in: path

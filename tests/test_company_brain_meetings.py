@@ -351,7 +351,10 @@ def test_drafted_agenda_order_and_contents(client):
     )
     assert again.json() == resp.json()
 
-    assert client.post("/api/v1/meetings/agenda-draft", json={}).json() == {"items": []}
+    assert client.post("/api/v1/meetings/agenda-draft", json={}).json() == {
+        "items": [],
+        "open_questions": [],
+    }
     assert _loc(
         client.post(
             "/api/v1/meetings/agenda-draft", json={"previous_meeting_id": str(uuid.uuid4())}
@@ -377,7 +380,7 @@ def test_drafted_agenda_is_capped_and_skips_a_confidential_meeting_i_was_not_in(
     secret = create(client, confidential=True, agenda=[{"title": "Layoffs"}])
     sign_in(outsider)
     resp = client.post("/api/v1/meetings/agenda-draft", json={"previous_meeting_id": secret["id"]})
-    assert resp.status_code == 200 and resp.json() == {"items": []}
+    assert resp.status_code == 200 and resp.json() == {"items": [], "open_questions": []}
 
 
 # --- B5: send your agent instead -------------------------------------------------------------
@@ -470,6 +473,8 @@ def test_carry_forward_hides_a_confidential_previous_meeting_from_outsiders(clie
         "decisions": [],
         "open_actions": [],
         "saved_questions": [],
+        "open_items": [],
+        "unanswered_questions": [],
     }
 
 
@@ -513,6 +518,8 @@ def test_internal_agenda_carries_brain_fields_and_respects_confidential(client):
     assert body["carry_forward"] == {
         "decisions": ["Ship in Q1"],
         "open_actions": ["Draft the plan (latest status: 80% done)", "Book venue"],
+        "open_items": [],
+        "questions": [],
     }
 
     # A confidential previous meeting: carry-forward only when everyone here was in it.
@@ -525,7 +532,12 @@ def test_internal_agenda_carries_brain_fields_and_respects_confidential(client):
         {"m": m["id"], "u": str(outsider.user_id), "o": str(owner.org_id)},
     )
     body = client.get(f"/internal/meetings/{m['id']}/agenda", headers=_headers(owner.org_id)).json()
-    assert body["carry_forward"] == {"decisions": [], "open_actions": []}
+    assert body["carry_forward"] == {
+        "decisions": [],
+        "open_actions": [],
+        "open_items": [],
+        "questions": [],
+    }
 
 
 def test_related_attendees_never_hop_through_a_confidential_meeting(client):

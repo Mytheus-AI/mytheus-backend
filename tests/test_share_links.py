@@ -166,7 +166,12 @@ def test_confidential_meetings_are_shareable_only_by_the_host(client):
     res = client.post(f"/api/v1/meetings/{m}/share-links")
     assert res.status_code == 403 and res.json()["reason"] == "confidential_host_only"
     sign_in(host)
-    assert client.post(f"/api/v1/meetings/{m}/share-links").status_code == 201
+    # The host must confirm publishing a confidential meeting's recap explicitly.
+    res = client.post(f"/api/v1/meetings/{m}/share-links")
+    assert res.status_code == 409
+    assert res.json()["reason"] == "confidential_confirmation_required"
+    confirmed = {"confirm_confidential": True}
+    assert client.post(f"/api/v1/meetings/{m}/share-links", json=confirmed).status_code == 201
 
 
 def test_revoke_expire_and_forgery(client):

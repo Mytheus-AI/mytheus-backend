@@ -33,6 +33,21 @@ status_source}], carry_forward: {decisions: [str], open_actions: [str]}}`. `item
 action items as plain strings, empty when there is no link. `scheduled_*` are ISO-8601 or null
 (the agent's "70% of the scheduled time" rule).
 
+Minutes for everyone: `carry_forward` also carries `open_items` and `questions` (plain strings)
+from the previous meeting's shared minutes, under the same B2 rule. And:
+
+`GET /internal/meetings/{meeting_id}/minutes-source`: everything the minutes writer needs for an
+ENDED meeting (409 before it ended): `{meeting_id, title, status, confidential, host_user_id,
+scheduled_start, scheduled_end, participants: [{user_id, name, attendance, role_in_meeting}],
+speakers: {speaker_id: user_id}, turns: [{speaker_id, start_ms, end_ms, text}],
+turns_truncated, decisions: [{id, content, status}], actions: [{id, content, assignee_id,
+status, due_date}], agenda: [{title, status}]}`. `turns` are the meeting's finals in spoken order
+(at most 6000; `turns_truncated` says when more exist); `name` is the display name derived from
+the email, never the email; `speakers` maps transcript speaker ids to users where
+`meeting_speakers` has one (a captured call's speakers). Proposed and confirmed decisions and
+actions are both listed with their status, dismissed ones never; `transcript_chunks` absent from
+this database is an empty `turns`.
+
 Service-to-service, the scheme `internal_meetings.py` and `internal_retrieval.py` use:
 `X-Mytheus-Service: agent-runtime-service`, its secret from `MYTHEUS_CORE_CALLER_TOKENS`
 (`agent-runtime-service=<32+ chars>`), the tenant in `X-Mytheus-Org`. Not routed by
@@ -42,7 +57,7 @@ Service-to-service, the scheme `internal_meetings.py` and `internal_retrieval.py
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Security
@@ -52,6 +67,7 @@ from sqlalchemy import text
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
+from services.core_api import minutes, records
 from services.core_api.brain import latest_statuses, may_share_source
 from services.core_api.routes.internal_meetings import authenticate_caller, service_token_scheme
 
@@ -123,6 +139,8 @@ class InternalProxy(BaseModel):
 class InternalCarryForward(BaseModel):
     decisions: list[str] = Field(default_factory=list)
     open_actions: list[str] = Field(default_factory=list)
+    open_items: list[str] = Field(default_factory=list)
+    questions: list[str] = Field(default_factory=list)
 
 
 class InternalAgenda(BaseModel):
@@ -369,6 +387,13 @@ async def meeting_agenda(
                 )
                 for a in actions
             ]
+            shared = await minutes.shared_minutes(session, previous)
+            if shared is not None and shared.status == "ready":
+                carry.open_items = [
+                    o.text + (f" (owner: {o.owner_name})" if o.owner_name else "")
+                    for o in shared.open_items
+                ]
+                carry.questions = [q.text for q in shared.unanswered_questions]
         proxies = await session.execute(
             text(
                 "SELECT user_id, proxy_update, proxy_questions FROM meeting_participants "
@@ -390,3 +415,196 @@ async def meeting_agenda(
             items=[InternalAgendaItem(**dict(r)) for r in items],
             carry_forward=carry,
         )
+
+
+# --- minutes for everyone: the minutes writer's input --------------------------------------
+
+MAX_TURNS = 6000
+
+
+class SourceParticipant(BaseModel):
+    user_id: uuid.UUID
+    name: str | None
+    attendance: str
+    role_in_meeting: str | None
+
+
+class SourceTurn(BaseModel):
+    speaker_id: str
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class SourceDecision(BaseModel):
+    id: uuid.UUID
+    content: str
+    status: str
+
+
+class SourceAction(BaseModel):
+    id: uuid.UUID
+    content: str
+    assignee_id: uuid.UUID | None
+    status: str
+    due_date: date | None
+
+
+class SourceAgendaItem(BaseModel):
+    title: str
+    status: str
+
+
+class MinutesSource(BaseModel):
+    meeting_id: uuid.UUID
+    title: str
+    status: str
+    confidential: bool
+    host_user_id: uuid.UUID | None
+    scheduled_start: datetime | None
+    scheduled_end: datetime | None
+    participants: list[SourceParticipant]
+    speakers: dict[str, uuid.UUID]
+    turns: list[SourceTurn]
+    turns_truncated: bool
+    decisions: list[SourceDecision]
+    actions: list[SourceAction]
+    agenda: list[SourceAgendaItem]
+
+
+@router.get("/internal/meetings/{meeting_id}/minutes-source", response_model=MinutesSource)
+async def minutes_source(
+    meeting_id: uuid.UUID,
+    org_id: Annotated[uuid.UUID, Depends(agent_runtime_caller)],
+) -> MinutesSource:
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        access = await records.access_for(session, meeting_id, uuid.UUID(int=0))
+        if access is None:
+            raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
+        if access.status != "ended":
+            raise ProblemDetail(409, ErrorCode.VERSION_CONFLICT, "The meeting has not ended")
+        m = {"m": str(meeting_id)}
+        when = (
+            (
+                await session.execute(
+                    text("SELECT scheduled_start, scheduled_end FROM meetings WHERE id = :m"), m
+                )
+            )
+            .mappings()
+            .one()
+        )
+        people = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT p.user_id, u.email, p.attendance, p.role_in_meeting "
+                        "FROM meeting_participants p JOIN users u ON u.id = p.user_id "
+                        "AND u.deleted_at IS NULL WHERE p.meeting_id = :m "
+                        "ORDER BY (p.role_in_meeting = 'host') DESC NULLS LAST, u.email, p.user_id"
+                    ),
+                    m,
+                )
+            )
+            .mappings()
+            .all()
+        )
+        speakers = {
+            str(r[0]): r[1]
+            for r in await session.execute(
+                text(
+                    "SELECT speaker_id, user_id FROM meeting_speakers "
+                    "WHERE meeting_id = :m AND user_id IS NOT NULL"
+                ),
+                m,
+            )
+        }
+        turns: list[SourceTurn] = []
+        truncated = False
+        has_table = (
+            await session.execute(
+                text("SELECT to_regclass('public.transcript_chunks') IS NOT NULL")
+            )
+        ).scalar()
+        if has_table:
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT speaker_id, start_ms, end_ms, text FROM transcript_chunks "
+                            "WHERE meeting_id = :m AND is_final = true "
+                            "ORDER BY start_ms, id LIMIT :n"
+                        ),
+                        {**m, "n": MAX_TURNS + 1},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            truncated = len(rows) > MAX_TURNS
+            turns = [SourceTurn(**dict(r)) for r in rows[:MAX_TURNS]]
+        decisions = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, content, status FROM decisions WHERE meeting_id = :m "
+                        "AND deleted_at IS NULL AND status <> 'dismissed' "
+                        "ORDER BY created_at, id LIMIT 200"
+                    ),
+                    m,
+                )
+            )
+            .mappings()
+            .all()
+        )
+        actions = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, content, assignee_id, status, due_date FROM action_items "
+                        "WHERE meeting_id = :m AND deleted_at IS NULL AND status <> 'dismissed' "
+                        "ORDER BY created_at, id LIMIT 200"
+                    ),
+                    m,
+                )
+            )
+            .mappings()
+            .all()
+        )
+        agenda = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT title, status FROM meeting_agenda_items WHERE meeting_id = :m "
+                        "ORDER BY position, id"
+                    ),
+                    m,
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return MinutesSource(
+        meeting_id=meeting_id,
+        title=access.title,
+        status=access.status,
+        confidential=access.confidential,
+        host_user_id=access.host_id,
+        scheduled_start=when["scheduled_start"],
+        scheduled_end=when["scheduled_end"],
+        participants=[
+            SourceParticipant(
+                user_id=p["user_id"],
+                name=records.display_name(p["email"]),
+                attendance=p["attendance"],
+                role_in_meeting=p["role_in_meeting"],
+            )
+            for p in people
+        ],
+        speakers=speakers,
+        turns=turns,
+        turns_truncated=truncated,
+        decisions=[SourceDecision(**dict(d)) for d in decisions],
+        actions=[SourceAction(**dict(a)) for a in actions],
+        agenda=[SourceAgendaItem(**dict(a)) for a in agenda],
+    )

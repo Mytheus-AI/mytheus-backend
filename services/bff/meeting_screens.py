@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.core_api.brain import latest_statuses, may_see_source
+from services.core_api.minutes import personal_minutes, shared_minutes
 from services.core_api.schemas import LatestStatus
 
 router = APIRouter(prefix="/bff", tags=["bff"])
@@ -78,6 +79,30 @@ class PreviousMeeting(BaseModel):
     title: str | None
 
 
+class BriefOpenItem(BaseModel):
+    text: str
+    owner_user_id: uuid.UUID | None = None
+    owner_name: str | None = None
+    due: str | None = None
+    mine: bool = False
+
+
+class BriefPromise(BaseModel):
+    text: str
+    to_name: str | None = None
+    due: str | None = None
+
+
+class BriefMinutes(BaseModel):
+    """What the previous meeting's minutes left open (minutes for everyone): its shared open
+    items (the caller's own first, `mine`) and unanswered questions, and the caller's own
+    promises from their personal minutes of it."""
+
+    open_items: list[BriefOpenItem]
+    unanswered_questions: list[str]
+    my_promises: list[BriefPromise]
+
+
 class MeetingBrief(BaseModel):
     meeting: BriefMeeting
     my_agenda_items: list[BriefAgendaItem]
@@ -85,6 +110,7 @@ class MeetingBrief(BaseModel):
     saved_questions: list[BriefQuestion]
     proxies: list[BriefProxy]
     previous_meeting: PreviousMeeting | None
+    previous_minutes: BriefMinutes | None = None
 
 
 class AgendaCoverage(BaseModel):
@@ -208,6 +234,36 @@ async def _has_transcript(session: AsyncSession) -> bool:
     )
 
 
+async def _previous_minutes(
+    session: AsyncSession, previous_id: uuid.UUID, viewer: uuid.UUID
+) -> BriefMinutes | None:
+    shared = await shared_minutes(session, previous_id)
+    mine = await personal_minutes(session, previous_id, viewer)
+    if (shared is None or shared.status != "ready") and (mine is None or mine.status != "ready"):
+        return None
+    items = shared.open_items if shared is not None else []
+    ordered = sorted(items, key=lambda o: o.owner_user_id != viewer)
+    return BriefMinutes(
+        open_items=[
+            BriefOpenItem(
+                text=o.text,
+                owner_user_id=o.owner_user_id,
+                owner_name=o.owner_name,
+                due=o.due,
+                mine=o.owner_user_id == viewer,
+            )
+            for o in ordered
+        ],
+        unanswered_questions=[
+            q.text for q in (shared.unanswered_questions if shared is not None else [])
+        ],
+        my_promises=[
+            BriefPromise(text=p.text, to_name=p.to_name, due=p.due)
+            for p in (mine.promises if mine is not None else [])
+        ],
+    )
+
+
 # --- routes -----------------------------------------------------------------------------------
 
 
@@ -218,7 +274,8 @@ async def meeting_brief(
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> MeetingBrief:
     """Before a meeting: the caller's agenda items, their open actions from the previous
-    meeting with the latest status, their saved questions, and who sent their agent."""
+    meeting with the latest status, their saved questions, who sent their agent, and what the
+    previous meeting's minutes left open (`previous_minutes`, null without minutes)."""
     m = await _meeting_for_participant(session, ctx, meeting_id)
     me = str(ctx.user_id)
     agenda = await _rows(
@@ -253,6 +310,11 @@ async def meeting_brief(
         {"m": str(meeting_id)},
     )
     return MeetingBrief(
+        previous_minutes=(
+            await _previous_minutes(session, previous.id, ctx.user_id)
+            if previous is not None and ctx.user_id is not None
+            else None
+        ),
         meeting=BriefMeeting(id=m["id"], title=m["title"], scheduled_start=m["scheduled_start"]),
         my_agenda_items=[BriefAgendaItem(**a) for a in agenda],
         my_open_actions=[BriefAction(**a, latest_status=statuses.get(a["id"])) for a in actions],
