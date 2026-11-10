@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,9 +44,20 @@ class Meeting(Base, TenantMixin, TimestampMixin):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
+    # P12 (migration 7c3e9a1f5b20): the Google Calendar event id a calendar-created meeting came
+    # from. The `integration-events` consumer upserts on (org_id, calendar_event_id), so a
+    # redelivered or re-synced event patches the one meeting instead of creating another.
+    calendar_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
+        Index(
+            "uq_meetings_org_id_calendar_event_id",
+            "org_id",
+            "calendar_event_id",
+            unique=True,
+            postgresql_where=text("calendar_event_id IS NOT NULL"),
+        ),
         CheckConstraint(
             "scheduled_end IS NULL OR scheduled_start IS NULL OR scheduled_end > scheduled_start",
             name="schedule_ordered",

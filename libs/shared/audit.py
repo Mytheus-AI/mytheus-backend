@@ -119,3 +119,9 @@ ACTION_A2A_REQUEST_ALLOWED = "a2a.request.allowed"
 ACTION_A2A_REQUEST_DENIED = "a2a.request.denied"
 ACTION_A2A_REQUEST_BLOCKED = "a2a.request.blocked"
 ACTION_CONTEXT_FILL_DISMISSED = "context_fill.dismissed"
+
+# P12: integration-service connection lifecycle, and core-api applying a Jira status change to
+# `action_items.status` (`POST /internal/actions/{id}/external-status`).
+ACTION_INTEGRATION_CONNECTED = "integration.connected"
+ACTION_INTEGRATION_DISCONNECTED = "integration.disconnected"
+ACTION_ACTION_STATUS_SYNCED = "action.status_synced"

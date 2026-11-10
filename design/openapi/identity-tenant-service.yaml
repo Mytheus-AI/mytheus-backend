@@ -187,6 +187,9 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - PROVIDER_NOT_CONFIGURED
+      - PM_ALREADY_CONNECTED
+      - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
     HTTPValidationError:
       properties:
