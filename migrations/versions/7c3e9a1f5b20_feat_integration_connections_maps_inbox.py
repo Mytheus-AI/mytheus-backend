@@ -4,7 +4,9 @@ Plan 10-13 sections 3.10 and 3.11; P12 contract section 1. `oauth_tokens` alread
 (`24e134664d84`); this adds what it was waiting for and extends nothing it defined.
 
 - `integration_connections` (canon `_canon/02-data-model.md` 2.2, plus `created_at`,
-  `updated_at`, `last_synced_at`): one row per (org, provider), `UNIQUE (org_id, provider)`.
+  `updated_at`, `last_synced_at`): one row per (org, provider), `UNIQUE (org_id, provider)`,
+  and one live connection per provider account across tenants (partial unique index
+  `uq_integration_connections_account` on (provider, external_account_id)).
   Provider is the R8 closed enum; status is active | degraded | disconnected. A disconnect
   keeps the row (status `disconnected`) so the settings page can still say who installed it.
 - `oauth_tokens.connection_id` gets the foreign key `24e134664d84` recorded as owed.
@@ -23,8 +25,9 @@ RLS: ENABLE + FORCE + the canonical NULLIF `tenant_isolation` policy on every ne
 explicit `grant_tenant_table` (ADR-0021).
 
 One extra, narrow policy, `webhook_route`, on `integration_connections`: SELECT only, and only
-the single row whose `provider:external_account_id` equals the transaction-local GUC
-`app.integration_route`. An inbound Slack or Jira webhook names its workspace or site, not our
+the single live (not disconnected) row whose `provider:external_account_id` equals the
+transaction-local GUC `app.integration_route` (single because of
+`uq_integration_connections_account`). An inbound Slack or Jira webhook names its workspace or site, not our
 tenant, and must be mapped to an `org_id` before anything tenant-scoped can run. The receiver
 sets the GUC only AFTER the provider signature has verified, reads the one row it names, and
 then sets `app.current_org` as usual. With the GUC unset or empty the policy matches nothing,
@@ -92,14 +95,20 @@ def upgrade() -> None:
         );
         """
     )
+    # One live connection per provider account across ALL tenants: a Slack workspace, a Jira
+    # site or a Google account belongs to one Mytheus tenant at a time. Without this, two
+    # tenants could connect the same workspace and a webhook from it could be routed to either.
+    # It is also what makes the `webhook_route` lookup below exact. A disconnected row does not
+    # hold the account, so it can move to another tenant after a disconnect.
     op.execute(
-        "CREATE INDEX ix_integration_connections_route "
-        "ON integration_connections (provider, external_account_id);"
+        "CREATE UNIQUE INDEX uq_integration_connections_account "
+        "ON integration_connections (provider, external_account_id) "
+        "WHERE status <> 'disconnected' AND external_account_id IS NOT NULL;"
     )
     _tenant_policy("integration_connections")
     op.execute(
         "CREATE POLICY webhook_route ON integration_connections FOR SELECT USING ("
-        "external_account_id IS NOT NULL AND "
+        "external_account_id IS NOT NULL AND status <> 'disconnected' AND "
         "provider || ':' || external_account_id = "
         "NULLIF(current_setting('app.integration_route', true), ''));"
     )

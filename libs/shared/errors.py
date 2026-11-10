@@ -59,6 +59,7 @@ class ErrorCode(StrEnum):
     # integration-service connect (P12 contract section 1).
     PROVIDER_NOT_CONFIGURED = "PROVIDER_NOT_CONFIGURED"  # 409: no app credentials on the server
     PM_ALREADY_CONNECTED = "PM_ALREADY_CONNECTED"  # 409: R8, one project-management tool only
+    ACCOUNT_CONNECTED_ELSEWHERE = "ACCOUNT_CONNECTED_ELSEWHERE"  # 409: account held by a tenant
 
 
 # Fallback mapping for bare HTTPExceptions raised by application code and by FastAPI itself.

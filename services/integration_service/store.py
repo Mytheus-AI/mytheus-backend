@@ -98,26 +98,29 @@ async def route_connection(
 ) -> Connection | None:
     """The webhook-route lookup (migration 7c3e9a1f5b20, policy `webhook_route`): with no tenant
     set yet, read the ONE connection whose `provider:external_account_id` the verified webhook
-    names. The GUC is transaction-local, like `app.current_org`."""
+    names. The GUC is transaction-local, like `app.current_org`. Exact: the partial unique index
+    `uq_integration_connections_account` allows one live row per account, and anything other
+    than exactly one row is treated as no route."""
     await session.execute(
         text("SELECT set_config('app.integration_route', :r, true)"),
         {"r": f"{provider}:{external_account_id}"},
     )
-    row = (
+    rows = (
         (
             await session.execute(
                 text(
                     f"SELECT {_CONN_COLS} FROM integration_connections "
-                    "WHERE provider = :p AND external_account_id = :e AND status <> 'disconnected'"
+                    "WHERE provider = :p AND external_account_id = :e "
+                    "AND status <> 'disconnected' LIMIT 2"
                 ),
                 {"p": provider, "e": external_account_id},
             )
         )
         .mappings()
-        .first()
+        .all()
     )
     await session.execute(text("SELECT set_config('app.integration_route', '', true)"))
-    return _conn(row) if row else None
+    return _conn(rows[0]) if len(rows) == 1 else None
 
 
 async def upsert_connection(
