@@ -6,6 +6,60 @@
 # regeneration and blocks the build until then.
 components:
   schemas:
+    ActionContext:
+      properties:
+        admins:
+          items:
+            format: uuid
+            type: string
+          title: Admins
+          type: array
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        assignee_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assignee Name
+        depends_on:
+          items:
+            $ref: '#/components/schemas/DependsOn'
+          title: Depends On
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        open_action_count:
+          title: Open Action Count
+          type: integer
+        organizer_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Organizer Id
+        participants:
+          items:
+            format: uuid
+            type: string
+          title: Participants
+          type: array
+      required:
+      - assignee_id
+      - assignee_name
+      - meeting_id
+      - organizer_id
+      - open_action_count
+      - depends_on
+      - participants
+      - admins
+      title: ActionContext
+      type: object
     ActionItem:
       description: One `action_items` row. `proposed` until a participant confirms or dismisses it.
       properties:
@@ -439,6 +493,24 @@ components:
       - name
       title: DepartmentCreate
       type: object
+    DependsOn:
+      properties:
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: DependsOn
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -593,6 +665,37 @@ components:
       required:
       - items
       title: MeetingPage
+      type: object
+    MeetingParticipant:
+      properties:
+        name:
+          title: Name
+          type: string
+        rbac_tier:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rbac Tier
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      - rbac_tier
+      title: MeetingParticipant
+      type: object
+    MeetingParticipants:
+      properties:
+        participants:
+          items:
+            $ref: '#/components/schemas/MeetingParticipant'
+          title: Participants
+          type: array
+      required:
+      - participants
+      title: MeetingParticipants
       type: object
     MeetingSpeaker:
       properties:
@@ -3254,6 +3357,84 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/actions/{action_id}/context:
+    get:
+      operationId: action_context
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionContext'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Action Context
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/participants:
+    get:
+      operationId: meeting_participants
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingParticipants'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Meeting Participants
+      tags:
+      - core-internal
   /internal/meetings/{meeting_id}/post-meeting:
     get:
       operationId: post_meeting_digest
