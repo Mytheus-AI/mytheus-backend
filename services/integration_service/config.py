@@ -15,6 +15,22 @@ Environment:
     GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
     SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_SIGNING_SECRET
     JIRA_CLIENT_ID / JIRA_CLIENT_SECRET   (Atlassian OAuth 2.0 3LO)
+    HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET          (Phase 4 CRM sync)
+    NOTION_CLIENT_ID / NOTION_CLIENT_SECRET            (Phase 4 decision exports; a public
+                                                       Notion integration)
+    CONFLUENCE_CLIENT_ID / CONFLUENCE_CLIENT_SECRET    (Phase 4 decision exports; an Atlassian
+                                                       3LO app, may be the Jira app's values
+                                                       when that app also has Confluence scopes)
+
+Phase 4 "reach" providers (HubSpot, Notion, Confluence) sit outside guardrail R8's
+Calendar + Slack + one-PM-tool set: they are not PM tools, so the single-PM rule does not apply
+to them, and they receive no inbound webhooks (`/webhooks/{provider}` stays R8-only). Each is
+"not configured" until its app credentials are set, exactly like the R8 providers (ADR-0037 D3).
+
+Salesforce is deliberately not built. A Salesforce connected app needs a per-org My Domain
+login host, a different note model (ContentNote + ContentDocumentLink, or Task) and an AppExchange
+security review before customers can install it, so even a stub would not be "trivial": HubSpot
+is the one CRM, and a second one is a separate piece of work.
 """
 
 from __future__ import annotations
@@ -29,16 +45,28 @@ GOOGLE_CALENDAR: Final = "google_calendar"
 SLACK: Final = "slack"
 JIRA: Final = "jira"
 LINEAR: Final = "linear"
+HUBSPOT: Final = "hubspot"
+NOTION: Final = "notion"
+CONFLUENCE: Final = "confluence"
 
 # R8: Calendar + Slack + exactly one PM tool. Linear is in the closed enum (canon) but is not
 # built, so it is not offered and cannot be connected.
 R8_PROVIDERS: Final = (GOOGLE_CALENDAR, SLACK, JIRA)
 PM_PROVIDERS: Final = frozenset({JIRA, LINEAR})
+# Phase 4 reach: the CRM and the two document tools a decision record can be exported to.
+REACH_PROVIDERS: Final = (HUBSPOT, NOTION, CONFLUENCE)
+# Everything the settings API lists and lets an admin connect.
+CONNECTABLE_PROVIDERS: Final = (*R8_PROVIDERS, *REACH_PROVIDERS)
+# Where a decision record can be exported (Slack is the existing R8 connector).
+EXPORT_PROVIDERS: Final = (NOTION, CONFLUENCE, SLACK)
 
 _CREDENTIAL_ENV = {
     GOOGLE_CALENDAR: ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"),
     SLACK: ("SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"),
     JIRA: ("JIRA_CLIENT_ID", "JIRA_CLIENT_SECRET"),
+    HUBSPOT: ("HUBSPOT_CLIENT_ID", "HUBSPOT_CLIENT_SECRET"),
+    NOTION: ("NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET"),
+    CONFLUENCE: ("CONFLUENCE_CLIENT_ID", "CONFLUENCE_CLIENT_SECRET"),
 }
 
 MIN_STATE_SECRET = 32
