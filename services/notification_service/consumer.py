@@ -29,7 +29,10 @@ Per message, in one transaction:
    - email: the SMTP adapter (`email.py`), opt-in per user (off by default). Unconfigured ->
      skipped (`smtp_not_configured`) in the same transaction. Configured -> queued as a
      `PendingEmail` and sent only AFTER the transaction commits (see below).
-   - slack: integration-service's Slack send arrives in P12 -> skipped (`slack_not_connected`).
+   - slack (P12): with a Slack sender configured (`slack.py`), queued as a `PendingSlack` and
+     sent after commit like email: the bot token is fetched from integration-service per send,
+     then users.lookupByEmail -> conversations.open -> chat.postMessage. Not connected ->
+     `skipped:slack_not_connected`. No sender configured -> skipped in the transaction, as in P11.
 
 Receipt status. `NotificationDeliveryStatus` in mytheus-events is `sent | failed | bounced`
 and P11 may not change a schema, so a skipped attempt is recorded as `status: failed` with
@@ -76,6 +79,7 @@ from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 from services.notification_service.email import EmailSender, email_sender_from_env, render_body
 from services.notification_service.prefs import CHANNELS, Channel, load_prefs
+from services.notification_service.slack import SlackSender, slack_sender_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +130,22 @@ class PendingEmail:
     to: str
     subject: str
     body: str
+    correlation_id: str | None
+    causation_id: str | None
+
+
+@dataclass(frozen=True)
+class PendingSlack:
+    """A Slack DM whose channel claim is in the transaction; sent by `send_pending` after commit.
+    Carries no token: `send_pending` asks integration-service for one per send."""
+
+    org_id: uuid.UUID
+    notification_id: uuid.UUID
+    key: str
+    to_email: str
+    title: str
+    body: str
+    link: str | None
     correlation_id: str | None
     causation_id: str | None
 
@@ -227,15 +247,17 @@ async def handle_message(
     value: dict[str, Any],
     *,
     email: EmailSender | None = None,
-    pending: list[PendingEmail] | None = None,
+    pending: list[PendingEmail | PendingSlack] | None = None,
+    slack: SlackSender | None = None,
 ) -> bool:
     """Apply one decoded message. True if a `notification_log` row was newly written.
 
-    With an `email` sender, an allowed email channel is appended to `pending` (required then)
-    instead of being sent; the caller passes `pending` to `send_pending` after the commit.
+    With an `email` (or `slack`) sender, an allowed email (or slack) channel is appended to
+    `pending` (required then) instead of being sent; the caller passes `pending` to
+    `send_pending` after the commit.
     """
-    if email is not None and pending is None:
-        raise ValueError("an email sender needs a pending list: emails are sent after commit")
+    if (email is not None or slack is not None) and pending is None:
+        raise ValueError("a sender needs a pending list: external sends happen after commit")
     if topic == AGENT_RESULTS:
         note = parse_alert(value)
         if note is None:
@@ -263,6 +285,7 @@ async def handle_message(
             note,
             pending if email is not None else None,
             claimed_keys,
+            pending if slack is not None else None,
         )
     except BaseException:
         # The transaction rolls back: release every dedupe key so the redelivery applies.
@@ -295,8 +318,9 @@ async def _apply(
     idempotency_key: str,
     header: dict[str, Any],
     note: _Notification,
-    pending: list[PendingEmail] | None,
+    pending: list[PendingEmail | PendingSlack] | None,
     claimed_keys: list[str],
+    pending_slack: list[PendingEmail | PendingSlack] | None = None,
 ) -> bool:
     await set_rls(session, org_id)
     if not await _claim_inbox(session, org_id, idempotency_key):
@@ -367,6 +391,21 @@ async def _apply(
                 )
             )
             continue
+        if channel == "slack" and pending_slack is not None:
+            pending_slack.append(
+                PendingSlack(
+                    org_id=org_id,
+                    notification_id=note.id,
+                    key=key,
+                    to_email=user_email,
+                    title=note.title,
+                    body=note.body,
+                    link=note.link,
+                    correlation_id=header.get("correlation_id"),
+                    causation_id=header.get("event_id"),
+                )
+            )
+            continue
         status, detail = _immediate(channel)
         await _receipt(
             session,
@@ -422,19 +461,41 @@ async def _receipt(
 
 
 async def send_pending(
-    session_factory: Callable[[], Any], pending: list[PendingEmail], email: EmailSender
+    session_factory: Callable[[], Any],
+    pending: list[PendingEmail | PendingSlack],
+    email: EmailSender | None,
+    slack: SlackSender | None = None,
 ) -> None:
-    """Send emails whose claims have committed, then record each receipt in its own short
-    transaction. A mail server problem is a `failed` receipt, never an exception."""
+    """Send emails and Slack DMs whose claims have committed, then record each receipt in its
+    own short transaction. A mail server or Slack problem is a `failed` receipt, never an
+    exception."""
     for item in pending:
+        channel = "slack" if isinstance(item, PendingSlack) else "email"
         try:
-            await email.send(to=item.to, subject=item.subject, body=item.body)
-            status, detail = "sent", None
+            if isinstance(item, PendingSlack):
+                if slack is None:
+                    raise RuntimeError("no Slack sender")
+                status, detail = await slack.send(
+                    org_id=item.org_id,
+                    email=item.to_email,
+                    title=item.title,
+                    body=item.body,
+                    link=item.link,
+                )
+            else:
+                if email is None:
+                    raise RuntimeError("no email sender")
+                await email.send(to=item.to, subject=item.subject, body=item.body)
+                status, detail = "sent", None
         except Exception as exc:
             logger.warning(
-                "email delivery failed for notification %s: %s", item.notification_id, exc
+                "%s delivery failed for notification %s: %s",
+                channel,
+                item.notification_id,
+                type(exc).__name__,
             )
-            status, detail = "failed", f"smtp_error:{type(exc).__name__}"
+            prefix = "slack_error" if channel == "slack" else "smtp_error"
+            status, detail = "failed", f"{prefix}:{type(exc).__name__}"
         async with session_factory() as session, session.begin():
             await set_rls(session, item.org_id)
             await _receipt(
@@ -442,7 +503,7 @@ async def send_pending(
                 item.org_id,
                 item.notification_id,
                 item.key,
-                "email",
+                channel,
                 status,
                 detail,
                 item.correlation_id,
@@ -466,6 +527,7 @@ async def consume_one(
     redis: Redis[bytes],
     dlq_producer: Any,
     email: EmailSender | None,
+    slack: SlackSender | None = None,
 ) -> str:
     """Decode and apply one record in its own transaction; route poison to `{topic}.dlq`.
 
@@ -475,12 +537,12 @@ async def consume_one(
     """
     raw_value = msg.value()
     topic_name = msg.topic() or NOTIFICATIONS
-    pending: list[PendingEmail] = []
+    pending: list[PendingEmail | PendingSlack] = []
     try:
         value = decode_value(raw_value, topic_name)
         async with session_factory() as session, session.begin():
             applied = await handle_message(
-                session, redis, topic_name, value, email=email, pending=pending
+                session, redis, topic_name, value, email=email, pending=pending, slack=slack
             )
     except PoisonMessage as exc:
         logger.error("%s: poison message routed to DLQ: %s", topic_name, exc)
@@ -495,8 +557,8 @@ async def consume_one(
         record_dlq(CONSUMER_GROUP, topic_name, "POISON")
         record_processed(CONSUMER_GROUP, topic_name, "dlq")
         return "dlq"
-    if email is not None and pending:
-        await send_pending(session_factory, pending, email)  # only after the commit above
+    if pending:
+        await send_pending(session_factory, pending, email, slack)  # only after the commit
     outcome = "applied" if applied else "duplicate"
     record_processed(CONSUMER_GROUP, topic_name, outcome)
     return outcome
@@ -522,6 +584,9 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     email = email_sender_from_env()
     if email is None:
         logger.info("SMTP_URL/SMTP_FROM unset: email attempts are recorded as skipped")
+    slack = slack_sender_from_env()
+    if slack is None:
+        logger.info("no integration-service caller secret: Slack attempts are recorded as skipped")
 
     consumer = Consumer(
         {
@@ -558,6 +623,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
                 redis=redis,
                 dlq_producer=dlq_producer,
                 email=email,
+                slack=slack,
             )
             consumer.commit(message=msg)
     finally:
