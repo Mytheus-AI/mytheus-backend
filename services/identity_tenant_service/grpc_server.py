@@ -1,4 +1,5 @@
-"""gRPC server for identity-tenant-service: GetUserContext and the A2A PDP `Authorize`.
+"""gRPC server for identity-tenant-service: GetUserContext, the A2A PDP `Authorize`, and
+GetOrgContext (ADR-0039 A9, the company brain; see `brain/context.py`).
 
 org_id is read from gRPC metadata ("org-id"), NOT the message body. Missing metadata fails
 closed (UNAUTHENTICATED). The handler sets app.current_org (so RLS applies), calls the shared,
@@ -27,6 +28,7 @@ import identity_pb2
 import identity_pb2_grpc
 from libs.shared.tenancy import set_rls
 from services.identity_tenant_service.a2a.pdp import authorize
+from services.identity_tenant_service.brain.context import get_org_context
 from services.identity_tenant_service.context.service import cache_expires_at_ms, get_user_context
 
 # rbac_grants is RLS-policied like every other tenant table, so this cannot reach across
@@ -147,6 +149,41 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
             agent_name=ctx.get("agent_name") or "",
             agent_personality=ctx.get("agent_personality") or "balanced",
             agent_instructions=ctx.get("agent_instructions") or "",
+        )
+
+    async def GetOrgContext(self, request: Any, context: Any) -> Any:
+        """The company brain for services (ADR-0039 A9). `org_id` from "org-id" metadata.
+
+        Fails closed like `GetUserContext`: missing or malformed metadata is UNAUTHENTICATED,
+        a database failure is UNAVAILABLE and never an empty context (an empty context would
+        read as "this org has no ground rules", which a caller would act on). An org with no
+        brain data, including an id no tenant has, is an OK response with every field empty:
+        RLS makes the two indistinguishable, and the ADR's rule is that no data behaves as before.
+        """
+        raw_org_id = dict(context.invocation_metadata()).get("org-id")
+        if not raw_org_id:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "missing org-id metadata")
+        try:
+            org_id = UUID(raw_org_id)
+        except ValueError:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "malformed org-id metadata")
+        try:
+            async with self._session_factory() as session, session.begin():
+                await set_rls(session, org_id)
+                ctx = await get_org_context(session, org_id)
+        except (SQLAlchemyError, OSError) as exc:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"identity store unavailable: {exc}")
+            raise AssertionError("unreachable: context.abort() raises") from exc
+        return identity_pb2.OrgContext(
+            description=ctx["description"],
+            industry=ctx["industry"],
+            products=ctx["products"],
+            customers=ctx["customers"],
+            glossary=[identity_pb2.GlossaryTerm(**g) for g in ctx["glossary"]],
+            topic_owners=[identity_pb2.TopicOwner(**t) for t in ctx["topic_owners"]],
+            goals=[identity_pb2.Goal(**g) for g in ctx["goals"]],
+            never_record_topics=ctx["never_record_topics"],
+            topic_watches=[identity_pb2.TopicWatch(**w) for w in ctx["topic_watches"]],
         )
 
     async def Authorize(self, request: Any, context: Any) -> Any:

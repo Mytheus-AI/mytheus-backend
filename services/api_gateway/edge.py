@@ -230,6 +230,9 @@ ROUTE_MAP: dict[str, str] = {
     "/api/v1/context-fills": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
+    # The company brain (ADR-0039 Part A), identity's too.
+    "/api/v1/org": "identity-tenant-service",
+    "/api/v1/users": "identity-tenant-service",
     # meeting-service was missing from this map entirely, so `/api/meetings/:id/token` - the
     # only route that mints a LiveKit room token - resolved to no service and the whole
     # meeting transport was unreachable through the gateway. Note the deliberate near-collision
