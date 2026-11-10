@@ -64,6 +64,13 @@ components:
             type: string
           - type: 'null'
           title: Decision Id
+        document_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The company-brain document a `document` passage came from.
+          title: Document Id
         kind:
           description: transcript | document | decision | action
           title: Kind
@@ -94,6 +101,12 @@ components:
           - type: string
           - type: 'null'
           title: Speaker
+        start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Where a `transcript` passage starts, in ms from the meeting's start.
+          title: Start Ms
         text:
           title: Text
           type: string

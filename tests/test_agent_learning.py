@@ -412,6 +412,13 @@ async def test_a_persons_calibration_moves_only_their_suggestions(client):
     assert [
         s["question"] for s in client.get(f"/api/v1/suggestions?meeting_id={m}").json()["open"]
     ] == ["Bob at 0.72"]
+    # The memory page says it in plain words: every one of the 12 was dismissed.
+    sign_in(t)
+    mem = {c["agent"]: c for c in client.get("/api/v1/me/memory").json()["calibration"]}
+    assert mem["QuestionAgent"]["samples"] == 12
+    assert mem["QuestionAgent"]["dismissed"] == 12
+    assert mem["QuestionAgent"]["personal"] is True
+    assert mem["PersonalListenerAgent"]["dismissed"] == 0
 
 
 async def test_old_feedback_decays_and_falls_out_of_the_window(client):

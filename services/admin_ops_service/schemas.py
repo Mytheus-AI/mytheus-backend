@@ -83,8 +83,25 @@ class ErasureCreate(BaseModel):
     )
 
 
+ErasureStoreName = Literal[
+    "core_api", "transcript_chunks", "vectors", "search_index", "knowledge_graph"
+]
+
+
+class ErasureStore(BaseModel):
+    """One store's share of an erasure. `core_api` finishes inside the request; the other four
+    report back on `admin-events` `erasure_completed` (one `data_erasure.store_completed` audit
+    row each), so they are `pending` until their service has run."""
+
+    store: ErasureStoreName
+    status: Literal["pending", "completed"]
+    completed_at: datetime | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
 class Erasure(BaseModel):
-    """One completed erasure, as recorded in `audit_logs` (`data_erasure.completed`)."""
+    """One erasure, as recorded in `audit_logs` (`data_erasure.completed` is the request; each
+    store's finish is a `data_erasure.store_completed` row)."""
 
     id: uuid.UUID
     kind: ErasureKind
@@ -93,7 +110,17 @@ class Erasure(BaseModel):
         default=None,
         description="The person's email or the meeting's title; null when no longer readable.",
     )
-    status: Literal["completed"] = "completed"
+    status: Literal["in_progress", "completed"] = Field(
+        default="completed",
+        description="`completed` once every store in `stores` has finished.",
+    )
+    stores: list[ErasureStore] = Field(
+        default_factory=list,
+        description=(
+            "Per-store progress: `core_api` (finished with the request), then "
+            "`transcript_chunks`, `vectors`, `search_index` and `knowledge_graph`."
+        ),
+    )
     requested_by: uuid.UUID | None = None
     requested_at: datetime
     erased: dict[str, int] = Field(default_factory=dict)

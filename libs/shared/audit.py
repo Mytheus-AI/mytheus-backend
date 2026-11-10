@@ -161,3 +161,12 @@ ACTION_STAND_IN_ASKED = "stand_in.asked"
 # leg has run (`POST /admin/tenant/erasures`), and that row is what the console lists.
 ACTION_DATA_ERASURE_APPLIED = "data_erasure.applied"
 ACTION_DATA_ERASURE_COMPLETED = "data_erasure.completed"
+# Wave 3: one store outside core-api finished its share (admin-events `erasure_completed`,
+# recorded by admin-ops-service's `admin-ops-service.erasure-status` consumer). `target_id` is
+# the erasure's id, so the console lists a per-store checklist under each request.
+ACTION_DATA_ERASURE_STORE_COMPLETED = "data_erasure.store_completed"
+# Wave 3: an assignee (or the person who confirmed it, or an admin) reopening a done task.
+ACTION_ACTION_REOPENED = "action.reopened"
+# Wave 3: someone starting a phone recording of an in-person meeting, after confirming that
+# everyone in the room knows (core-api `POST /api/v1/capture/sessions`).
+ACTION_CAPTURE_STARTED = "capture.started"

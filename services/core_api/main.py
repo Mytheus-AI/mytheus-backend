@@ -13,6 +13,7 @@ from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     action_create,
     candidates,
+    capture,
     chat,
     collaborations,
     commitments,
@@ -85,6 +86,8 @@ app.include_router(erasure.router)  # admin-only; reached through admin-ops-serv
 # Minutes for everyone: GET /api/v1/meetings/{id}/minutes (the internal minutes source the
 # agent runtime reads is in internal_agents).
 app.include_router(minutes.router)
+# Wave 3: the phone's in-person recording (`/api/v1/capture/*`).
+app.include_router(capture.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

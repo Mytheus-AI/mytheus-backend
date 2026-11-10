@@ -74,6 +74,13 @@ class MemoryCalibration(BaseModel):
     surface: float = Field(description="Confidence above which this agent shows you something")
     personal: bool = Field(description="True when tuned from your own feedback")
     samples: int = Field(description="Your items with feedback in the window")
+    dismissed: int = Field(
+        default=0,
+        description=(
+            "Of `samples`, about how many you dismissed (the recency-weighted dismiss share "
+            'times `samples`), for a plain-language "you dismissed 4 of the last 10"'
+        ),
+    )
 
 
 class PersonMemory(BaseModel):
@@ -114,11 +121,14 @@ def _me(ctx: RequestContext) -> uuid.UUID:
 
 
 async def _calibration(session: AsyncSession, user_id: uuid.UUID) -> list[MemoryCalibration]:
-    samples = {
-        str(r[0]): int(r[1])
+    rows = {
+        str(r[0]): (int(r[1]), float(r[2] or 0.0), float(r[3] or 0.0))
         for r in (
             await session.execute(
-                text("SELECT agent, samples FROM agent_calibration WHERE user_id = :u"),
+                text(
+                    "SELECT agent, samples, positives, negatives FROM agent_calibration "
+                    "WHERE user_id = :u"
+                ),
                 {"u": str(user_id)},
             )
         ).all()
@@ -126,10 +136,16 @@ async def _calibration(session: AsyncSession, user_id: uuid.UUID) -> list[Memory
     out = []
     for agent in sorted(USER_SCOPED_AGENTS):
         surface, _ = await band_for(session, agent, user_id)
-        n = samples.get(agent, 0)
+        n, positives, negatives = rows.get(agent, (0, 0.0, 0.0))
+        weight = positives + negatives
+        dismissed = round(n * negatives / weight) if weight > 0 else 0
         out.append(
             MemoryCalibration(
-                agent=agent, surface=surface, personal=n >= MIN_SAMPLES_USER, samples=n
+                agent=agent,
+                surface=surface,
+                personal=n >= MIN_SAMPLES_USER,
+                samples=n,
+                dismissed=max(0, min(n, dismissed)),
             )
         )
     return out

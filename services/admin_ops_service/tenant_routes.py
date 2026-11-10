@@ -29,11 +29,17 @@ token), in order:
 3. here, in one transaction: an `audit_logs` row `data_erasure.completed` (counts, never the
    erased content and never the person's email) and an `admin-events` `erasure_requested`
    outbox row with `target_type` `person` or `meeting` (never a tenant), so the stores this repo
-   does not own (vectors, the graph, `transcript_chunks`, agent memory) can purge their share.
+   does not own (`transcript_chunks`, vectors, the search index, the graph) can purge their share.
+
+Status per store (wave 3). The request row records `status: in_progress` and the stores it waits
+for (`erasure_status.EXPECTED_STORES`); `core_api` is done with the request. Each other store
+answers on `admin-events` `erasure_completed`, which `erasure_consumer.py` records as one
+`data_erasure.store_completed` row; `GET` derives each request's `status` and `stores` from
+those rows (`erasure_status.py`).
 
 Every leg is idempotent, so a failure part-way (a 503 from an upstream) is fixed by asking
 again: what was already erased matches nothing the second time and nothing is recorded as
-completed until every leg has run. `GET /admin/tenant/erasures` lists the completed requests.
+recorded until every leg here has run. `GET /admin/tenant/erasures` lists the requests.
 """
 
 from __future__ import annotations
@@ -60,6 +66,11 @@ from services.admin_ops_service.common import (
     forward_to_core,
     forward_to_identity,
     staff_user_ids,
+)
+from services.admin_ops_service.erasure_status import (
+    build_status,
+    load_store_completions,
+    request_metadata_stores,
 )
 from services.admin_ops_service.schemas import (
     DataExport,
@@ -387,7 +398,8 @@ async def create_erasure(
     requested_at = datetime.now(UTC)
     metadata: dict[str, Any] = {
         "kind": body.kind,
-        "status": "completed",
+        "status": "in_progress",
+        "expected_stores": request_metadata_stores(),
         "target_id": str(body.target_id),
         "erased": applied.get("erased", {}),
         "anonymized": applied.get("anonymized", {}),
@@ -419,11 +431,14 @@ async def create_erasure(
             target_id=str(body.target_id),
             detail={"erasure_id": str(erasure_id), "scope": body.kind},
         )
+    state, stores = build_status(metadata, requested_at, {})
     return Erasure(
         id=erasure_id,
         kind=body.kind,
         target_id=body.target_id,
         label=applied.get("label"),
+        status=state,  # type: ignore[arg-type]
+        stores=stores,
         requested_by=ctx.user_id,
         requested_at=requested_at,
         erased=metadata["erased"],
@@ -438,8 +453,8 @@ async def list_erasures(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> ErasureList:
-    """authz: admin. Completed erasures, newest first. A person's label is their email read now
-    from `users` (RLS-scoped); null when they are gone."""
+    """authz: admin. Erasures, newest first, each with its per-store progress. A person's label
+    is their email read now from `users` (RLS-scoped); null when they are gone."""
     rows = (
         await session.execute(
             text(
@@ -451,18 +466,22 @@ async def list_erasures(
             {"a": ACTION_DATA_ERASURE_COMPLETED},
         )
     ).all()
+    completions = await load_store_completions(session, [str(r[0]) for r in rows])
     items = []
     for target_id, actor_id, occurred_at, metadata, email in rows:
         meta = metadata if isinstance(metadata, dict) else json.loads(metadata or "{}")
         kind = meta.get("kind")
         if kind not in ("person", "meeting"):
             continue
+        state, stores = build_status(meta, occurred_at, completions.get(str(target_id), {}))
         items.append(
             Erasure(
                 id=uuid.UUID(str(target_id)),
                 kind=kind,
                 target_id=uuid.UUID(str(meta.get("target_id"))),
                 label=email if kind == "person" else meta.get("label"),
+                status=state,  # type: ignore[arg-type]
+                stores=stores,
                 requested_by=actor_id,
                 requested_at=occurred_at,
                 erased=meta.get("erased") or {},
