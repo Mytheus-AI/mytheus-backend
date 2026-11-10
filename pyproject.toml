@@ -57,6 +57,7 @@ dev = [
     # 83.0.0; the first pip-audit run flagged it. A floor here keeps the finding fixed
     # instead of allowlisted, which is the difference between a scanner and a formality.
     "setuptools>=83.0.0",
+    "mcp>=1.9",
 ]
 
 [build-system]

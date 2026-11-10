@@ -28,6 +28,7 @@ from services.core_api.routes import (
     meetings,
     my_tasks,
     org_hierarchy,
+    public_api,
     share_links,
     speakers,
     status_requests,
@@ -59,6 +60,7 @@ app.include_router(status_requests.router)
 # Phase 4 reach: tasks created directly, share links (and their public read), the meeting
 # follow-up, and the internal reads integration-service builds CRM notes and exports from.
 app.include_router(action_create.router)
+app.include_router(public_api.router)
 app.include_router(share_links.router)
 app.include_router(share_links.public_router)
 app.include_router(followups.router)

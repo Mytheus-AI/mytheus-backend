@@ -379,6 +379,10 @@ ROUTE_MAP: dict[str, str] = {
     "/api/v1/public": "core-api",
     # Revoking a share link (creating and listing them is under meetings / decisions).
     "/api/v1/share-links": "core-api",
+    # The public API's search (core-api) and ask (bff, which calls rag-service as itself:
+    # rag-service verifies Clerk sessions only, so an API token reaches it through here).
+    "/api/v1/search": "core-api",
+    "/api/v1/ask": "bff",
     # The MCP server (Streamable HTTP, JSON-RPC over POST). A route group in bff: it is a
     # client-shaped aggregation over the same public API, like bff's screens.
     "/mcp": "bff",

@@ -218,13 +218,20 @@ async def _actions(session: AsyncSession, meeting_id: uuid.UUID) -> list[RecordA
     ]
 
 
+def _allowed(access: MeetingAccess | None, viewer: uuid.UUID, for_sharing: bool) -> bool:
+    if access is None:
+        return False
+    return access.shareable_by(viewer) if for_sharing else access.is_participant
+
+
 async def build_recap(
-    session: AsyncSession, meeting_id: uuid.UUID, viewer: uuid.UUID
+    session: AsyncSession, meeting_id: uuid.UUID, viewer: uuid.UUID, *, for_sharing: bool = True
 ) -> MeetingRecap | None:
-    """The recap `viewer` may share, or None when they may not (not a participant, a
-    confidential meeting they do not host, or a meeting this tenant cannot see)."""
+    """The recap `viewer` may share (or, with `for_sharing=False`, read themselves), or None
+    when they may not: not a participant, a meeting this tenant cannot see, or, for sharing, a
+    confidential meeting they do not host."""
     access = await access_for(session, meeting_id, viewer)
-    if access is None or not access.shareable_by(viewer):
+    if access is None or not _allowed(access, viewer, for_sharing):
         return None
     m = {"m": str(meeting_id), "n": MAX_ITEMS}
     meeting = (
@@ -342,7 +349,7 @@ _LINEAGE_SQL = text("""
 
 
 async def build_decision_record(
-    session: AsyncSession, decision_id: uuid.UUID, viewer: uuid.UUID
+    session: AsyncSession, decision_id: uuid.UUID, viewer: uuid.UUID, *, for_sharing: bool = True
 ) -> DecisionRecord | None:
     """The decision record `viewer` may share, or None (not confirmed, invisible to them, or
     from a confidential meeting they do not host)."""
@@ -366,7 +373,7 @@ async def build_decision_record(
     if row is None:
         return None
     access = await access_for(session, row["meeting_id"], viewer)
-    if access is None or not access.shareable_by(viewer):
+    if access is None or not _allowed(access, viewer, for_sharing):
         return None
     chain = (
         (

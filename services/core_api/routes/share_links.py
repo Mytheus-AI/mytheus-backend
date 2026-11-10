@@ -406,8 +406,8 @@ def _gone(reason: Literal["expired", "revoked"]) -> ProblemDetail:
     )
 
 
-# authz: public - the HMAC-signed, expiring, revocable token in the path is the credential.
 @public_router.get(
+    # authz: public - the HMAC-signed, expiring, revocable token in the path is the credential.
     "/shares/{token}",
     response_model=PublicShare,
     summary="Read a shared recap or decision record",

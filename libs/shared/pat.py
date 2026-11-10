@@ -16,11 +16,12 @@ down.
 What a token may reach, in addition to its owner's own permissions:
 
 - Only the public API surface (`PUBLIC_API_PREFIXES`): meetings, decisions, actions, promises,
-  ask-across-meetings and the MCP endpoint. Token management, admin consoles, billing, RBAC,
-  integrations and the screen-shaped `/bff` reads all refuse a token (403
+  search, ask-across-meetings (`/api/v1/ask`; rag-service's own `/api/rag/query` verifies Clerk
+  sessions only, so tokens ask through bff) and the MCP endpoint. Token management, admin
+  consoles, billing, RBAC, integrations and the screen-shaped `/bff` reads all refuse a token (403
   `FORBIDDEN_ROLE`). In particular a token can never mint or revoke tokens, so a leaked token
   cannot entrench itself.
-- `read` tokens only GET / HEAD, plus the two POSTs that only read (`/api/rag/query`, and
+- `read` tokens only GET / HEAD, plus the two POSTs that only read (`/api/v1/ask`, and
   `/mcp`, whose write tool checks the scope itself). `read_write` tokens may also write.
 
 Every check fails closed with one undifferentiated 401 for any bad token (unknown, revoked,
@@ -63,12 +64,13 @@ PUBLIC_API_PREFIXES: tuple[str, ...] = (
     "/api/v1/decisions",
     "/api/v1/actions",
     "/api/v1/commitments",
-    "/api/rag",
+    "/api/v1/search",
+    "/api/v1/ask",
     "/mcp",
 )
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # POSTs that only read. `/mcp` is JSON-RPC over POST; its one write tool checks the scope.
-_READ_ONLY_POSTS = frozenset({"/api/rag/query", "/mcp"})
+_READ_ONLY_POSTS = frozenset({"/api/v1/ask", "/mcp"})
 
 
 @dataclass(frozen=True)
