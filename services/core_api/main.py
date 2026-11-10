@@ -14,16 +14,19 @@ from services.core_api.routes import (
     candidates,
     chat,
     collaborations,
+    commitments,
     decision_log,
     internal_agents,
     internal_integrations,
     internal_lifecycle,
     internal_meetings,
     internal_retrieval,
+    meeting_templates,
     meetings,
     my_tasks,
     org_hierarchy,
     speakers,
+    status_requests,
     suggestions,
     transcript,
     worklogs,
@@ -46,6 +49,9 @@ app.include_router(collaborations.router)
 app.include_router(internal_agents.router)
 app.include_router(internal_lifecycle.router)
 app.include_router(internal_integrations.router)
+app.include_router(meeting_templates.router)
+app.include_router(commitments.router)
+app.include_router(status_requests.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
@@ -54,3 +60,6 @@ app.include_router(internal_integrations.router)
 # (ContextGapAgent, P10) are in collaborations; the internal related-attendees read
 # (agent-runtime-service) is in internal_agents; the post-meeting digest (workflow-service) is in
 # internal_lifecycle.
+# ADR-0039 Part B: meeting types (meeting_templates), promises (commitments), status requests
+# (status_requests; the workflow-service side is in internal_lifecycle); the drafted agenda and
+# attendance are in meetings.

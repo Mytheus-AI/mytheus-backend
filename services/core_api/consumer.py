@@ -128,6 +128,12 @@ _AGENT_AGENDA_STATUSES = frozenset({"in_progress", "covered"})
 MAX_AGENDA_NOTE_CHARS = 300
 MAX_AGENDA_UPDATES = 20
 
+# ADR-0039 B6/C3: PersonalListenerAgent records carry `payload_json.commitments`
+# (`[{content, due_hint}]`, at most 5): promises the participant made, private to `user_id`.
+MAX_COMMITMENTS_PER_RECORD = 5
+MAX_COMMITMENT_CHARS = 500
+MAX_DUE_HINT_CHARS = 100
+
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
     ("DecisionAgent", "decision_candidate"): "decisions",
@@ -332,7 +338,14 @@ async def _apply_agent_result(
         )
     confidence = float(value.get("confidence") or 0.0)
     content = str(value.get("content") or "").strip()
-    written = False
+    written = await _persist_commitments(
+        session,
+        org_id,
+        meeting_id,
+        user_id,
+        str(value.get("window_id") or ""),
+        value.get("payload_json"),
+    )
     if content and confidence >= silent:
         await session.execute(
             text(
@@ -438,8 +451,13 @@ async def _persist_candidates(
             )
         else:
             # A foreign key resolves another tenant's user with RLS bypassed (gap 31): an
-            # assignee this tenant cannot see is dropped, never stored.
-            assignee = _optional_uuid(cand.get("assignee_id"))
+            # assignee this tenant cannot see is dropped, never stored. ADR-0039 C4: the
+            # ActionAgent's `suggested_owner_user_id` (from the org's topic owners) is stored as
+            # the candidate's assignee when the agent named none. A proposed action's assignee
+            # IS the model's assignee suggestion: the confirming person can change it.
+            assignee = _optional_uuid(cand.get("assignee_id")) or _optional_uuid(
+                cand.get("suggested_owner_user_id")
+            )
             if assignee is not None and not await is_visible(session, "users", assignee):
                 assignee = None
             params["a"] = str(assignee) if assignee else None
@@ -451,6 +469,60 @@ async def _persist_candidates(
             )
         if (await session.execute(text(sql), params)).first() is not None:
             written = True
+    return written
+
+
+async def _persist_commitments(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    user_id: uuid.UUID,
+    window_id: str,
+    payload_json: Any,
+) -> bool:
+    """ADR-0039 B6: each `payload_json.commitments` entry of a PersonalListenerAgent record
+    becomes an `open` `commitments` row for the record's `user_id` (the only person who ever
+    sees it). True if any row is new.
+
+    Tolerant on purpose: notes predate commitments, so a payload that is absent, not JSON, or
+    has no `commitments` list writes nothing and never poisons the note. A bad entry is skipped,
+    the rest applied, at most `MAX_COMMITMENTS_PER_RECORD`. Not gated on the note's confidence:
+    a promise is captured as said. Idempotent under redelivery twice over: the caller's inbox
+    claim, and the unique index on `(meeting_id, user_id, source_window_id, md5(content))`
+    (`ON CONFLICT DO NOTHING`) for a replay whose inbox row is gone.
+    """
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError:
+        return False
+    entries = payload.get("commitments") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return False
+    written = False
+    for entry in entries[:MAX_COMMITMENTS_PER_RECORD]:
+        if not isinstance(entry, dict):
+            continue
+        content = _bounded_text(entry.get("content"), MAX_COMMITMENT_CHARS)
+        if content is None:
+            continue
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO commitments (org_id, user_id, meeting_id, content, due_hint, "
+                    "source_window_id) VALUES (:o, :u, :m, :c, :d, :w) "
+                    "ON CONFLICT DO NOTHING RETURNING 1"
+                ),
+                {
+                    "o": str(org_id),
+                    "u": str(user_id),
+                    "m": str(meeting_id),
+                    "c": content,
+                    "d": _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS),
+                    "w": window_id,
+                },
+            )
+        ).first()
+        written = written or inserted is not None
     return written
 
 

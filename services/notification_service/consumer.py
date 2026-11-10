@@ -92,7 +92,17 @@ PRODUCER = "notification-service"
 
 # uuid5 namespace for `notifications` rows (an alert brings its own id).
 NOTIFICATION_NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://mytheus.ai/ns/notification-service")
-ALERT_TYPES = frozenset({"conflict", "workload", "dependency", "missing_stakeholder"})
+# ADR-0039 C7 adds `already_decided` and `topic_watch` (same alert shape, same delivery).
+ALERT_TYPES = frozenset(
+    {
+        "conflict",
+        "workload",
+        "dependency",
+        "missing_stakeholder",
+        "already_decided",
+        "topic_watch",
+    }
+)
 MAX_TITLE = 120
 MAX_BODY = 400
 MAX_NOTIFICATION_TITLE = 200

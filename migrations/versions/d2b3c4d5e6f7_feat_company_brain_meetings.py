@@ -21,6 +21,9 @@ table since `9b2c4d1e6f30`.
   no-op even when the inbox row is gone.
 - `action_status_requests` (B7): one per (action, upcoming meeting), unique, created by the
   internal route workflow-service calls. `action_id` cascades with the action item.
+- `notification_log.alert_type` (notification-service): the CHECK gains ADR-0039 C7's two
+  ProactiveAgent alert types, `already_decided` and `topic_watch`, so notification-service can
+  log them in-app like the other four instead of failing the insert.
 
 Revision ID: d2b3c4d5e6f7
 Revises: 0b91a00079a7
@@ -180,8 +183,28 @@ def upgrade() -> None:
     )
 
 
+    # --- notification_log: ADR-0039 C7 alert types ---------------------------------------------
+    op.execute("""
+        ALTER TABLE notification_log
+          DROP CONSTRAINT ck_notification_log_alert_type,
+          ADD CONSTRAINT ck_notification_log_alert_type CHECK (
+            alert_type IS NULL
+            OR alert_type IN ('conflict', 'workload', 'dependency', 'missing_stakeholder',
+                              'already_decided', 'topic_watch')
+          );
+        """)
+
+
 def downgrade() -> None:
     # Forward-only in practice (CLAUDE.md); kept so a local `alembic downgrade -1` works.
+    op.execute("""
+        ALTER TABLE notification_log
+          DROP CONSTRAINT ck_notification_log_alert_type,
+          ADD CONSTRAINT ck_notification_log_alert_type CHECK (
+            alert_type IS NULL
+            OR alert_type IN ('conflict', 'workload', 'dependency', 'missing_stakeholder')
+          );
+        """)
     op.execute("DROP TABLE IF EXISTS action_status_requests CASCADE;")
     op.execute("DROP TABLE IF EXISTS commitments CASCADE;")
     op.execute(

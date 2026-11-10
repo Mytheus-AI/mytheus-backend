@@ -42,11 +42,17 @@ from libs.shared.authz import (
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
+from services.core_api.brain import latest_statuses, may_see_source
 from services.core_api.schemas import (
+    MAX_AGENDA_ITEMS,
+    AgendaDraft,
+    AgendaDraftItem,
+    AgendaDraftRequest,
     AgendaItem,
     AgendaItemCreate,
     AgendaItemStatusUpdate,
     AgendaReplace,
+    AttendanceUpdate,
     CarryForward,
     CarryForwardAction,
     CarryForwardDecision,
@@ -71,12 +77,16 @@ MAX_LIMIT = 200
 
 _MEETING_COLUMNS = (
     "id, title, status, scheduled_start, scheduled_end, livekit_room, created_by, "
-    "previous_meeting_id, created_at, updated_at"
+    "previous_meeting_id, confidential, template_id, created_at, updated_at"
 )
 _AGENDA_COLUMNS = (
     "id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, "
-    "updated_at"
+    "updated_at, goal_id"
 )
+# ADR-0039 B5: a meeting that is over takes no attendance change.
+_CLOSED = frozenset({"ended", "cancelled"})
+# ADR-0038 D5 caps an agenda item's title at 200 characters; a drafted "Status: ..." item too.
+_MAX_TITLE = 200
 
 
 # --- cursor helpers -------------------------------------------------------------------------
@@ -161,9 +171,9 @@ async def _meeting_ref(session: AsyncSession, meeting_id: uuid.UUID | None) -> M
     return MeetingRef(**dict(row)) if row is not None else None
 
 
-async def _detail(session: AsyncSession, row: Any) -> MeetingDetail:
+async def _detail(session: AsyncSession, row: Any, viewer: uuid.UUID | None) -> MeetingDetail:
     meeting_id = row["id"]
-    participants = (await _load_participants(session, [meeting_id])).get(meeting_id, [])
+    participants = (await _load_participants(session, [meeting_id], viewer)).get(meeting_id, [])
     return MeetingDetail(
         **_row_to_meeting(row, participants).model_dump(),
         previous_meeting=await _meeting_ref(session, row["previous_meeting_id"]),
@@ -238,7 +248,7 @@ async def _insert_agenda_item(
     await session.execute(
         text(
             "INSERT INTO meeting_agenda_items (org_id, meeting_id, position, title, "
-            "owner_user_id, duration_minutes) VALUES (:o, :m, :p, :t, :owner, :d)"
+            "owner_user_id, duration_minutes, goal_id) VALUES (:o, :m, :p, :t, :owner, :d, :g)"
         ),
         {
             "o": str(org_id),
@@ -247,6 +257,7 @@ async def _insert_agenda_item(
             "t": item.title,
             "owner": str(item.owner_user_id) if item.owner_user_id else None,
             "d": item.duration_minutes,
+            "g": str(item.goal_id) if item.goal_id else None,
         },
     )
 
@@ -265,17 +276,22 @@ def _not_a_participant() -> ProblemDetail:
 
 
 async def _load_participants(
-    session: AsyncSession, meeting_ids: list[uuid.UUID]
+    session: AsyncSession, meeting_ids: list[uuid.UUID], viewer: uuid.UUID | None
 ) -> dict[uuid.UUID, list[Participant]]:
-    """One query for the whole page, not one per meeting."""
+    """One query for the whole page, not one per meeting.
+
+    ADR-0039 B5: `attendance` and `proxy_update` go to everyone who can see the meeting (the
+    update is meant for the room); `proxy_questions` only to the person themself and to the
+    meeting's host, `null` for anyone else."""
     if not meeting_ids:
         return {}
     rows = (
         (
             await session.execute(
                 text(
-                    "SELECT meeting_id, user_id, role_in_meeting FROM meeting_participants "
-                    "WHERE meeting_id = ANY(:ids)"
+                    "SELECT meeting_id, user_id, role_in_meeting, attendance, proxy_update, "
+                    "proxy_questions FROM meeting_participants WHERE meeting_id = ANY(:ids) "
+                    "ORDER BY meeting_id, user_id"
                 ),
                 {"ids": meeting_ids},
             )
@@ -283,10 +299,18 @@ async def _load_participants(
         .mappings()
         .all()
     )
+    hosts = {r["meeting_id"]: r["user_id"] for r in rows if r["role_in_meeting"] == "host"}
     out: dict[uuid.UUID, list[Participant]] = {}
     for r in rows:
+        sees_questions = viewer is not None and viewer in (r["user_id"], hosts.get(r["meeting_id"]))
         out.setdefault(r["meeting_id"], []).append(
-            Participant(user_id=r["user_id"], role_in_meeting=r["role_in_meeting"])
+            Participant(
+                user_id=r["user_id"],
+                role_in_meeting=r["role_in_meeting"],
+                attendance=r["attendance"],
+                proxy_update=r["proxy_update"],
+                proxy_questions=list(r["proxy_questions"] or []) if sees_questions else None,
+            )
         )
     return out
 
@@ -350,14 +374,28 @@ async def create_meeting(
     _check_owners(list(body.agenda), members, "agenda")
     if body.previous_meeting_id is not None:
         await _check_previous_meeting(session, None, body.previous_meeting_id)
+    confidential = bool(body.confidential)
+    if body.template_id is not None:
+        # ADR-0039 B2: the template's `confidential` is the default. Checked under RLS first,
+        # because the FK alone would accept another tenant's template (gap 31).
+        template = (
+            await session.execute(
+                text("SELECT confidential FROM meeting_templates WHERE id = :t"),
+                {"t": str(body.template_id)},
+            )
+        ).first()
+        if template is None:
+            raise _field_error(["template_id"], "No such meeting type")
+        if body.confidential is None:
+            confidential = bool(template[0])
 
     row = (
         (
             await session.execute(
                 text(
                     "INSERT INTO meetings (org_id, title, scheduled_start, scheduled_end, "
-                    "created_by, previous_meeting_id) "
-                    "VALUES (:org, :title, :start, :end, :by, :prev) "
+                    "created_by, previous_meeting_id, confidential, template_id) "
+                    "VALUES (:org, :title, :start, :end, :by, :prev, :conf, :tpl) "
                     f"RETURNING {_MEETING_COLUMNS}"
                 ),
                 {
@@ -367,6 +405,8 @@ async def create_meeting(
                     "end": body.scheduled_end,
                     "by": str(creator) if creator else None,
                     "prev": str(body.previous_meeting_id) if body.previous_meeting_id else None,
+                    "conf": confidential,
+                    "tpl": str(body.template_id) if body.template_id else None,
                 },
             )
         )
@@ -453,7 +493,7 @@ async def create_meeting(
     )
 
     response.headers["Location"] = f"/api/v1/meetings/{meeting_id}"
-    return await _detail(session, row)
+    return await _detail(session, row, ctx.user_id)
 
 
 @router.get("/meetings", response_model=MeetingPage)
@@ -495,7 +535,7 @@ async def list_meetings(
 
     has_more = len(rows) > limit
     page = list(rows[:limit])
-    by_meeting = await _load_participants(session, [r["id"] for r in page])
+    by_meeting = await _load_participants(session, [r["id"] for r in page], ctx.user_id)
     return MeetingPage(
         items=[_row_to_meeting(r, by_meeting.get(r["id"], [])) for r in page],
         next_cursor=(
@@ -512,7 +552,7 @@ async def get_meeting(
 ) -> MeetingDetail:
     """The meeting, the meeting it follows up (`previous_meeting`) and its agenda ordered by
     `position` (ADR-0038 D6). A client re-hydrates the live agenda panel from here."""
-    return await _detail(session, await _fetch_meeting(session, meeting_id))
+    return await _detail(session, await _fetch_meeting(session, meeting_id), ctx.user_id)
 
 
 @router.post("/meetings/{meeting_id}/participants", response_model=Meeting)
@@ -578,7 +618,7 @@ async def add_participants(
         )
 
     row = await _fetch_meeting(session, meeting_id)
-    participants = await _load_participants(session, [meeting_id])
+    participants = await _load_participants(session, [meeting_id], ctx.user_id)
     return _row_to_meeting(row, participants.get(meeting_id, []))
 
 
@@ -728,6 +768,9 @@ async def update_meeting(
     # (mytheus-events schemas/meeting-events/v1.avsc) has always had all three symbols; this
     # was a gap in this route, not a schema gap, and squarely core-api's own file to fix.
     event_type = "ended" if fields.get("status") == "ended" else "updated"
+    if fields.get("status") in _CLOSED:
+        # ADR-0039 B7: a status request nobody answered before the meeting is over expires.
+        await expire_status_requests(session, meeting_id)
 
     await enqueue(
         session,
@@ -757,7 +800,18 @@ async def update_meeting(
         ip=ctx.ip,
     )
 
-    return await _detail(session, row)
+    return await _detail(session, row, ctx.user_id)
+
+
+async def expire_status_requests(session: AsyncSession, meeting_id: uuid.UUID) -> None:
+    """ADR-0039 B7: once a meeting is over, its pending status requests are `expired`."""
+    await session.execute(
+        text(
+            "UPDATE action_status_requests SET state = 'expired' "
+            "WHERE meeting_id = :m AND state = 'pending'"
+        ),
+        {"m": str(meeting_id)},
+    )
 
 
 # --- ADR-0038 D6: agenda and carry-forward -------------------------------------------------
@@ -815,14 +869,15 @@ async def replace_agenda(
         await session.execute(
             text(
                 "UPDATE meeting_agenda_items SET position = :p, title = :t, "
-                "owner_user_id = :owner, duration_minutes = :d, updated_at = now() "
-                "WHERE id = :id AND meeting_id = :m"
+                "owner_user_id = :owner, duration_minutes = :d, goal_id = :g, "
+                "updated_at = now() WHERE id = :id AND meeting_id = :m"
             ),
             {
                 "p": position,
                 "t": item.title,
                 "owner": str(item.owner_user_id) if item.owner_user_id else None,
                 "d": item.duration_minutes,
+                "g": str(item.goal_id) if item.goal_id else None,
                 "id": str(item.id),
                 "m": str(meeting_id),
             },
@@ -895,9 +950,15 @@ async def carry_forward(
     """What the previous meeting left open (ADR-0038 D6): its confirmed decisions, its open
     action items (confirmed, not done; proposed candidates and dismissed ones are not
     commitments), and the CALLER's own suggestions saved from it. Empty when there is no link
-    or the linked meeting is gone."""
+    or the linked meeting is gone.
+
+    ADR-0039: each open action carries `latest_status` (its assignee's most recent answer to a
+    status request, or null). A confidential previous meeting is never a source for a caller
+    who was not in it (B2): they get the same empty answer as for no link."""
     row = await _fetch_meeting(session, meeting_id)
     previous = await _meeting_ref(session, row["previous_meeting_id"])
+    if previous is not None and not await may_see_source(session, previous.id, ctx.user_id):
+        previous = None
     if previous is None:
         return CarryForward(
             previous_meeting=None, decisions=[], open_actions=[], saved_questions=[]
@@ -917,6 +978,8 @@ async def carry_forward(
         ),
         prev,
     )
+    action_rows = list(actions)
+    statuses = await latest_statuses(session, [r[0] for r in action_rows])
     saved: list[CarryForwardQuestion] = []
     if ctx.user_id is not None:
         saved = [
@@ -934,8 +997,164 @@ async def carry_forward(
         previous_meeting=previous,
         decisions=[CarryForwardDecision(id=r[0], content=r[1]) for r in decisions],
         open_actions=[
-            CarryForwardAction(id=r[0], title=r[1], owner_user_id=r[2], due_date=r[3])
-            for r in actions
+            CarryForwardAction(
+                id=r[0],
+                title=r[1],
+                owner_user_id=r[2],
+                due_date=r[3],
+                latest_status=statuses.get(r[0]),
+            )
+            for r in action_rows
         ],
         saved_questions=saved,
+    )
+
+
+# --- ADR-0039 B4: drafted agenda ----------------------------------------------------------------
+
+
+def _status_title(content: str) -> str:
+    title = "Status: " + " ".join(content.split())
+    return title if len(title) <= _MAX_TITLE else title[: _MAX_TITLE - 3].rstrip() + "..."
+
+
+@router.post("/meetings/agenda-draft", response_model=AgendaDraft)
+async def draft_agenda(
+    body: AgendaDraftRequest,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> AgendaDraft:
+    """A drafted agenda for a new meeting (ADR-0039 B4). Saves nothing; deterministic.
+
+    In order, at most 20: the template's items (`template`); the previous meeting's agenda items
+    not `covered`, by position (`unfinished`); its open confirmed action items, oldest first, as
+    `Status: {content}` owned by the assignee (`open_action`). Both ids must name rows of this
+    tenant (422 naming the field). A confidential previous meeting contributes nothing for a
+    caller who was not in it (B2)."""
+    items: list[AgendaDraftItem] = []
+    if body.template_id is not None:
+        agenda = (
+            await session.execute(
+                text("SELECT agenda FROM meeting_templates WHERE id = :t"),
+                {"t": str(body.template_id)},
+            )
+        ).first()
+        if agenda is None:
+            raise _field_error(["template_id"], "No such meeting type")
+        for entry in agenda[0] or []:
+            if isinstance(entry, dict) and isinstance(entry.get("title"), str):
+                duration = entry.get("duration_minutes")
+                items.append(
+                    AgendaDraftItem(
+                        title=entry["title"],
+                        owner_user_id=None,
+                        duration_minutes=duration if isinstance(duration, int) else None,
+                        goal_id=None,
+                        source="template",
+                    )
+                )
+    previous = body.previous_meeting_id
+    if previous is not None:
+        if not await is_visible(session, "meetings", previous):
+            raise _field_error(["previous_meeting_id"], "No such meeting to follow up")
+        if await may_see_source(session, previous, ctx.user_id):
+            unfinished = await session.execute(
+                text(
+                    "SELECT title, owner_user_id, duration_minutes, goal_id "
+                    "FROM meeting_agenda_items WHERE meeting_id = :m AND status <> 'covered' "
+                    "ORDER BY position, id"
+                ),
+                {"m": str(previous)},
+            )
+            items.extend(
+                AgendaDraftItem(
+                    title=r[0],
+                    owner_user_id=r[1],
+                    duration_minutes=r[2],
+                    goal_id=r[3],
+                    source="unfinished",
+                )
+                for r in unfinished
+            )
+            actions = await session.execute(
+                text(
+                    "SELECT content, assignee_id FROM action_items WHERE meeting_id = :m "
+                    "AND status = 'confirmed' AND deleted_at IS NULL ORDER BY created_at, id"
+                ),
+                {"m": str(previous)},
+            )
+            items.extend(
+                AgendaDraftItem(
+                    title=_status_title(r[0]),
+                    owner_user_id=r[1],
+                    duration_minutes=None,
+                    goal_id=None,
+                    source="open_action",
+                )
+                for r in actions
+            )
+    return AgendaDraft(items=items[:MAX_AGENDA_ITEMS])
+
+
+# --- ADR-0039 B5: send your agent instead ---------------------------------------------------
+
+
+@router.put("/meetings/{meeting_id}/attendance", response_model=Participant)
+async def set_attendance(
+    meeting_id: uuid.UUID,
+    body: AttendanceUpdate,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> Participant:
+    """The caller's own attendance: `live`, or `agent` with an update for the room and up to
+    five questions. Self only (the caller's own participant row; there is no user id to name),
+    a participant only (403), and not once the meeting is over (409)."""
+    row = await _fetch_meeting(session, meeting_id)
+    if ctx.user_id is None:
+        raise _not_a_participant()
+    if row["status"] in _CLOSED:
+        raise ProblemDetail(
+            status.HTTP_409_CONFLICT,
+            ErrorCode.VERSION_CONFLICT,
+            "The meeting is over; attendance can no longer change",
+        )
+    updated = (
+        (
+            await session.execute(
+                text(
+                    "UPDATE meeting_participants SET attendance = :a, proxy_update = :u, "
+                    "proxy_questions = CAST(:q AS text[]) "
+                    "WHERE meeting_id = :m AND user_id = :me "
+                    "RETURNING user_id, role_in_meeting, attendance, proxy_update, proxy_questions"
+                ),
+                {
+                    "a": body.attendance,
+                    "u": body.proxy_update,
+                    "q": body.proxy_questions,
+                    "m": str(meeting_id),
+                    "me": str(ctx.user_id),
+                },
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if updated is None:
+        raise _not_a_participant()
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        action=ACTION_MEETING_UPDATED,
+        target_type="meeting",
+        target_id=meeting_id,
+        metadata={"changed": ["attendance"], "attendance": body.attendance},
+        ip=ctx.ip,
+    )
+    return Participant(
+        user_id=updated["user_id"],
+        role_in_meeting=updated["role_in_meeting"],
+        attendance=updated["attendance"],
+        proxy_update=updated["proxy_update"],
+        proxy_questions=list(updated["proxy_questions"] or []),
     )
