@@ -13,6 +13,9 @@ from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     candidates,
     chat,
+    collaborations,
+    internal_agents,
+    internal_lifecycle,
     internal_meetings,
     internal_retrieval,
     meetings,
@@ -36,7 +39,14 @@ app.include_router(internal_meetings.router)
 app.include_router(internal_retrieval.router)
 app.include_router(my_tasks.router)
 app.include_router(suggestions.router)
+app.include_router(collaborations.router)
+app.include_router(internal_agents.router)
+app.include_router(internal_lifecycle.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
 # my_tasks. /suggestions (QuestionAgent, P9, owner-only, ADR-0034) is in suggestions.
+# /meetings/{id}/collaborations, /meetings/{id}/context-fills and /context-fills/{id}/dismiss
+# (ContextGapAgent, P10) are in collaborations; the internal related-attendees read
+# (agent-runtime-service) is in internal_agents; the post-meeting digest (workflow-service) is in
+# internal_lifecycle.

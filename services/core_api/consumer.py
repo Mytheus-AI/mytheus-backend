@@ -53,6 +53,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.shared.audit import (
+    ACTION_A2A_REQUEST_ALLOWED,
+    ACTION_A2A_REQUEST_BLOCKED,
+    ACTION_A2A_REQUEST_DENIED,
+    audit,
+)
 from libs.shared.inbox import is_duplicate, record_consumed
 from libs.shared.metrics import (
     observe_consumer_lag,
@@ -85,6 +91,25 @@ _SUGGESTION = ("QuestionAgent", "suggestion")
 MAX_SUGGESTION_CHARS = 1000
 MAX_CITATIONS = 8
 _CITATION_KINDS = frozenset({"transcript", "document", "decision", "action"})
+
+# P10 (contract section 6): ContextGapAgent collaboration entries, one `agent_collaborations`
+# row each; the fill fields go on the entry that produced the fill. `kind` is an Avro enum the
+# decoder hands over as a str; `str()` below makes a symbol object compare the same way.
+_CONTEXT_FILL = ("ContextGapAgent", "context_fill")
+NIL_UUID = uuid.UUID(int=0)
+MAX_FILL_CHARS = 2000
+MAX_QUERY_CHARS = 2000
+_HOPS = frozenset({"peer", "related_meeting", "rag"})
+_COLLAB_AUDIT = {
+    "answered": ACTION_A2A_REQUEST_ALLOWED,
+    "no_answer": ACTION_A2A_REQUEST_ALLOWED,
+    "deadline_miss": ACTION_A2A_REQUEST_ALLOWED,
+    "rag_hit": ACTION_A2A_REQUEST_ALLOWED,
+    "rag_miss": ACTION_A2A_REQUEST_ALLOWED,
+    "authz_denied": ACTION_A2A_REQUEST_DENIED,
+    "org_spoof": ACTION_A2A_REQUEST_BLOCKED,
+    "foreign_org": ACTION_A2A_REQUEST_BLOCKED,
+}
 
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
@@ -229,9 +254,11 @@ async def _apply_agent_result(
     agent, kind = str(value.get("agent")), str(value.get("kind"))
     candidate_table = _CANDIDATE_TABLES.get((agent, kind))
     is_suggestion = (agent, kind) == _SUGGESTION
+    is_context_fill = (agent, kind) == _CONTEXT_FILL
     if (
         candidate_table is None
         and not is_suggestion
+        and not is_context_fill
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
         return False
@@ -239,6 +266,10 @@ async def _apply_agent_result(
     meeting_id = _uuid(value.get("meeting_id"), "meeting_id")
     user_id = _uuid(value.get("user_id"), "user_id")
     chunk_ids = [str(_uuid(c, "source_chunk_ids[]")) for c in value.get("source_chunk_ids") or []]
+    # A responder-side security entry carries the nil meeting when the requester's meeting is
+    # unknown (P10 contract 5.9). Only a context_fill may, and only the nil uuid: any other
+    # meeting id is checked against the tenant like every other result.
+    unknown_meeting = is_context_fill and meeting_id == NIL_UUID
     visible = (
         await session.execute(
             text(
@@ -249,12 +280,22 @@ async def _apply_agent_result(
             {"m": str(meeting_id), "u": str(user_id)},
         )
     ).one()
-    if not visible[0] or not visible[1]:
+    if (not visible[0] and not unknown_meeting) or not visible[1]:
         raise PoisonMessage(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
         )
     surface, silent = _thresholds(visible[2], agent)
+    if is_context_fill:
+        return await _persist_collaborations(
+            session,
+            org_id,
+            meeting_id,
+            user_id,
+            str(value.get("window_id") or "") or None,
+            (surface, silent),
+            value.get("payload_json"),
+        )
     if is_suggestion:
         return await _persist_suggestions(
             session, org_id, meeting_id, user_id, silent, value.get("payload_json")
@@ -482,6 +523,144 @@ async def _persist_suggestions(
             )
         ).first()
         written = written or inserted is not None
+    return written
+
+
+def _bounded_text(raw: Any, limit: int) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    return raw.strip()[:limit] or None
+
+
+async def _persist_collaborations(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    user_id: uuid.UUID,
+    window_id: str | None,
+    band: tuple[float, float],
+    payload_json: Any,
+) -> bool:
+    """One `agent_collaborations` row per ContextGapAgent collaboration entry (P10 contract 6).
+
+    The entry's deterministic uuid5 `id` is the primary key, so a replay that slipped past the
+    inbox is `ON CONFLICT (id) DO NOTHING`, and the audit row is written only for a row that is
+    actually new (one per entry, `actor_type = 'agent'`, acting for the requester). The
+    requester is the result's own `user_id`, already checked against this tenant; an entry
+    naming anyone else is skipped, never stored. A malformed entry is skipped and the rest are
+    applied; a payload that is not JSON is poison.
+
+    The fill (`fill_content`, `confidence`, `surfaced`, `rationale`, `citations`) goes only on
+    the row whose id is `fill.id`. Its band is re-derived from the tenant's
+    `agent_confidence_overrides`, never trusted from the payload: below `silent` the fill fields
+    are not written (the collaboration row still is), above `surface` it is surfaced.
+    """
+    surface, silent = band
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError as exc:
+        raise PoisonMessage("agent-results payload_json is not JSON") from exc
+    if not isinstance(payload, dict):
+        raise PoisonMessage("agent-results context_fill result has no payload_json object")
+    entries = payload.get("collaborations")
+    if not isinstance(entries, list):
+        return False
+    fill = payload.get("fill") if isinstance(payload.get("fill"), dict) else None
+    fill_id = _optional_uuid(fill.get("id")) if fill else None
+    written = False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = _optional_uuid(entry.get("id"))
+        hop, result = entry.get("hop"), entry.get("result")
+        success, latency = entry.get("success"), entry.get("latency_ms")
+        query = _bounded_text(entry.get("query"), MAX_QUERY_CHARS)
+        query_class, responder = entry.get("query_class"), entry.get("responder")
+        if (
+            entry_id is None
+            or hop not in _HOPS
+            or result not in _COLLAB_AUDIT
+            or not isinstance(success, bool)
+            or isinstance(latency, bool)
+            or not isinstance(latency, int)
+            or latency < 0
+            or query is None
+            or not isinstance(query_class, str)
+            or not isinstance(responder, str)
+            or not responder
+            or _optional_uuid(entry.get("requester")) != user_id
+        ):
+            continue
+        target_scope = entry.get("target_scope")
+        correlation_id = entry.get("correlation_id")
+        params: dict[str, Any] = {
+            "id": str(entry_id),
+            "o": str(org_id),
+            "m": str(meeting_id),
+            "w": window_id,
+            "corr": correlation_id if isinstance(correlation_id, str) else None,
+            "req": str(user_id),
+            "resp": responder[:200],
+            "hop": hop,
+            "q": query,
+            "qc": query_class[:64],
+            "ts": target_scope[:64] if isinstance(target_scope, str) else None,
+            "res": result,
+            "ok": success,
+            "lat": min(latency, 2**31 - 1),
+            "fc": None,
+            "conf": None,
+            "surf": False,
+            "rat": None,
+            "cit": "[]",
+        }
+        if fill is not None and fill_id == entry_id:
+            confidence = _candidate_confidence(fill.get("confidence"))
+            content = _bounded_text(fill.get("content"), MAX_FILL_CHARS)
+            if confidence is not None and content is not None and confidence >= silent:
+                params.update(
+                    fc=content,
+                    conf=confidence,
+                    surf=confidence > surface,
+                    rat=_bounded_text(fill.get("rationale"), MAX_SUGGESTION_CHARS),
+                    cit=json.dumps(_citations(fill.get("citations"))),
+                )
+        inserted = (
+            await session.execute(
+                text(
+                    "INSERT INTO agent_collaborations (id, org_id, meeting_id, window_id, "
+                    "correlation_id, requester, responder, hop, query, query_class, "
+                    "target_scope, result, success, latency_ms, fill_content, confidence, "
+                    "surfaced, rationale, citations) VALUES (:id, :o, :m, :w, :corr, :req, "
+                    ":resp, :hop, :q, :qc, :ts, :res, :ok, :lat, :fc, :conf, :surf, :rat, "
+                    "CAST(:cit AS jsonb)) ON CONFLICT (id) DO NOTHING RETURNING 1"
+                ),
+                params,
+            )
+        ).first()
+        if inserted is None:
+            continue
+        written = True
+        await audit(
+            session,
+            org_id=org_id,
+            actor_id=user_id,
+            actor_type="agent",
+            action=_COLLAB_AUDIT[result],
+            target_type="agent_collaboration",
+            target_id=entry_id,
+            metadata={
+                "agent": "ContextGapAgent",
+                "meeting_id": str(meeting_id),
+                "hop": hop,
+                "responder": params["resp"],
+                "query_class": params["qc"],
+                "target_scope": params["ts"],
+                "result": result,
+                "success": success,
+                "correlation_id": params["corr"],
+            },
+        )
     return written
 
 

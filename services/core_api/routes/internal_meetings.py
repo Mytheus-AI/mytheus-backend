@@ -43,7 +43,11 @@ ALLOWED_CALLERS = frozenset({"meeting-service"})
 # Every service that may hold a secret in MYTHEUS_CORE_CALLER_TOKENS. Each route still names
 # its own allowed set (`core_caller_for`): rag-service can read retrieval scope
 # (`internal_retrieval.py`) but cannot report a room's state here.
-KNOWN_CALLERS = frozenset({"meeting-service", "rag-service"})
+# agent-runtime-service reads related attendees (`internal_agents.py`, P10); workflow-service
+# reads the post-meeting digest (`internal_lifecycle.py`, P10 MeetingLifecycleWorkflow).
+KNOWN_CALLERS = frozenset(
+    {"meeting-service", "rag-service", "agent-runtime-service", "workflow-service"}
+)
 TOKENS_ENV = "MYTHEUS_CORE_CALLER_TOKENS"
 SERVICE_HEADER = "x-mytheus-service"
 SERVICE_TOKEN_HEADER = "x-mytheus-service-token"
