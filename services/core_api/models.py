@@ -17,8 +17,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from libs.shared.db import Base, TenantMixin, TimestampMixin
@@ -56,6 +56,14 @@ class Meeting(Base, TenantMixin, TimestampMixin):
         ForeignKey("meetings.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # ADR-0039 B2 (migration d2b3c4d5e6f7): a confidential meeting is never a source for topic
+    # watch, the related_meeting hop, or carry-forward shown to non-participants. `template_id`
+    # names the meeting type it was made from (`meeting_templates`, raw-SQL DDL, so the FK is
+    # declared in the migration only).
+    confidential: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
@@ -98,3 +106,18 @@ class MeetingParticipant(Base, TenantMixin):
     # so a later text change does not silently count as consent to the new wording.
     consented_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     consent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ADR-0039 B5 (migration d2b3c4d5e6f7): "send your agent instead". `attendance` is `live` or
+    # `agent`; `proxy_update` is for the room, `proxy_questions` for the person and the host.
+    attendance: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'live'"))
+    proxy_update: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxy_questions: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+
+    __table_args__ = (
+        CheckConstraint("attendance IN ('live', 'agent')", name="attendance"),
+        CheckConstraint(
+            "proxy_update IS NULL OR char_length(proxy_update) <= 2000", name="proxy_update"
+        ),
+        CheckConstraint("cardinality(proxy_questions) <= 5", name="proxy_questions"),
+    )

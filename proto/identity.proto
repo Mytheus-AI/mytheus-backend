@@ -12,6 +12,12 @@ service IdentityService {
   // matching deny. An unknown value or a missing/malformed org is "deny". An infrastructure
   // failure is status UNAVAILABLE (never a cacheable "deny"); the PEP treats it as deny.
   rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+  // ADR-0039 A9: the company brain for services (agent-runtime-service, transcription-service).
+  // org_id travels in "org-id" metadata, like GetUserContext. An org with no brain data gets an
+  // OrgContext with every field empty (never NOT_FOUND). Missing/malformed metadata is
+  // UNAUTHENTICATED; a database failure is UNAVAILABLE. Cached at nexus:{org_id}:org_ctx for
+  // 5 minutes and evicted by every Part A write.
+  rpc GetOrgContext(GetOrgContextRequest) returns (OrgContext);
 }
 
 // org_id is in the body here (P10 contract section 3); when the caller ALSO sends "org-id"
@@ -50,4 +56,42 @@ message UserContext {
   string agent_name             = 14;
   string agent_personality      = 15;  // "balanced" | "concise" | "detailed" | "direct" | "friendly"
   string agent_instructions     = 16;
+}
+
+// ADR-0039 A9. Empty on purpose: the org is the "org-id" metadata, never the body.
+message GetOrgContextRequest {}
+
+message GlossaryTerm {
+  string term       = 1;
+  string kind       = 2;  // "product" | "codename" | "acronym" | "customer" | "person" | "other"
+  string definition = 3;  // empty string = none
+  repeated string aliases = 4;
+}
+
+message TopicOwner {
+  string topic         = 1;
+  string owner_user_id = 2;
+}
+
+message Goal {
+  string id     = 1;
+  string title  = 2;
+  string period = 3;  // empty string = none
+}
+
+message TopicWatch {
+  string user_id = 1;
+  string topic   = 2;
+}
+
+message OrgContext {
+  string description = 1;
+  string industry    = 2;
+  repeated string products  = 3;
+  repeated string customers = 4;
+  repeated GlossaryTerm glossary     = 5;  // every term, ordered by lower(term)
+  repeated TopicOwner topic_owners   = 6;  // ordered by lower(topic)
+  repeated Goal goals                = 7;  // active only, ordered by position
+  repeated string never_record_topics = 8;
+  repeated TopicWatch topic_watches  = 9;  // every watch in the org
 }

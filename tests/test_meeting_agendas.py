@@ -513,6 +513,8 @@ def test_internal_agenda_for_the_meeting_agent(client):
         "duration_minutes",
         "status",
         "status_source",
+        "owner_user_id",  # ADR-0039 C5
+        "goal_id",  # ADR-0039 B3
     }
     assert body["carry_forward"] == {
         "decisions": ["Ship in Q1"],

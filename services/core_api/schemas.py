@@ -34,6 +34,8 @@ class AgendaItemCreate(BaseModel):
     title: Annotated[str, Field(min_length=1, max_length=200)]
     owner_user_id: uuid.UUID | None = None
     duration_minutes: Annotated[int, Field(ge=1, le=240)] | None = None
+    # ADR-0039 B3: an `org_goals` id (identity-tenant-service's table; no FK across services).
+    goal_id: uuid.UUID | None = None
 
     @field_validator("title")
     @classmethod
@@ -79,6 +81,7 @@ class AgendaItem(BaseModel):
     status_source: AgendaStatusSource | None
     agent_note: str | None
     updated_at: datetime
+    goal_id: uuid.UUID | None = None
 
 
 class MeetingRef(BaseModel):
@@ -94,11 +97,19 @@ class CarryForwardDecision(BaseModel):
     content: str
 
 
+class LatestStatus(BaseModel):
+    """The assignee's most recent answer to a status request for an action (ADR-0039 B7)."""
+
+    text: str
+    answered_at: datetime
+
+
 class CarryForwardAction(BaseModel):
     id: uuid.UUID
     title: str
     owner_user_id: uuid.UUID | None
     due_date: date | None
+    latest_status: LatestStatus | None = None
 
 
 class CarryForwardQuestion(BaseModel):
@@ -130,6 +141,10 @@ class MeetingCreate(BaseModel):
     agenda: Annotated[list[AgendaItemCreate], Field(max_length=MAX_AGENDA_ITEMS)] = Field(
         default_factory=list
     )
+    # ADR-0039 B2. `confidential` omitted takes the template's `confidential` (false without a
+    # template); `template_id` must name a meeting type of this tenant (422 otherwise).
+    confidential: bool | None = None
+    template_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _end_after_start(self) -> MeetingCreate:
@@ -178,9 +193,48 @@ class MeetingUpdate(BaseModel):
         return self
 
 
+Attendance = Literal["live", "agent"]
+
+
 class Participant(BaseModel):
+    """A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
+    `proxy_update` are visible to every participant (the update is meant for the room);
+    `proxy_questions` only to the person themself and the host, and `null` for anyone else."""
+
     user_id: uuid.UUID
     role_in_meeting: str | None = None
+    attendance: Attendance = "live"
+    proxy_update: str | None = None
+    proxy_questions: list[str] | None = None
+
+
+MAX_PROXY_UPDATE = 2000
+MAX_PROXY_QUESTIONS = 5
+MAX_PROXY_QUESTION = 300
+
+
+class AttendanceUpdate(BaseModel):
+    """`PUT /meetings/{id}/attendance` (ADR-0039 B5): the caller's own attendance. A PUT, so an
+    omitted `proxy_update` clears it and omitted `proxy_questions` clears them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attendance: Attendance
+    proxy_update: Annotated[str, Field(max_length=MAX_PROXY_UPDATE)] | None = None
+    proxy_questions: Annotated[
+        list[Annotated[str, Field(max_length=MAX_PROXY_QUESTION)]],
+        Field(max_length=MAX_PROXY_QUESTIONS),
+    ] = Field(default_factory=list)
+
+    @field_validator("proxy_update")
+    @classmethod
+    def _trim_update(cls, v: str | None) -> str | None:
+        return (v.strip() or None) if v is not None else None
+
+    @field_validator("proxy_questions")
+    @classmethod
+    def _trim_questions(cls, v: list[str]) -> list[str]:
+        return [q for q in dict.fromkeys(q.strip() for q in v) if q]
 
 
 class ParticipantCheck(BaseModel):
@@ -221,6 +275,9 @@ class Meeting(BaseModel):
     # only for a meeting that has none (one created by the system with no creator).
     host_user_id: uuid.UUID | None = None
     previous_meeting_id: uuid.UUID | None = None
+    # ADR-0039 B2.
+    confidential: bool = False
+    template_id: uuid.UUID | None = None
 
 
 class MeetingDetail(Meeting):
@@ -532,3 +589,181 @@ class SuggestionList(BaseModel):
 
     open: list[Suggestion]
     saved: list[Suggestion]
+
+
+# --- ADR-0039 B1: meeting types --------------------------------------------------------------
+
+MAX_TEMPLATES = 50
+
+
+class TemplateAgendaItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    duration_minutes: Annotated[int, Field(ge=1, le=240)] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _trimmed(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+
+def _trim_name(v: str | None) -> str | None:
+    if v is None:
+        return None
+    value = v.strip()
+    if not value:
+        raise ValueError("name must not be blank")
+    return value
+
+
+class MeetingTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    description: Annotated[str, Field(max_length=300)] | None = None
+    default_duration_minutes: Annotated[int, Field(ge=5, le=480)] = 30
+    agenda: Annotated[list[TemplateAgendaItem], Field(max_length=MAX_AGENDA_ITEMS)] = Field(
+        default_factory=list
+    )
+    confidential: bool = False
+
+    _name = field_validator("name")(_trim_name)
+
+
+class MeetingTemplateUpdate(BaseModel):
+    """PATCH: any subset. `description: null` clears it; the others cannot be null."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    description: Annotated[str, Field(max_length=300)] | None = None
+    default_duration_minutes: Annotated[int, Field(ge=5, le=480)] | None = None
+    agenda: Annotated[list[TemplateAgendaItem], Field(max_length=MAX_AGENDA_ITEMS)] | None = None
+    confidential: bool | None = None
+
+    _name = field_validator("name")(_trim_name)
+
+    @model_validator(mode="after")
+    def _fields(self) -> MeetingTemplateUpdate:
+        if not self.model_fields_set:
+            raise ValueError("PATCH requires at least one field")
+        for name in ("name", "default_duration_minutes", "agenda", "confidential"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
+
+
+class MeetingTemplate(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    default_duration_minutes: int
+    agenda: list[TemplateAgendaItem]
+    confidential: bool
+    created_by: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingTemplateList(BaseModel):
+    items: list[MeetingTemplate]
+
+
+# --- ADR-0039 B4: drafted agenda --------------------------------------------------------------
+
+AgendaDraftSource = Literal["template", "unfinished", "open_action"]
+
+
+class AgendaDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    previous_meeting_id: uuid.UUID | None = None
+    template_id: uuid.UUID | None = None
+
+
+class AgendaDraftItem(BaseModel):
+    title: str
+    owner_user_id: uuid.UUID | None
+    duration_minutes: int | None
+    goal_id: uuid.UUID | None
+    source: AgendaDraftSource
+
+
+class AgendaDraft(BaseModel):
+    items: list[AgendaDraftItem]
+
+
+# --- ADR-0039 B6: promises ------------------------------------------------------------------
+
+CommitmentStatus = Literal["open", "done", "dismissed"]
+
+
+class Commitment(BaseModel):
+    """One of the caller's own promises. Never served to anyone else."""
+
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    meeting_title: str | None = None
+    meeting_scheduled_start: datetime | None = None
+    content: str
+    due_hint: str | None
+    status: CommitmentStatus
+    created_at: datetime
+    updated_at: datetime
+    done_at: datetime | None
+
+
+class CommitmentList(BaseModel):
+    items: list[Commitment]
+
+
+class CommitmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: CommitmentStatus
+
+
+# --- ADR-0039 B7: status requests -----------------------------------------------------------
+
+StatusRequestState = Literal["pending", "answered", "expired"]
+MAX_STATUS_TEXT = 500
+
+
+class StatusRequest(BaseModel):
+    """A status asked of the caller about one of their actions before a follow-up meeting."""
+
+    id: uuid.UUID
+    action_id: uuid.UUID
+    # The action item's text, under both names the UI reads (`action_title` mirrors
+    # `CarryForwardAction.title`).
+    action_content: str | None = None
+    action_title: str | None = None
+    meeting_id: uuid.UUID
+    meeting_title: str | None = None
+    meeting_scheduled_start: datetime | None = None
+    state: StatusRequestState
+    status_text: str | None
+    requested_at: datetime
+    answered_at: datetime | None
+
+
+class StatusRequestList(BaseModel):
+    items: list[StatusRequest]
+
+
+class StatusAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status_text: Annotated[str, Field(min_length=1, max_length=MAX_STATUS_TEXT)]
+
+    @field_validator("status_text")
+    @classmethod
+    def _trimmed(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("status_text must not be blank")
+        return value

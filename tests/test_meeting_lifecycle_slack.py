@@ -38,12 +38,14 @@ from services.meeting_service.routes import get_transport
 from services.meeting_service.transport import FakeTransport
 from services.workflow_service.activities import LifecycleActivities
 from services.workflow_service.consumer import handle_meeting_event
+from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.workflows.meeting_lifecycle import (
     PREP_BRIEF_LEAD,
     MeetingLifecycleWorkflow,
     prep_brief_delay,
     workflow_id_for,
 )
+from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from tests.conftest import APP_URL
 from tests.test_chat_api import _sql, seed_meeting, seed_tenant
 from tests.test_meeting_lifecycle_workflow import end_meeting, event, wait_for_room
@@ -124,8 +126,17 @@ def build(integration: FakeIntegration) -> LifecycleActivities:
 
 
 def worker(env: WorkflowEnvironment, acts: LifecycleActivities) -> Worker:
+    # The consumer also starts MeetingRemindersWorkflow (ADR-0039 B9) on `created`.
+    reminders = ReminderActivities(
+        core_url="http://core-api.test",
+        core_secret=SECRET,
+        transport=acts._transport,  # noqa: SLF001
+    )
     return Worker(
-        env.client, task_queue=QUEUE, workflows=[MeetingLifecycleWorkflow], activities=acts.all()
+        env.client,
+        task_queue=QUEUE,
+        workflows=[MeetingLifecycleWorkflow, MeetingRemindersWorkflow],
+        activities=[*acts.all(), *reminders.all()],
     )
 
 

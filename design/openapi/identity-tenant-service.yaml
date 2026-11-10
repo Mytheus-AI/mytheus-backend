@@ -209,6 +209,191 @@ components:
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
+    GlossaryImport:
+      additionalProperties: false
+      description: '`POST /api/v1/org/glossary/import`: up to 200 terms, upserted by `lower(term)`. A
+        term
+
+        already in the glossary takes the imported spelling, kind, definition and aliases. When the
+
+        same term appears twice in one import, the later entry wins.'
+      properties:
+        terms:
+          items:
+            $ref: '#/components/schemas/GlossaryTermCreate'
+          maxItems: 200
+          minItems: 1
+          title: Terms
+          type: array
+      required:
+      - terms
+      title: GlossaryImport
+      type: object
+    GlossaryImportResult:
+      properties:
+        created:
+          title: Created
+          type: integer
+        items:
+          items:
+            $ref: '#/components/schemas/GlossaryTerm'
+          title: Items
+          type: array
+        updated:
+          title: Updated
+          type: integer
+      required:
+      - created
+      - updated
+      - items
+      title: GlossaryImportResult
+      type: object
+    GlossaryTerm:
+      properties:
+        aliases:
+          items:
+            type: string
+          title: Aliases
+          type: array
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        definition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Definition
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - product
+          - codename
+          - acronym
+          - customer
+          - person
+          - other
+          title: Kind
+          type: string
+        term:
+          title: Term
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - term
+      - kind
+      - definition
+      - aliases
+      - created_at
+      - updated_at
+      title: GlossaryTerm
+      type: object
+    GlossaryTermCreate:
+      additionalProperties: false
+      properties:
+        aliases:
+          items:
+            type: string
+          title: Aliases
+          type: array
+        definition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Definition
+        kind:
+          default: other
+          enum:
+          - product
+          - codename
+          - acronym
+          - customer
+          - person
+          - other
+          title: Kind
+          type: string
+        term:
+          title: Term
+          type: string
+      required:
+      - term
+      title: GlossaryTermCreate
+      type: object
+    GlossaryTermList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/GlossaryTerm'
+          title: Items
+          type: array
+      required:
+      - items
+      title: GlossaryTermList
+      type: object
+    GlossaryTermUpdate:
+      additionalProperties: false
+      properties:
+        aliases:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Aliases
+        definition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Definition
+        kind:
+          anyOf:
+          - enum:
+            - product
+            - codename
+            - acronym
+            - customer
+            - person
+            - other
+            type: string
+          - type: 'null'
+          title: Kind
+        term:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Term
+      title: GlossaryTermUpdate
+      type: object
+    GroundRules:
+      properties:
+        never_record_topics:
+          items:
+            type: string
+          title: Never Record Topics
+          type: array
+      required:
+      - never_record_topics
+      title: GroundRules
+      type: object
+    GroundRulesUpdate:
+      additionalProperties: false
+      properties:
+        never_record_topics:
+          items:
+            type: string
+          title: Never Record Topics
+          type: array
+      required:
+      - never_record_topics
+      title: GroundRulesUpdate
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -387,6 +572,155 @@ components:
       - owner
       title: OrgCreate
       type: object
+    OrgGoal:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        period:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Period
+        position:
+          title: Position
+          type: integer
+        status:
+          enum:
+          - active
+          - achieved
+          - dropped
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - title
+      - description
+      - period
+      - status
+      - owner_user_id
+      - position
+      - created_at
+      - updated_at
+      title: OrgGoal
+      type: object
+    OrgGoalCreate:
+      additionalProperties: false
+      description: '`position` defaults to after the last goal.'
+      properties:
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        period:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Period
+        position:
+          anyOf:
+          - minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Position
+        status:
+          default: active
+          enum:
+          - active
+          - achieved
+          - dropped
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - title
+      title: OrgGoalCreate
+      type: object
+    OrgGoalList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/OrgGoal'
+          title: Items
+          type: array
+      required:
+      - items
+      title: OrgGoalList
+      type: object
+    OrgGoalUpdate:
+      additionalProperties: false
+      description: Any subset. `description`, `period` and `owner_user_id` accept null to clear.
+      properties:
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        period:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Period
+        position:
+          anyOf:
+          - minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Position
+        status:
+          anyOf:
+          - enum:
+            - active
+            - achieved
+            - dropped
+            type: string
+          - type: 'null'
+          title: Status
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      title: OrgGoalUpdate
+      type: object
     OrgOwner:
       additionalProperties: false
       description: 'The tenant''s first owner. Becomes a `users` mirror row plus an `owner` `rbac_grants`
@@ -407,6 +741,70 @@ components:
       - clerk_user_id
       - email
       title: OrgOwner
+      type: object
+    OrgProfile:
+      description: '`updated_by` / `updated_at` are null for an org that has never saved a profile.'
+      properties:
+        customers:
+          items:
+            type: string
+          title: Customers
+          type: array
+        description:
+          title: Description
+          type: string
+        industry:
+          title: Industry
+          type: string
+        products:
+          items:
+            type: string
+          title: Products
+          type: array
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+        updated_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Updated By
+      required:
+      - description
+      - industry
+      - products
+      - customers
+      - updated_by
+      - updated_at
+      title: OrgProfile
+      type: object
+    OrgProfileUpdate:
+      additionalProperties: false
+      description: '`PUT /api/v1/org/profile`: replaces the whole profile. An omitted field is cleared.'
+      properties:
+        customers:
+          items:
+            type: string
+          title: Customers
+          type: array
+        description:
+          default: ''
+          title: Description
+          type: string
+        industry:
+          default: ''
+          title: Industry
+          type: string
+        products:
+          items:
+            type: string
+          title: Products
+          type: array
+      title: OrgProfileUpdate
       type: object
     Organization:
       description: 'The tenant root, restricted to the columns `mytheus_app` may read at all (migration
@@ -567,6 +965,51 @@ components:
       - tier
       title: RbacGrantUpdate
       type: object
+    Readiness:
+      properties:
+        checks:
+          items:
+            $ref: '#/components/schemas/ReadinessCheck'
+          title: Checks
+          type: array
+        score:
+          maximum: 100.0
+          minimum: 0.0
+          title: Score
+          type: integer
+      required:
+      - score
+      - checks
+      title: Readiness
+      type: object
+    ReadinessCheck:
+      properties:
+        detail:
+          title: Detail
+          type: string
+        done:
+          title: Done
+          type: boolean
+        key:
+          enum:
+          - profile
+          - vocabulary
+          - owners
+          - goals
+          - ground_rules
+          - roles
+          title: Key
+          type: string
+        label:
+          title: Label
+          type: string
+      required:
+      - key
+      - label
+      - done
+      - detail
+      title: ReadinessCheck
+      type: object
     ResolveRequest:
       properties:
         reason:
@@ -656,6 +1099,16 @@ components:
       - entity_type
       - value
       title: Span
+      type: object
+    TeamMate:
+      properties:
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      title: TeamMate
       type: object
     TeamRef:
       description: 'A team membership as it appears inside `UserContext.team`. Not the full `Team`
@@ -788,6 +1241,117 @@ components:
       - previous
       - changed
       title: TenantStatusResult
+      type: object
+    TopicOwner:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_user_id:
+          format: uuid
+          title: Owner User Id
+          type: string
+        topic:
+          title: Topic
+          type: string
+      required:
+      - id
+      - topic
+      - owner_user_id
+      - created_at
+      title: TopicOwner
+      type: object
+    TopicOwnerCreate:
+      additionalProperties: false
+      properties:
+        owner_user_id:
+          format: uuid
+          title: Owner User Id
+          type: string
+        topic:
+          title: Topic
+          type: string
+      required:
+      - topic
+      - owner_user_id
+      title: TopicOwnerCreate
+      type: object
+    TopicOwnerList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TopicOwner'
+          title: Items
+          type: array
+      required:
+      - items
+      title: TopicOwnerList
+      type: object
+    TopicOwnerUpdate:
+      additionalProperties: false
+      properties:
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        topic:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Topic
+      title: TopicOwnerUpdate
+      type: object
+    TopicWatch:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        topic:
+          title: Topic
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - user_id
+      - topic
+      - created_at
+      title: TopicWatch
+      type: object
+    TopicWatchCreate:
+      additionalProperties: false
+      properties:
+        topic:
+          title: Topic
+          type: string
+      required:
+      - topic
+      title: TopicWatchCreate
+      type: object
+    TopicWatchList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TopicWatch'
+          title: Items
+          type: array
+      required:
+      - items
+      title: TopicWatchList
       type: object
     UserContext:
       description: '`GET /context/{user_id}` response - the canonical `get_user_context()` shape (Plan
@@ -1082,6 +1646,52 @@ components:
       - type
       title: ValidationError
       type: object
+    Welcome:
+      properties:
+        glossary:
+          items:
+            $ref: '#/components/schemas/GlossaryTerm'
+          title: Glossary
+          type: array
+        goals:
+          items:
+            $ref: '#/components/schemas/OrgGoal'
+          title: Goals
+          type: array
+        owners:
+          items:
+            $ref: '#/components/schemas/WelcomeOwner'
+          title: Owners
+          type: array
+        profile:
+          $ref: '#/components/schemas/OrgProfile'
+        team:
+          items:
+            $ref: '#/components/schemas/TeamMate'
+          title: Team
+          type: array
+      required:
+      - profile
+      - goals
+      - owners
+      - glossary
+      - team
+      title: Welcome
+      type: object
+    WelcomeOwner:
+      properties:
+        owner_user_id:
+          format: uuid
+          title: Owner User Id
+          type: string
+        topic:
+          title: Topic
+          type: string
+      required:
+      - topic
+      - owner_user_id
+      title: WelcomeOwner
+      type: object
   securitySchemes:
     HTTPBearer:
       bearerFormat: JWT
@@ -1246,6 +1856,804 @@ paths:
       summary: Revoke Scope
       tags:
       - agent-authz
+  /api/v1/org/glossary:
+    get:
+      description: 'authz: member. Every term (at most 500), ordered by term, case-insensitively.'
+      operationId: list_glossary
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlossaryTermList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Glossary
+      tags:
+      - company-brain
+    post:
+      description: 'authz: admin. 409 when the term exists (case-insensitively); 422 at 500 terms.'
+      operationId: create_glossary_term
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlossaryTermCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlossaryTerm'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Glossary Term
+      tags:
+      - company-brain
+  /api/v1/org/glossary/import:
+    post:
+      description: 'authz: admin. Upsert up to 200 terms by `lower(term)`; all or nothing.
+
+
+        A term already present takes the imported spelling, kind, definition and aliases. A repeat
+
+        within the same import collapses to its last entry. 422 naming `terms` when the new terms
+
+        would take the glossary past 500; nothing is written then.'
+      operationId: import_glossary
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlossaryImport'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlossaryImportResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Import Glossary
+      tags:
+      - company-brain
+  /api/v1/org/glossary/{term_id}:
+    delete:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id.'
+      operationId: delete_glossary_term
+      parameters:
+      - in: path
+        name: term_id
+        required: true
+        schema:
+          format: uuid
+          title: Term Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Glossary Term
+      tags:
+      - company-brain
+    patch:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id; 409 on a rename collision.'
+      operationId: update_glossary_term
+      parameters:
+      - in: path
+        name: term_id
+        required: true
+        schema:
+          format: uuid
+          title: Term Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlossaryTermUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlossaryTerm'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Glossary Term
+      tags:
+      - company-brain
+  /api/v1/org/goals:
+    get:
+      description: 'authz: member. Every goal, any status, in `position` order.'
+      operationId: list_goals
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgGoalList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Goals
+      tags:
+      - company-brain
+    post:
+      description: 'authz: admin. 422 naming `status` when it would be the 31st active goal.'
+      operationId: create_goal
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgGoalCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgGoal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Goal
+      tags:
+      - company-brain
+  /api/v1/org/goals/{goal_id}:
+    delete:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id.'
+      operationId: delete_goal
+      parameters:
+      - in: path
+        name: goal_id
+        required: true
+        schema:
+          format: uuid
+          title: Goal Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Goal
+      tags:
+      - company-brain
+    patch:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id; 422 naming `status` when
+
+        re-activating would make a 31st active goal.'
+      operationId: update_goal
+      parameters:
+      - in: path
+        name: goal_id
+        required: true
+        schema:
+          format: uuid
+          title: Goal Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgGoalUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgGoal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Goal
+      tags:
+      - company-brain
+  /api/v1/org/ground-rules:
+    get:
+      description: 'authz: member. No `tenant_settings` row reads as an empty list.'
+      operationId: read_ground_rules
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroundRules'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Read Ground Rules
+      tags:
+      - company-brain
+    put:
+      description: 'authz: admin. Upsert, for the reason `routes/tenant_settings.py` gives: provisioning
+
+        does not create a `tenant_settings` row.'
+      operationId: put_ground_rules
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroundRulesUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroundRules'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Ground Rules
+      tags:
+      - company-brain
+  /api/v1/org/profile:
+    get:
+      description: 'authz: member. An org that never saved a profile reads as empty, not 404.'
+      operationId: read_profile
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgProfile'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Read Profile
+      tags:
+      - company-brain
+    put:
+      description: 'authz: admin. Replaces the whole profile.'
+      operationId: put_profile
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgProfileUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgProfile'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Profile
+      tags:
+      - company-brain
+  /api/v1/org/readiness:
+    get:
+      description: 'authz: admin. Six checks, equal weights; `score` is the share done, 0 to 100.'
+      operationId: readiness
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Readiness
+      tags:
+      - company-brain
+  /api/v1/org/topic-owners:
+    get:
+      description: 'authz: member.'
+      operationId: list_topic_owners
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicOwnerList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Topic Owners
+      tags:
+      - company-brain
+    post:
+      description: 'authz: admin. 409 when the topic already has an owner; 422 at 200 topics, or when
+
+        `owner_user_id` is not a member of this organization.'
+      operationId: create_topic_owner
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TopicOwnerCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicOwner'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create Topic Owner
+      tags:
+      - company-brain
+  /api/v1/org/topic-owners/{owner_id}:
+    delete:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id.'
+      operationId: delete_topic_owner
+      parameters:
+      - in: path
+        name: owner_id
+        required: true
+        schema:
+          format: uuid
+          title: Owner Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Topic Owner
+      tags:
+      - company-brain
+    patch:
+      description: 'authz: admin. 404 for an unknown or another tenant''s id; 409 on a topic collision.'
+      operationId: update_topic_owner
+      parameters:
+      - in: path
+        name: owner_id
+        required: true
+        schema:
+          format: uuid
+          title: Owner Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TopicOwnerUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicOwner'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Topic Owner
+      tags:
+      - company-brain
+  /api/v1/org/welcome:
+    get:
+      description: 'authz: member. The new joiner brief: profile, active goals, owners, the first 40 terms,
+
+        and the caller''s team mates (people sharing a team with them, themselves excluded).
+
+
+        `teams` / `team_members` are core-api''s; this only reads them, the same established pattern
+
+        `context/service.py` uses for a user''s teams.'
+      operationId: welcome
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Welcome'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Welcome
+      tags:
+      - company-brain
+  /api/v1/users/me/topic-watches:
+    get:
+      description: 'authz: member, self only. The caller''s own watches.'
+      operationId: list_my_topic_watches
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicWatchList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List My Topic Watches
+      tags:
+      - company-brain
+    post:
+      description: 'authz: member, self only. 409 when already watched (case-insensitively); 422 naming
+
+        `topic` at 20 watches.'
+      operationId: create_my_topic_watch
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TopicWatchCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicWatch'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Create My Topic Watch
+      tags:
+      - company-brain
+  /api/v1/users/me/topic-watches/{watch_id}:
+    delete:
+      description: 'authz: member, self only. Someone else''s watch is a 404, never a 403.'
+      operationId: delete_my_topic_watch
+      parameters:
+      - in: path
+        name: watch_id
+        required: true
+        schema:
+          format: uuid
+          title: Watch Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete My Topic Watch
+      tags:
+      - company-brain
   /clerk/webhook:
     post:
       operationId: clerk_webhook

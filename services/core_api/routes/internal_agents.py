@@ -52,6 +52,7 @@ from sqlalchemy import text
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
+from services.core_api.brain import latest_statuses, may_share_source
 from services.core_api.routes.internal_meetings import authenticate_caller, service_token_scheme
 
 ALLOWED_CALLERS = frozenset({"agent-runtime-service"})
@@ -106,6 +107,17 @@ class InternalAgendaItem(BaseModel):
     duration_minutes: int | None
     status: str
     status_source: str | None
+    # ADR-0039 C5: the owner (to nudge the host with a proxied owner's update) and the goal.
+    owner_user_id: uuid.UUID | None = None
+    goal_id: uuid.UUID | None = None
+
+
+class InternalProxy(BaseModel):
+    """ADR-0039 B5: a participant who sent their agent instead."""
+
+    user_id: uuid.UUID
+    proxy_update: str | None
+    proxy_questions: list[str]
 
 
 class InternalCarryForward(BaseModel):
@@ -114,12 +126,15 @@ class InternalCarryForward(BaseModel):
 
 
 class InternalAgenda(BaseModel):
+    title: str | None = None
+    confidential: bool = False
     host_user_id: uuid.UUID | None
     previous_meeting_id: uuid.UUID | None
     scheduled_start: datetime | None
     scheduled_end: datetime | None
     items: list[InternalAgendaItem]
     carry_forward: InternalCarryForward
+    proxies: list[InternalProxy] = Field(default_factory=list)
 
 
 _RELATED = text("""
@@ -127,7 +142,7 @@ _RELATED = text("""
         SELECT m.id, m.updated_at
         FROM meetings m JOIN meeting_participants p ON p.meeting_id = m.id
         WHERE p.user_id = :uid AND m.status = 'ended' AND m.deleted_at IS NULL
-          AND m.id <> :mid
+          AND m.id <> :mid AND NOT m.confidential
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT :recent
     )
@@ -284,7 +299,7 @@ async def meeting_agenda(
             (
                 await session.execute(
                     text(
-                        "SELECT m.scheduled_start, m.scheduled_end, "
+                        "SELECT m.title, m.confidential, m.scheduled_start, m.scheduled_end, "
                         "(SELECT p.id FROM meetings p WHERE p.id = m.previous_meeting_id "
                         " AND p.deleted_at IS NULL) AS previous_meeting_id, "
                         "(SELECT mp.user_id FROM meeting_participants mp "
@@ -304,7 +319,8 @@ async def meeting_agenda(
             (
                 await session.execute(
                     text(
-                        "SELECT id, position, title, duration_minutes, status, status_source "
+                        "SELECT id, position, title, duration_minutes, status, status_source, "
+                        "owner_user_id, goal_id "
                         "FROM meeting_agenda_items WHERE meeting_id = :m ORDER BY position, id"
                     ),
                     {"m": str(meeting_id)},
@@ -315,7 +331,9 @@ async def meeting_agenda(
         )
         carry = InternalCarryForward()
         previous = meeting["previous_meeting_id"]
-        if previous is not None:
+        # ADR-0039 B2: a confidential previous meeting is a source only when everyone in this
+        # meeting was in it too (the MeetingAgent can repeat carry-forward to the whole room).
+        if previous is not None and await may_share_source(session, previous, meeting_id):
             carry.decisions = list(
                 (
                     await session.execute(
@@ -328,19 +346,40 @@ async def meeting_agenda(
                     )
                 ).scalars()
             )
-            carry.open_actions = list(
-                (
-                    await session.execute(
-                        text(
-                            "SELECT content FROM action_items WHERE meeting_id = :p "
-                            "AND status = 'confirmed' AND deleted_at IS NULL "
-                            "ORDER BY created_at, id"
-                        ),
-                        {"p": str(previous)},
-                    )
-                ).scalars()
+            actions = list(
+                await session.execute(
+                    text(
+                        "SELECT id, content FROM action_items WHERE meeting_id = :p "
+                        "AND status = 'confirmed' AND deleted_at IS NULL "
+                        "ORDER BY created_at, id"
+                    ),
+                    {"p": str(previous)},
+                )
             )
+            statuses = await latest_statuses(session, [a[0] for a in actions])
+            # ADR-0039 B7: each open action's string carries its latest answered status.
+            carry.open_actions = [
+                (
+                    f"{a[1]} (latest status: {statuses[a[0]].text})"
+                    if a[0] in statuses
+                    else str(a[1])
+                )
+                for a in actions
+            ]
+        proxies = await session.execute(
+            text(
+                "SELECT user_id, proxy_update, proxy_questions FROM meeting_participants "
+                "WHERE meeting_id = :m AND attendance = 'agent' ORDER BY user_id"
+            ),
+            {"m": str(meeting_id)},
+        )
         return InternalAgenda(
+            title=meeting["title"],
+            confidential=bool(meeting["confidential"]),
+            proxies=[
+                InternalProxy(user_id=r[0], proxy_update=r[1], proxy_questions=list(r[2] or []))
+                for r in proxies
+            ],
             host_user_id=meeting["host_user_id"],
             previous_meeting_id=previous,
             scheduled_start=meeting["scheduled_start"],

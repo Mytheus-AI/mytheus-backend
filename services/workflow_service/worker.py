@@ -17,9 +17,11 @@ from temporalio.worker import Worker
 
 from services.workflow_service.activities import LifecycleActivities
 from services.workflow_service.followup_activities import FollowUpActivities
+from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
+from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from services.workflow_service.workflows.rtbf import RTBFWorkflow
 from services.workflow_service.workflows.usage_rollup import UsageRollupWorkflow, ensure_schedule
 
@@ -35,17 +37,20 @@ async def main() -> None:
     # dunning are still stubs.
     lifecycle = LifecycleActivities.from_env()
     followup = FollowUpActivities.from_env()
+    # ADR-0039 B9: MeetingRemindersWorkflow's REST + outbox activities.
+    reminders = ReminderActivities.from_env()
     worker = Worker(
         client,
         task_queue=_TASK_QUEUE,
         workflows=[
             MeetingLifecycleWorkflow,
+            MeetingRemindersWorkflow,
             ActionFollowUpWorkflow,
             RTBFWorkflow,
             DunningSagaWorkflow,
             UsageRollupWorkflow,
         ],
-        activities=[*lifecycle.all(), *followup.all()],
+        activities=[*lifecycle.all(), *followup.all(), *reminders.all()],
     )
     if await ensure_schedule(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")

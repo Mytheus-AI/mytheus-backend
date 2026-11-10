@@ -17,7 +17,14 @@ meeting-service reporting the LiveKit room finished (`POST /internal/meetings/{i
   failed) is started again, already ended, so post-processing still happens; one that
   COMPLETED (post-processing done) is left alone, so a replayed `ended` never runs it twice.
   Re-signalling a running one is harmless (the signal sets a flag).
-- `updated`: ignored.
+- `updated`: ignored by MeetingLifecycleWorkflow.
+
+ADR-0039 B9: the same events drive the sibling MeetingRemindersWorkflow
+(`meetingreminders-{meeting_id}`, `workflows/meeting_reminders.py`): `created` starts it
+(`REJECT_DUPLICATE`, so a redelivery starts nothing); `updated` signals `meeting_updated` (a
+reschedule or cancel re-plans its timers); `ended` signals `meeting_ended`. A signal to a run that
+does not exist or has completed is a no-op (Temporal answers NOT_FOUND). The return value still
+describes the lifecycle run.
 
 A message that can never apply (no header org, a non-UUID, an unknown event type) is poison:
 dead-lettered to `meeting-events.dlq` and committed past. Temporal being unreachable is NOT
@@ -42,6 +49,7 @@ from typing import Any, Literal
 from temporalio.client import Client, WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from services.workflow_service.actions_consumer import TOPIC as ACTIONS_TOPIC
 from services.workflow_service.actions_consumer import PoisonAction, handle_action_event
@@ -49,6 +57,16 @@ from services.workflow_service.workflows.meeting_lifecycle import (
     ENDED_SIGNAL,
     MeetingLifecycleWorkflow,
     workflow_id_for,
+)
+from services.workflow_service.workflows.meeting_reminders import (
+    ENDED_SIGNAL as REMINDERS_ENDED,
+)
+from services.workflow_service.workflows.meeting_reminders import (
+    UPDATED_SIGNAL,
+    MeetingRemindersWorkflow,
+)
+from services.workflow_service.workflows.meeting_reminders import (
+    workflow_id_for as reminders_id_for,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,10 +95,36 @@ def _parse(value: dict[str, Any]) -> tuple[str, str, str]:
     return org_id, meeting_id, event_type
 
 
+async def _reminders(
+    client: Client, meeting_id: str, org_id: str, event_type: str, task_queue: str
+) -> None:
+    """ADR-0039 B9: start or signal MeetingRemindersWorkflow (see the module docstring)."""
+    workflow_id = reminders_id_for(meeting_id)
+    if event_type == "created":
+        try:
+            await client.start_workflow(
+                MeetingRemindersWorkflow.run,
+                args=[meeting_id, org_id],
+                id=workflow_id,
+                task_queue=task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+        except WorkflowAlreadyStartedError:
+            pass
+        return
+    signal = UPDATED_SIGNAL if event_type == "updated" else REMINDERS_ENDED
+    try:
+        await client.get_workflow_handle(workflow_id).signal(signal)
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            raise
+
+
 async def handle_meeting_event(
     client: Client, value: dict[str, Any], *, task_queue: str
 ) -> Outcome:
     org_id, meeting_id, event_type = _parse(value)
+    await _reminders(client, meeting_id, org_id, event_type, task_queue)
     if event_type == "updated":
         return "ignored"
     start: dict[str, Any] = {
