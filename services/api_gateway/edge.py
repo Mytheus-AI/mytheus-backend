@@ -52,7 +52,13 @@ PUBLIC_PREFIXES = (
     "/clerk/webhook",
     "/stripe/webhook",
     "/livekit/webhook",
+    # integration-service (P12). `/oauth/{provider}` is the provider's browser redirect back
+    # to us: no Clerk session rides it, and it is authenticated by the HMAC-signed `state` plus
+    # the single-use PKCE verifier. `/webhooks/{provider}` is verified per provider (Slack v0
+    # signature, Google channel token, Jira JWT). Note the trailing slashes: `/integrations`
+    # (the settings API) is NOT public and stays JWT-gated like everything else.
     "/oauth/",
+    "/webhooks/",
 )
 
 # The gateway's own Prometheus endpoint (mounted by `create_app`). Deliberately NOT in
@@ -212,6 +218,9 @@ ROUTE_MAP: dict[str, str] = {
     "/admin/ops": "admin-ops-service",
     "/oauth": "integration-service",
     "/webhooks": "integration-service",
+    # The settings API (list, connect, disconnect). JWT-gated; owner/admin enforced by the
+    # service. `/internal/*` is deliberately absent, as for every service.
+    "/integrations": "integration-service",
 }
 
 
