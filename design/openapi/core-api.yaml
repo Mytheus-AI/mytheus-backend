@@ -486,7 +486,9 @@ components:
       title: AttendanceUpdate
       type: object
     CandidateList:
-      description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first.'
+      description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first. With
+
+        `include_resolved=true`, the meeting''s confirmed ones too (each row carries its `status`).'
       properties:
         actions:
           items:
@@ -502,6 +504,65 @@ components:
       - decisions
       - actions
       title: CandidateList
+      type: object
+    CandidateState:
+      description: '`GET /meetings/:id/candidates/:candidate_id`: one decision or action candidate of
+        this
+
+        meeting, in any status. Read by `realtime-gateway` to verify a room-wide resolution event
+
+        against the stored row before it tells the room (the shared candidate ledger).'
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - decision
+          - action
+          title: Kind
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - kind
+      - meeting_id
+      - status
+      - content
+      title: CandidateState
       type: object
     CarryForward:
       description: '`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists
@@ -594,6 +655,18 @@ components:
       - id
       - question
       title: CarryForwardQuestion
+      type: object
+    ChatHistory:
+      description: '`GET /meetings/:id/chat`: the meeting''s most recent chat messages, oldest first.'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ChatHistory
       type: object
     ChatMessage:
       properties:
@@ -1398,6 +1471,7 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - EXTERNAL_MEETING
       - PROVIDER_NOT_CONFIGURED
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
@@ -1869,6 +1943,15 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          default: mytheus
+          enum:
+          - mytheus
+          - meet
+          - teams
+          - zoom
+          title: Source
+          type: string
         status:
           enum:
           - scheduled
@@ -1948,6 +2031,16 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          anyOf:
+          - enum:
+            - mytheus
+            - meet
+            - teams
+            - zoom
+            type: string
+          - type: 'null'
+          title: Source
         template_id:
           anyOf:
           - format: uuid
@@ -2030,6 +2123,15 @@ components:
             type: string
           - type: 'null'
           title: Scheduled Start
+        source:
+          default: mytheus
+          enum:
+          - mytheus
+          - meet
+          - teams
+          - zoom
+          title: Source
+          type: string
         status:
           enum:
           - scheduled
@@ -5377,7 +5479,16 @@ paths:
 
         Re-hydrates the agent sidebar on every socket (re)connect. The 0.4-0.7 silent band is
 
-        stored but never served; the surface threshold is the tenant''s, per agent.'
+        stored but never served; the surface threshold is the tenant''s, per agent.
+
+
+        `include_resolved=true` (polish program, shared candidate ledger) also returns the
+
+        meeting''s CONFIRMED decisions and actions, whatever their confidence (a person confirmed
+
+        them), with `confirmed_by`, so the room can show "Confirmed by Maya" and the live Decisions
+
+        and Actions in Notes mode after a reload. Dismissed rows are never returned.'
       operationId: list_candidates
       parameters:
       - in: path
@@ -5387,6 +5498,13 @@ paths:
           format: uuid
           title: Meeting Id
           type: string
+      - in: query
+        name: include_resolved
+        required: false
+        schema:
+          default: false
+          title: Include Resolved
+          type: boolean
       responses:
         '200':
           content:
@@ -5410,6 +5528,59 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: List Candidates
+      tags:
+      - candidates
+  /api/v1/meetings/{meeting_id}/candidates/{candidate_id}:
+    get:
+      description: 'One decision or action candidate of this meeting, in any status.
+
+
+        The shared candidate ledger: after someone confirms, edits or (as host) dismisses a card,
+
+        their client tells `realtime-gateway`, which reads the row here WITH THAT PERSON''S TOKEN and
+
+        only tells the room what the stored row says. So no client can announce a resolution the
+
+        server does not hold. Participants only; another meeting''s id is a 404.'
+      operationId: get_candidate
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: candidate_id
+        required: true
+        schema:
+          format: uuid
+          title: Candidate Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateState'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Candidate
       tags:
       - candidates
   /api/v1/meetings/{meeting_id}/carry-forward:
@@ -5462,6 +5633,63 @@ paths:
       summary: Carry Forward
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/chat:
+    get:
+      description: 'The meeting''s chat, newest `limit` messages, returned oldest first.
+
+
+        Polish program, Phase 0: chat used to ride LiveKit''s data channel only, so a late joiner saw
+
+        nothing and agents could not read it. The room now sends through `realtime-gateway`''s socket
+
+        chat, which persists here via `POST /chat`; this is the read the room re-hydrates from on
+
+        every (re)connect. Participants only, same codes as the write (404 other tenant''s meeting,
+
+        403 not a participant).'
+      operationId: list_chat
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 500
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatHistory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Chat
+      tags:
+      - chat
   /api/v1/meetings/{meeting_id}/collaborations:
     get:
       description: The meeting's A2A collaboration log, newest first. Participants and admins only.

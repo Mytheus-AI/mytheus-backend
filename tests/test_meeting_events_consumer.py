@@ -631,3 +631,36 @@ async def test_created_for_a_nonexistent_meeting_is_poison(migrated_db):
     finally:
         await app_engine.dispose()
         await su.dispose()
+
+
+async def test_created_for_a_captured_external_meeting_opens_no_room(migrated_db):
+    """meetings.source = 'teams': no meeting_rooms row, no LiveKit sync (the room nobody joins would
+    end the meeting after LiveKit's empty timeout)."""
+    su = create_async_engine(migrated_db)
+    org_id = uuid.uuid4()
+    await seed_org(su, org_id, slug_prefix="ext")
+    meeting_id = uuid.uuid4()
+    await _seed_meeting(su, org_id, meeting_id)
+    async with su.begin() as conn:
+        await conn.execute(
+            text("UPDATE meetings SET source = 'teams' WHERE id = :id"), {"id": str(meeting_id)}
+        )
+
+    redis = fakeredis.aioredis.FakeRedis()
+    app_engine = create_async_engine(APP_URL)
+    value = _envelope(
+        str(org_id),
+        str(uuid.uuid4()),
+        meeting_id=str(meeting_id),
+        event_type="created",
+        livekit_room=None,
+    )
+    try:
+        async with app_engine.connect() as conn, conn.begin():
+            result = await handle_meeting_event(conn, redis, value)
+        assert result.applied is True
+        assert result.pending_room_sync is None
+        assert await _meeting_room(app_engine, org_id, meeting_id) is None
+    finally:
+        await app_engine.dispose()
+        await su.dispose()

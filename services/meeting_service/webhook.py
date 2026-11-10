@@ -351,7 +351,8 @@ async def _apply_participant_event(
     if room_event_type == "joined":
         await session.execute(
             text(
-                "UPDATE meeting_rooms SET status = 'active', updated_at = now() "
+                "UPDATE meeting_rooms SET status = 'active', "
+                "started_at = COALESCE(started_at, now()), updated_at = now() "
                 "WHERE org_id = :org AND meeting_id = :meeting AND status = 'pending'"
             ),
             {"org": str(org_id), "meeting": str(meeting_id)},

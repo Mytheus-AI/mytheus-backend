@@ -30,13 +30,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api.schemas import ChatMessage, ChatMessageCreate
+from services.core_api.schemas import ChatHistory, ChatMessage, ChatMessageCreate
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -119,3 +119,45 @@ async def post_chat(
         .one()
     )
     return ChatMessage(**dict(row))
+
+
+# A meeting's chat is read back whole by the room on every (re)connect; 500 recent messages is
+# far beyond any real meeting and keeps the read bounded.
+MAX_CHAT_HISTORY = 500
+
+
+@router.get("/meetings/{meeting_id}/chat", response_model=ChatHistory)
+async def list_chat(
+    meeting_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+    limit: Annotated[int, Query(ge=1, le=MAX_CHAT_HISTORY)] = MAX_CHAT_HISTORY,
+) -> ChatHistory:
+    """The meeting's chat, newest `limit` messages, returned oldest first.
+
+    Polish program, Phase 0: chat used to ride LiveKit's data channel only, so a late joiner saw
+    nothing and agents could not read it. The room now sends through `realtime-gateway`'s socket
+    chat, which persists here via `POST /chat`; this is the read the room re-hydrates from on
+    every (re)connect. Participants only, same codes as the write (404 other tenant's meeting,
+    403 not a participant).
+    """
+    if ctx.user_id is None:
+        raise _not_a_participant()
+    await _fetch_meeting_exists(session, meeting_id)
+    await _require_participant(session, meeting_id, ctx.user_id)
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, meeting_id, user_id, content, created_at FROM ("
+                    "  SELECT id, meeting_id, user_id, content, created_at FROM chat_messages "
+                    "  WHERE meeting_id = :m ORDER BY created_at DESC, id DESC LIMIT :limit"
+                    ") recent ORDER BY created_at ASC, id ASC"
+                ),
+                {"m": str(meeting_id), "limit": limit},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return ChatHistory(items=[ChatMessage(**dict(r)) for r in rows])

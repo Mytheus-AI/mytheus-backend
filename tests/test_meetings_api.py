@@ -557,3 +557,21 @@ def test_another_tenants_meeting_is_404_for_invites(client, tenant_a, tenant_b):
     )
 
     assert r.status_code == 404
+
+
+def test_create_records_where_the_call_happens(client, tenant_a):
+    """meetings.source: omitted is a Mytheus room; a captured Meet/Teams/Zoom call says so; an
+    unknown source is a 422, never a silent default."""
+    plain = client.post("/api/v1/meetings", json={"title": "Standup"})
+    assert plain.status_code == 201, plain.text
+    assert plain.json()["source"] == "mytheus"
+
+    captured = client.post("/api/v1/meetings", json={"title": "Vendor call", "source": "meet"})
+    assert captured.status_code == 201, captured.text
+    assert captured.json()["source"] == "meet"
+    got = client.get(f"/api/v1/meetings/{captured.json()['id']}").json()
+    assert got["source"] == "meet"
+
+    assert (
+        client.post("/api/v1/meetings", json={"title": "x", "source": "skype"}).status_code == 422
+    )

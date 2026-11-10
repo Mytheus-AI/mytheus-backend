@@ -676,3 +676,65 @@ def test_an_undecodable_record_is_poison_not_a_crash():
 
     with pytest.raises(RegistryDown):
         decode(transient, b"\x00", None)
+
+
+# --- the shared candidate ledger (polish program, Phase 0) ---------------------------------
+
+
+def test_include_resolved_adds_confirmed_rows_never_dismissed(client, migrated_db):
+    t = seed_tenant()
+    m = participant_meeting(t)
+    proposed = seed_decision(t, m, confidence=0.8)
+    confirmed = seed_decision(t, m, confidence=0.5, status="confirmed")  # any confidence
+    seed_decision(t, m, confidence=0.95, status="dismissed")
+    done = seed_action(t, m, confidence=0.3)
+
+    sign_in(t)
+    assert client.post(f"/api/v1/actions/{done}/confirm").status_code == 200
+    plain = client.get(f"/api/v1/meetings/{m}/candidates").json()
+    assert [d["id"] for d in plain["decisions"]] == [str(proposed)]
+    assert plain["actions"] == []
+
+    body = client.get(f"/api/v1/meetings/{m}/candidates?include_resolved=true").json()
+    assert {d["id"]: d["status"] for d in body["decisions"]} == {
+        str(proposed): "proposed",
+        str(confirmed): "confirmed",
+    }
+    assert [(a["id"], a["status"]) for a in body["actions"]] == [(str(done), "confirmed")]
+
+
+def test_get_one_candidate_in_any_status_for_the_gateway(client, migrated_db):
+    t = seed_tenant()
+    m = participant_meeting(t)
+    d, a = seed_decision(t, m), seed_action(t, m)
+    sign_in(t)
+
+    resp = client.get(f"/api/v1/meetings/{m}/candidates/{d}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kind"] == "decision"
+    assert resp.json()["status"] == "proposed"
+
+    assert client.post(f"/api/v1/actions/{a}/confirm").status_code == 200
+    body = client.get(f"/api/v1/meetings/{m}/candidates/{a}").json()
+    assert body["kind"] == "action"
+    assert body["status"] == "confirmed"
+    assert body["confirmed_by"] == str(t.user_id)
+    assert body["due_date"] == "2026-12-02"
+
+    # Another meeting's id under this meeting, an unknown id: 404.
+    other = participant_meeting(t)
+    assert client.get(f"/api/v1/meetings/{other}/candidates/{d}").status_code == 404
+    assert client.get(f"/api/v1/meetings/{m}/candidates/{uuid.uuid4()}").status_code == 404
+
+
+def test_get_one_candidate_is_403_for_a_non_participant_and_404_cross_tenant(client, migrated_db):
+    a, b = seed_tenant(), seed_tenant()
+    not_mine = seed_meeting(a.org_id)
+    d = seed_decision(a, not_mine)
+    sign_in(a)
+    resp = client.get(f"/api/v1/meetings/{not_mine}/candidates/{d}")
+    assert resp.status_code == 403
+    theirs = participant_meeting(b)
+    theirs_d = seed_decision(b, theirs)
+    sign_in(a)
+    assert client.get(f"/api/v1/meetings/{theirs}/candidates/{theirs_d}").status_code == 404

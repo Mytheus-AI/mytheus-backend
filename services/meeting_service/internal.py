@@ -143,7 +143,7 @@ async def open_room(
             (
                 await session.execute(
                     text(
-                        "SELECT status, scheduled_start FROM meetings "
+                        "SELECT status, scheduled_start, source FROM meetings "
                         "WHERE id = :id AND deleted_at IS NULL"
                     ),
                     {"id": str(meeting_id)},
@@ -155,7 +155,8 @@ async def open_room(
         if meeting is None:
             raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
         scheduled = meeting["scheduled_start"]
-        if meeting["status"] in ("ended", "cancelled"):
+        # Ended meetings stay closed; a call captured from Meet/Teams/Zoom never gets a room.
+        if meeting["status"] in ("ended", "cancelled") or meeting["source"] != "mytheus":
             return RoomOpened(
                 meeting_id=meeting_id, room=None, opened=False, scheduled_start=scheduled
             )

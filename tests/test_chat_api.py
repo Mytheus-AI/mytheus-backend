@@ -308,3 +308,39 @@ def test_body_user_id_is_accepted_but_ignored(client, tenant_a, tenant_b):
 
     assert resp.status_code == 201, resp.text
     assert resp.json()["user_id"] == str(tenant_a.user_id)
+
+
+# --- chat history (polish program, Phase 0: chat persisted, late joiners see it) ---------------
+
+
+def test_chat_history_returns_the_meetings_messages_oldest_first(client, tenant_a):
+    meeting_id = seed_meeting(tenant_a.org_id)
+    add_participant(meeting_id, tenant_a.org_id, tenant_a.user_id)
+    other = seed_meeting(tenant_a.org_id)
+    add_participant(other, tenant_a.org_id, tenant_a.user_id)
+    for text_ in ("first", "second", "third"):
+        resp = client.post("/api/v1/chat", json={"meeting_id": str(meeting_id), "content": text_})
+        assert resp.status_code == 201, resp.text
+    client.post("/api/v1/chat", json={"meeting_id": str(other), "content": "elsewhere"})
+
+    resp = client.get(f"/api/v1/meetings/{meeting_id}/chat")
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [m["content"] for m in items] == ["first", "second", "third"]
+    assert all(m["user_id"] == str(tenant_a.user_id) for m in items)
+
+    # `limit` keeps the newest, still oldest first.
+    newest = client.get(f"/api/v1/meetings/{meeting_id}/chat?limit=2").json()["items"]
+    assert [m["content"] for m in newest] == ["second", "third"]
+
+
+def test_chat_history_is_403_for_a_non_participant_and_404_cross_tenant(client, tenant_a, tenant_b):
+    mine_not_joined = seed_meeting(tenant_a.org_id)
+    resp = client.get(f"/api/v1/meetings/{mine_not_joined}/chat")
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "NOT_A_PARTICIPANT"
+
+    theirs = seed_meeting(tenant_b.org_id)
+    add_participant(theirs, tenant_b.org_id, tenant_b.user_id)
+    resp = client.get(f"/api/v1/meetings/{theirs}/chat")
+    assert resp.status_code == 404
