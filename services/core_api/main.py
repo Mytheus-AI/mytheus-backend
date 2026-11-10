@@ -11,20 +11,24 @@ never produces either topic.
 
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
+    action_create,
     candidates,
     chat,
     collaborations,
     commitments,
     decision_log,
+    followups,
     internal_agents,
     internal_integrations,
     internal_lifecycle,
     internal_meetings,
+    internal_reach,
     internal_retrieval,
     meeting_templates,
     meetings,
     my_tasks,
     org_hierarchy,
+    share_links,
     speakers,
     status_requests,
     suggestions,
@@ -52,6 +56,13 @@ app.include_router(internal_integrations.router)
 app.include_router(meeting_templates.router)
 app.include_router(commitments.router)
 app.include_router(status_requests.router)
+# Phase 4 reach: tasks created directly, share links (and their public read), the meeting
+# follow-up, and the internal reads integration-service builds CRM notes and exports from.
+app.include_router(action_create.router)
+app.include_router(share_links.router)
+app.include_router(share_links.public_router)
+app.include_router(followups.router)
+app.include_router(internal_reach.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

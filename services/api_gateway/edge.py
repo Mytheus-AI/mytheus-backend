@@ -377,6 +377,8 @@ ROUTE_MAP: dict[str, str] = {
     "/api/v1/api-tokens": "identity-tenant-service",
     # The public read of a share link: no bearer token, the signed token is in the path.
     "/api/v1/public": "core-api",
+    # Revoking a share link (creating and listing them is under meetings / decisions).
+    "/api/v1/share-links": "core-api",
     # The MCP server (Streamable HTTP, JSON-RPC over POST). A route group in bff: it is a
     # client-shaped aggregation over the same public API, like bff's screens.
     "/mcp": "bff",
