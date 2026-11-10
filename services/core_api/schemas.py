@@ -15,9 +15,105 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
+
+# --- ADR-0038 D5/D6: the agenda ------------------------------------------------------------
+
+MAX_AGENDA_ITEMS = 20
+AgendaStatus = Literal["pending", "in_progress", "covered", "skipped"]
+AgendaStatusSource = Literal["agent", "host"]
+
+
+class AgendaItemCreate(BaseModel):
+    """One agenda item as a client writes it. `owner_user_id` must be a participant."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    owner_user_id: uuid.UUID | None = None
+    duration_minutes: Annotated[int, Field(ge=1, le=240)] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _trimmed_title(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+
+class AgendaItemPut(AgendaItemCreate):
+    """`PUT /meetings/{id}/agenda` entry. With the `id` of an existing item of this meeting it
+    keeps that item (and its status); without one it is a new `pending` item."""
+
+    id: uuid.UUID | None = None
+
+
+class AgendaReplace(BaseModel):
+    """`PUT /meetings/{id}/agenda` body: the whole agenda, in order. Items left out are
+    deleted; an empty list clears the agenda."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: Annotated[list[AgendaItemPut], Field(max_length=MAX_AGENDA_ITEMS)]
+
+
+class AgendaItemStatusUpdate(BaseModel):
+    """`PATCH /meetings/{id}/agenda/{item_id}`: the host marks an item. Sets
+    `status_source = 'host'`, after which the MeetingAgent never changes it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: AgendaStatus
+
+
+class AgendaItem(BaseModel):
+    id: uuid.UUID
+    position: int
+    title: str
+    owner_user_id: uuid.UUID | None
+    duration_minutes: int | None
+    status: AgendaStatus
+    status_source: AgendaStatusSource | None
+    agent_note: str | None
+    updated_at: datetime
+
+
+class MeetingRef(BaseModel):
+    """The earlier meeting a meeting follows up (ADR-0038 D6)."""
+
+    id: uuid.UUID
+    title: str | None
+    scheduled_start: datetime | None
+
+
+class CarryForwardDecision(BaseModel):
+    id: uuid.UUID
+    content: str
+
+
+class CarryForwardAction(BaseModel):
+    id: uuid.UUID
+    title: str
+    owner_user_id: uuid.UUID | None
+    due_date: date | None
+
+
+class CarryForwardQuestion(BaseModel):
+    id: uuid.UUID
+    question: str
+
+
+class CarryForward(BaseModel):
+    """`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists and
+    `previous_meeting: null` when the meeting follows up nothing."""
+
+    previous_meeting: MeetingRef | None
+    decisions: list[CarryForwardDecision]
+    open_actions: list[CarryForwardAction]
+    saved_questions: list[CarryForwardQuestion]
 
 
 class MeetingCreate(BaseModel):
@@ -27,6 +123,13 @@ class MeetingCreate(BaseModel):
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     participant_ids: list[uuid.UUID] = Field(default_factory=list)
+    # ADR-0038 D6. `host_user_id` defaults to the creator and must be the creator or one of
+    # `participant_ids`; `previous_meeting_id` must name another meeting of this tenant.
+    host_user_id: uuid.UUID | None = None
+    previous_meeting_id: uuid.UUID | None = None
+    agenda: Annotated[list[AgendaItemCreate], Field(max_length=MAX_AGENDA_ITEMS)] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def _end_after_start(self) -> MeetingCreate:
@@ -56,6 +159,17 @@ class MeetingUpdate(BaseModel):
     scheduled_start: datetime | None = None
     scheduled_end: datetime | None = None
     status: MeetingStatus | None = None
+    # ADR-0038 D6: host or creator only. A meeting always has exactly one host, so the host
+    # cannot be cleared; `previous_meeting_id: null` removes the follow-up link.
+    host_user_id: uuid.UUID | None = None
+    previous_meeting_id: uuid.UUID | None = None
+
+    @field_validator("host_user_id")
+    @classmethod
+    def _host_not_null(cls, v: uuid.UUID | None) -> uuid.UUID | None:
+        if v is None:
+            raise ValueError("a meeting always has a host; name the new host instead")
+        return v
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> MeetingUpdate:
@@ -103,6 +217,18 @@ class Meeting(BaseModel):
     created_at: datetime
     updated_at: datetime
     participants: list[Participant] = Field(default_factory=list)
+    # ADR-0038 D6. `host_user_id` is the participant whose `role_in_meeting` is `host`; null
+    # only for a meeting that has none (one created by the system with no creator).
+    host_user_id: uuid.UUID | None = None
+    previous_meeting_id: uuid.UUID | None = None
+
+
+class MeetingDetail(Meeting):
+    """`GET /meetings/{id}` (and the create/PATCH responses): the meeting plus the meeting it
+    follows up and its agenda, ordered by `position`."""
+
+    previous_meeting: MeetingRef | None = None
+    agenda: list[AgendaItem] = Field(default_factory=list)
 
 
 class MeetingPage(BaseModel):

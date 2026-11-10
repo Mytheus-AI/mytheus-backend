@@ -43,9 +43,19 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from services.core_api.schemas import (
+    AgendaItem,
+    AgendaItemCreate,
+    AgendaItemStatusUpdate,
+    AgendaReplace,
+    CarryForward,
+    CarryForwardAction,
+    CarryForwardDecision,
+    CarryForwardQuestion,
     Meeting,
     MeetingCreate,
+    MeetingDetail,
     MeetingPage,
+    MeetingRef,
     MeetingUpdate,
     Participant,
     ParticipantCheck,
@@ -61,7 +71,11 @@ MAX_LIMIT = 200
 
 _MEETING_COLUMNS = (
     "id, title, status, scheduled_start, scheduled_end, livekit_room, created_by, "
-    "created_at, updated_at"
+    "previous_meeting_id, created_at, updated_at"
+)
+_AGENDA_COLUMNS = (
+    "id, position, title, owner_user_id, duration_minutes, status, status_source, agent_note, "
+    "updated_at"
 )
 
 
@@ -89,8 +103,152 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         raise ProblemDetail(400, ErrorCode.INVALID_CURSOR, "Malformed pagination cursor") from exc
 
 
+def _host_of(participants: list[Participant]) -> uuid.UUID | None:
+    return next((p.user_id for p in participants if p.role_in_meeting == "host"), None)
+
+
 def _row_to_meeting(row: Any, participants: list[Participant] | None = None) -> Meeting:
-    return Meeting(**dict(row), participants=participants or [])
+    participants = participants or []
+    return Meeting(**dict(row), participants=participants, host_user_id=_host_of(participants))
+
+
+def _field_error(loc: list[str], message: str) -> ProblemDetail:
+    """A 422 in the same shape as a request-validation failure, naming the offending field in
+    `errors[].loc`, for rules only the database can check (ADR-0038 D3/D5: "422 naming the
+    field")."""
+    return ProblemDetail(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        message,
+        extra={"errors": [{"loc": ["body", *loc], "msg": message, "type": "value_error"}]},
+    )
+
+
+async def _load_agenda(session: AsyncSession, meeting_id: uuid.UUID) -> list[AgendaItem]:
+    rows = (
+        (
+            await session.execute(
+                text(
+                    f"SELECT {_AGENDA_COLUMNS} FROM meeting_agenda_items "
+                    "WHERE meeting_id = :m ORDER BY position, id"
+                ),
+                {"m": str(meeting_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [AgendaItem(**dict(r)) for r in rows]
+
+
+async def _meeting_ref(session: AsyncSession, meeting_id: uuid.UUID | None) -> MeetingRef | None:
+    """The linked meeting, if this tenant can still see it (a soft-deleted one reads as none)."""
+    if meeting_id is None:
+        return None
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, title, scheduled_start FROM meetings "
+                    "WHERE id = :id AND deleted_at IS NULL"
+                ),
+                {"id": str(meeting_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    return MeetingRef(**dict(row)) if row is not None else None
+
+
+async def _detail(session: AsyncSession, row: Any) -> MeetingDetail:
+    meeting_id = row["id"]
+    participants = (await _load_participants(session, [meeting_id])).get(meeting_id, [])
+    return MeetingDetail(
+        **_row_to_meeting(row, participants).model_dump(),
+        previous_meeting=await _meeting_ref(session, row["previous_meeting_id"]),
+        agenda=await _load_agenda(session, meeting_id),
+    )
+
+
+async def _participant_ids(session: AsyncSession, meeting_id: uuid.UUID) -> set[uuid.UUID]:
+    rows = await session.execute(
+        text("SELECT user_id FROM meeting_participants WHERE meeting_id = :m"),
+        {"m": str(meeting_id)},
+    )
+    return {r[0] for r in rows}
+
+
+async def _require_host_or_creator(
+    session: AsyncSession, ctx: RequestContext, row: Any, what: str
+) -> None:
+    """ADR-0038 D6: only the current host or the creator may change the host, the follow-up
+    link or the agenda. Runs after `_fetch_meeting`, so a meeting the caller cannot see is
+    already a 404 and this 403 says nothing about existence."""
+    if ctx.user_id is not None:
+        if row["created_by"] == ctx.user_id:
+            return
+        is_host = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM meeting_participants WHERE meeting_id = :m AND user_id = :u "
+                    "AND role_in_meeting = 'host'"
+                ),
+                {"m": str(row["id"]), "u": str(ctx.user_id)},
+            )
+        ).first()
+        if is_host:
+            return
+    raise ProblemDetail(
+        status.HTTP_403_FORBIDDEN,
+        ErrorCode.FORBIDDEN_ROLE,
+        f"Only the meeting's host or its creator can change {what}",
+    )
+
+
+async def _check_previous_meeting(
+    session: AsyncSession, meeting_id: uuid.UUID | None, previous_id: uuid.UUID
+) -> None:
+    """The follow-up link must name ANOTHER meeting this caller can see in this tenant. 422,
+    not 404, per ADR-0038 D5: the request is wrong, and RLS already makes another tenant's
+    meeting indistinguishable from a missing one. The FK alone would accept a cross-tenant id
+    (gap 31, `visibility.py`), which is why this check runs under the tenant session first."""
+    if previous_id == meeting_id:
+        raise _field_error(["previous_meeting_id"], "A meeting cannot follow up itself")
+    if not await is_visible(session, "meetings", previous_id):
+        raise _field_error(["previous_meeting_id"], "No such meeting to follow up")
+
+
+def _check_owners(items: list[AgendaItemCreate], participants: set[uuid.UUID], prefix: str) -> None:
+    for i, item in enumerate(items):
+        if item.owner_user_id is not None and item.owner_user_id not in participants:
+            raise _field_error(
+                [prefix, str(i), "owner_user_id"],
+                "An agenda item's owner must be a participant of the meeting",
+            )
+
+
+async def _insert_agenda_item(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    position: int,
+    item: AgendaItemCreate,
+) -> None:
+    await session.execute(
+        text(
+            "INSERT INTO meeting_agenda_items (org_id, meeting_id, position, title, "
+            "owner_user_id, duration_minutes) VALUES (:o, :m, :p, :t, :owner, :d)"
+        ),
+        {
+            "o": str(org_id),
+            "m": str(meeting_id),
+            "p": position,
+            "t": item.title,
+            "owner": str(item.owner_user_id) if item.owner_user_id else None,
+            "d": item.duration_minutes,
+        },
+    )
 
 
 def _not_a_participant() -> ProblemDetail:
@@ -133,15 +291,21 @@ async def _load_participants(
     return out
 
 
-async def _fetch_meeting(session: AsyncSession, meeting_id: uuid.UUID) -> Any:
+async def _fetch_meeting(
+    session: AsyncSession, meeting_id: uuid.UUID, *, for_update: bool = False
+) -> Any:
     """Fetch or 404. No `org_id` predicate: RLS already scopes it, and adding one by hand
-    invites a route that forgets it and quietly works anyway on a superuser connection."""
+    invites a route that forgets it and quietly works anyway on a superuser connection.
+
+    `for_update` row-locks the meeting so two concurrent agenda replaces serialize instead of
+    interleaving their deletes and inserts."""
+    lock = " FOR UPDATE" if for_update else ""
     row = (
         (
             await session.execute(
                 text(
                     f"SELECT {_MEETING_COLUMNS} FROM meetings "
-                    "WHERE id = :id AND deleted_at IS NULL"
+                    f"WHERE id = :id AND deleted_at IS NULL{lock}"
                 ),
                 {"id": str(meeting_id)},
             )
@@ -157,20 +321,43 @@ async def _fetch_meeting(session: AsyncSession, meeting_id: uuid.UUID) -> Any:
 # --- routes ---------------------------------------------------------------------------------
 
 
-@router.post("/meetings", status_code=status.HTTP_201_CREATED, response_model=Meeting)
+@router.post("/meetings", status_code=status.HTTP_201_CREATED, response_model=MeetingDetail)
 async def create_meeting(
     body: MeetingCreate,
     response: Response,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
-) -> Meeting:
-    """Create a meeting, its participants, its event and its audit record, atomically."""
+) -> MeetingDetail:
+    """Create a meeting, its participants, its agenda, its event and its audit record,
+    atomically.
+
+    ADR-0038 D5: exactly one host, `host_user_id` (default: the creator), which must be the
+    creator or one of `participant_ids`; the creator is always a participant (`attendee` when
+    not the host). Agenda owners must be participants. Every 422 below is raised before the
+    first write.
+    """
+    creator = ctx.user_id
+    # De-duplicated, order preserved; the creator is added separately, so listing them is a
+    # no-op.
+    invitees = [u for u in dict.fromkeys(body.participant_ids) if u != creator]
+    host = body.host_user_id or creator
+    if body.host_user_id is not None and body.host_user_id != creator:
+        if body.host_user_id not in invitees:
+            raise _field_error(
+                ["host_user_id"], "The host must be the creator or one of participant_ids"
+            )
+    members = set(invitees) | ({creator} if creator is not None else set())
+    _check_owners(list(body.agenda), members, "agenda")
+    if body.previous_meeting_id is not None:
+        await _check_previous_meeting(session, None, body.previous_meeting_id)
+
     row = (
         (
             await session.execute(
                 text(
                     "INSERT INTO meetings (org_id, title, scheduled_start, scheduled_end, "
-                    "created_by) VALUES (:org, :title, :start, :end, :by) "
+                    "created_by, previous_meeting_id) "
+                    "VALUES (:org, :title, :start, :end, :by, :prev) "
                     f"RETURNING {_MEETING_COLUMNS}"
                 ),
                 {
@@ -178,7 +365,8 @@ async def create_meeting(
                     "title": body.title,
                     "start": body.scheduled_start,
                     "end": body.scheduled_end,
-                    "by": str(ctx.user_id) if ctx.user_id else None,
+                    "by": str(creator) if creator else None,
+                    "prev": str(body.previous_meeting_id) if body.previous_meeting_id else None,
                 },
             )
         )
@@ -187,25 +375,25 @@ async def create_meeting(
     )
     meeting_id = row["id"]
 
-    participants: list[Participant] = []
-    if ctx.user_id is not None:
-        # The creator is the host. `meeting-service` mints a join token only for a
+    if creator is not None:
+        # The creator is always in. `meeting-service` mints a join token only for a
         # `meeting_participants` row, so a creator who was not listed could not enter their own
         # meeting. No visibility check: `ctx.user_id` is the verified caller, resolved from this
         # tenant's `users` table already.
         await session.execute(
             text(
                 "INSERT INTO meeting_participants (meeting_id, user_id, org_id, role_in_meeting) "
-                "VALUES (:m, :u, :org, 'host') ON CONFLICT DO NOTHING"
+                "VALUES (:m, :u, :org, :r) ON CONFLICT DO NOTHING"
             ),
-            {"m": str(meeting_id), "u": str(ctx.user_id), "org": str(ctx.org_id)},
+            {
+                "m": str(meeting_id),
+                "u": str(creator),
+                "org": str(ctx.org_id),
+                "r": "host" if host == creator else "attendee",
+            },
         )
-        participants.append(Participant(user_id=ctx.user_id, role_in_meeting="host"))
 
-    # De-duplicated, order preserved; the creator is already in, so listing them is a no-op.
-    for user_id in dict.fromkeys(body.participant_ids):
-        if user_id == ctx.user_id:
-            continue
+    for user_id in invitees:
         # The existence check is what keeps a participant inside the tenant. The foreign key
         # does NOT: PostgreSQL runs referential-integrity checks as the referenced table's
         # owner with RLS bypassed, so `fk_meeting_participants_user_id_users` resolves another
@@ -225,12 +413,19 @@ async def create_meeting(
             )
         await session.execute(
             text(
-                "INSERT INTO meeting_participants (meeting_id, user_id, org_id) "
-                "VALUES (:m, :u, :org) ON CONFLICT DO NOTHING"
+                "INSERT INTO meeting_participants (meeting_id, user_id, org_id, role_in_meeting) "
+                "VALUES (:m, :u, :org, :r) ON CONFLICT DO NOTHING"
             ),
-            {"m": str(meeting_id), "u": str(user_id), "org": str(ctx.org_id)},
+            {
+                "m": str(meeting_id),
+                "u": str(user_id),
+                "org": str(ctx.org_id),
+                "r": "host" if user_id == host else "attendee",
+            },
         )
-        participants.append(Participant(user_id=user_id))
+
+    for position, item in enumerate(body.agenda):
+        await _insert_agenda_item(session, ctx.org_id, meeting_id, position, item)
 
     await enqueue(
         session,
@@ -258,7 +453,7 @@ async def create_meeting(
     )
 
     response.headers["Location"] = f"/api/v1/meetings/{meeting_id}"
-    return _row_to_meeting(row, participants)
+    return await _detail(session, row)
 
 
 @router.get("/meetings", response_model=MeetingPage)
@@ -309,15 +504,15 @@ async def list_meetings(
     )
 
 
-@router.get("/meetings/{meeting_id}", response_model=Meeting)
+@router.get("/meetings/{meeting_id}", response_model=MeetingDetail)
 async def get_meeting(
     meeting_id: uuid.UUID,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
-) -> Meeting:
-    row = await _fetch_meeting(session, meeting_id)
-    participants = await _load_participants(session, [meeting_id])
-    return _row_to_meeting(row, participants.get(meeting_id, []))
+) -> MeetingDetail:
+    """The meeting, the meeting it follows up (`previous_meeting`) and its agenda ordered by
+    `position` (ADR-0038 D6). A client re-hydrates the live agenda panel from here."""
+    return await _detail(session, await _fetch_meeting(session, meeting_id))
 
 
 @router.post("/meetings/{meeting_id}/participants", response_model=Meeting)
@@ -360,8 +555,9 @@ async def add_participants(
         inserted = (
             await session.execute(
                 text(
-                    "INSERT INTO meeting_participants (meeting_id, user_id, org_id) "
-                    "VALUES (:m, :u, :org) ON CONFLICT DO NOTHING RETURNING user_id"
+                    "INSERT INTO meeting_participants (meeting_id, user_id, org_id, "
+                    "role_in_meeting) VALUES (:m, :u, :org, 'attendee') "
+                    "ON CONFLICT DO NOTHING RETURNING user_id"
                 ),
                 {"m": str(meeting_id), "u": str(user_id), "org": str(ctx.org_id)},
             )
@@ -470,25 +666,54 @@ async def check_participant(
     )
 
 
-@router.patch("/meetings/{meeting_id}", response_model=Meeting)
+@router.patch("/meetings/{meeting_id}", response_model=MeetingDetail)
 async def update_meeting(
     meeting_id: uuid.UUID,
     body: MeetingUpdate,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
-) -> Meeting:
-    await _fetch_meeting(session, meeting_id)  # 404 before anything is written
+) -> MeetingDetail:
+    current = await _fetch_meeting(session, meeting_id)  # 404 before anything is written
 
     fields = body.model_dump(exclude_unset=True)
-    assignments = ", ".join(f"{name} = :{name}" for name in fields)
+    new_host: uuid.UUID | None = fields.pop("host_user_id", None)
+    if new_host is not None or "previous_meeting_id" in fields:
+        # ADR-0038 D6: the host and the follow-up link are the host's or the creator's call.
+        await _require_host_or_creator(session, ctx, current, "the host or the follow-up link")
+    if fields.get("previous_meeting_id") is not None:
+        await _check_previous_meeting(session, meeting_id, fields["previous_meeting_id"])
+    if new_host is not None:
+        if new_host not in await _participant_ids(session, meeting_id):
+            raise _field_error(["host_user_id"], "The new host must be a participant")
+        # Exactly one host: demote whoever holds it, then promote. Two statements in this
+        # transaction, so no reader ever sees zero or two hosts.
+        await session.execute(
+            text(
+                "UPDATE meeting_participants SET role_in_meeting = 'attendee' "
+                "WHERE meeting_id = :m AND role_in_meeting = 'host' AND user_id <> :h"
+            ),
+            {"m": str(meeting_id), "h": str(new_host)},
+        )
+        await session.execute(
+            text(
+                "UPDATE meeting_participants SET role_in_meeting = 'host' "
+                "WHERE meeting_id = :m AND user_id = :h"
+            ),
+            {"m": str(meeting_id), "h": str(new_host)},
+        )
+
+    assignments = "".join(f"{name} = :{name}, " for name in fields)
+    params: dict[str, Any] = {
+        k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in fields.items()
+    }
     row = (
         (
             await session.execute(
                 text(
-                    f"UPDATE meetings SET {assignments}, updated_at = now() "
+                    f"UPDATE meetings SET {assignments}updated_at = now() "
                     f"WHERE id = :id RETURNING {_MEETING_COLUMNS}"
                 ),
-                {**fields, "id": str(meeting_id)},
+                {**params, "id": str(meeting_id)},
             )
         )
         .mappings()
@@ -528,9 +753,189 @@ async def update_meeting(
         action=ACTION_MEETING_UPDATED,
         target_type="meeting",
         target_id=meeting_id,
-        metadata={"changed": sorted(fields)},
+        metadata={"changed": sorted(body.model_fields_set)},
         ip=ctx.ip,
     )
 
-    participants = await _load_participants(session, [meeting_id])
-    return _row_to_meeting(row, participants.get(meeting_id, []))
+    return await _detail(session, row)
+
+
+# --- ADR-0038 D6: agenda and carry-forward -------------------------------------------------
+
+
+@router.put("/meetings/{meeting_id}/agenda", response_model=list[AgendaItem])
+async def replace_agenda(
+    meeting_id: uuid.UUID,
+    body: AgendaReplace,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> list[AgendaItem]:
+    """Replace the agenda, host or creator only, and not once the meeting has ended (409).
+
+    Items sent with the `id` of an existing item of this meeting keep it, and its `status`,
+    `status_source` and `agent_note`; items without an `id` are new and `pending`; items left
+    out are deleted. Order is the order sent (`position` 0..n-1). The meeting row is locked for
+    the replace, so two concurrent PUTs apply one after the other, never interleaved.
+    """
+    row = await _fetch_meeting(session, meeting_id, for_update=True)
+    await _require_host_or_creator(session, ctx, row, "the agenda")
+    if row["status"] == "ended":
+        raise ProblemDetail(
+            status.HTTP_409_CONFLICT,
+            ErrorCode.VERSION_CONFLICT,
+            "The meeting has ended; its agenda can no longer change",
+        )
+
+    existing = {
+        r[0]
+        for r in await session.execute(
+            text("SELECT id FROM meeting_agenda_items WHERE meeting_id = :m"),
+            {"m": str(meeting_id)},
+        )
+    }
+    keep: list[uuid.UUID] = []
+    for i, item in enumerate(body.items):
+        if item.id is None:
+            continue
+        if item.id not in existing:
+            raise _field_error(["items", str(i), "id"], "No such agenda item in this meeting")
+        if item.id in keep:
+            raise _field_error(["items", str(i), "id"], "An agenda item is listed twice")
+        keep.append(item.id)
+    _check_owners(list(body.items), await _participant_ids(session, meeting_id), "items")
+
+    await session.execute(
+        text("DELETE FROM meeting_agenda_items WHERE meeting_id = :m AND NOT (id = ANY(:keep))"),
+        {"m": str(meeting_id), "keep": keep},
+    )
+    for position, item in enumerate(body.items):
+        if item.id is None:
+            await _insert_agenda_item(session, ctx.org_id, meeting_id, position, item)
+            continue
+        await session.execute(
+            text(
+                "UPDATE meeting_agenda_items SET position = :p, title = :t, "
+                "owner_user_id = :owner, duration_minutes = :d, updated_at = now() "
+                "WHERE id = :id AND meeting_id = :m"
+            ),
+            {
+                "p": position,
+                "t": item.title,
+                "owner": str(item.owner_user_id) if item.owner_user_id else None,
+                "d": item.duration_minutes,
+                "id": str(item.id),
+                "m": str(meeting_id),
+            },
+        )
+
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        action=ACTION_MEETING_UPDATED,
+        target_type="meeting",
+        target_id=meeting_id,
+        metadata={"changed": ["agenda"], "items": len(body.items)},
+        ip=ctx.ip,
+    )
+    return await _load_agenda(session, meeting_id)
+
+
+@router.patch("/meetings/{meeting_id}/agenda/{item_id}", response_model=AgendaItem)
+async def set_agenda_item_status(
+    meeting_id: uuid.UUID,
+    item_id: uuid.UUID,
+    body: AgendaItemStatusUpdate,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> AgendaItem:
+    """The host marks an item (host or creator). Sets `status_source = 'host'`: from then on
+    the MeetingAgent's updates to this item are ignored (the host wins, ADR-0038 D7)."""
+    row = await _fetch_meeting(session, meeting_id)
+    await _require_host_or_creator(session, ctx, row, "the agenda")
+    item = (
+        (
+            await session.execute(
+                text(
+                    "UPDATE meeting_agenda_items SET status = :s, status_source = 'host', "
+                    "updated_at = now() WHERE id = :id AND meeting_id = :m "
+                    f"RETURNING {_AGENDA_COLUMNS}"
+                ),
+                {"s": body.status, "id": str(item_id), "m": str(meeting_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if item is None:
+        raise not_found()
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=ctx.user_id,
+        action=ACTION_MEETING_UPDATED,
+        target_type="meeting",
+        target_id=meeting_id,
+        metadata={
+            "changed": ["agenda_item_status"],
+            "item_id": str(item_id),
+            "status": body.status,
+        },
+        ip=ctx.ip,
+    )
+    return AgendaItem(**dict(item))
+
+
+@router.get("/meetings/{meeting_id}/carry-forward", response_model=CarryForward)
+async def carry_forward(
+    meeting_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> CarryForward:
+    """What the previous meeting left open (ADR-0038 D6): its confirmed decisions, its open
+    action items (confirmed, not done; proposed candidates and dismissed ones are not
+    commitments), and the CALLER's own suggestions saved from it. Empty when there is no link
+    or the linked meeting is gone."""
+    row = await _fetch_meeting(session, meeting_id)
+    previous = await _meeting_ref(session, row["previous_meeting_id"])
+    if previous is None:
+        return CarryForward(
+            previous_meeting=None, decisions=[], open_actions=[], saved_questions=[]
+        )
+    prev = {"m": str(previous.id)}
+    decisions = await session.execute(
+        text(
+            "SELECT id, content FROM decisions WHERE meeting_id = :m AND status = 'confirmed' "
+            "AND deleted_at IS NULL ORDER BY created_at, id"
+        ),
+        prev,
+    )
+    actions = await session.execute(
+        text(
+            "SELECT id, content, assignee_id, due_date FROM action_items WHERE meeting_id = :m "
+            "AND status = 'confirmed' AND deleted_at IS NULL ORDER BY created_at, id"
+        ),
+        prev,
+    )
+    saved: list[CarryForwardQuestion] = []
+    if ctx.user_id is not None:
+        saved = [
+            CarryForwardQuestion(id=r[0], question=r[1])
+            for r in await session.execute(
+                text(
+                    "SELECT id, question FROM agent_suggestions WHERE meeting_id = :m "
+                    "AND user_id = :u AND status = 'saved' AND deleted_at IS NULL "
+                    "ORDER BY created_at, id"
+                ),
+                {**prev, "u": str(ctx.user_id)},
+            )
+        ]
+    return CarryForward(
+        previous_meeting=previous,
+        decisions=[CarryForwardDecision(id=r[0], content=r[1]) for r in decisions],
+        open_actions=[
+            CarryForwardAction(id=r[0], title=r[1], owner_user_id=r[2], due_date=r[3])
+            for r in actions
+        ],
+        saved_questions=saved,
+    )
