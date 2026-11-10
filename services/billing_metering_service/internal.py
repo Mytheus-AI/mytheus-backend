@@ -15,6 +15,13 @@ Service-to-service, not user, authentication, using the same header scheme as th
 `MYTHEUS_BILLING_CALLER_TOKENS` (`service=secret,...`, at least 32 characters each); the only
 allowed callers are the two `usage-events` producers. Every negative case refuses: an
 unconfigured service never answers, so the agent tier's fallback is "block", never "allow".
+
+`GET /internal/plan-features` (P11 contract section 3): `{plan_code, features}` for the tenant
+in `X-Mytheus-Org`, read by `ProactiveAgent` (the `proactive_agent` flag, cached 5 minutes per
+org on the agent side). Same headers and secrets, `agent-runtime-service` only. Under
+`/internal` rather than `/billing/internal` because `api-gateway` routes `/billing` publicly
+and has no `/internal` entry, so this one is reachable only inside the network. A tenant with
+no subscription yet is provisioned onto Free first, exactly as `GET /usage` does.
 """
 
 from __future__ import annotations
@@ -22,11 +29,12 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from libs.shared.cache import get_redis
 from libs.shared.db import get_sessionmaker
@@ -37,10 +45,12 @@ from services.billing_metering_service.budgets import (
     current_budget,
     enforcement_mode,
     period_of,
+    plan_for_tenant,
     write_mirror,
 )
 from services.identity_tenant_service.pii_vault.internal_auth import (
     ORG_HEADER,
+    SERVICE_HEADER,
     authenticate_service,
 )
 
@@ -72,6 +82,11 @@ def parse_caller_tokens(raw: str) -> dict[str, bytes]:
             raise ValueError(f"the secret for {name!r} must be at least 32 characters")
         out[name] = secret.encode("utf-8")
     return out
+
+
+class PlanFeatures(BaseModel):
+    plan_code: str
+    features: dict[str, Any]
 
 
 class BudgetMirror(BaseModel):
@@ -126,3 +141,34 @@ async def refresh_budget(org_id: Annotated[uuid.UUID, Depends(billing_caller)]) 
         state=snap.state,
         enforcement=enforcement_mode(),
     )
+
+
+async def plan_features_caller(
+    request: Request, org_id: Annotated[uuid.UUID, Depends(billing_caller)]
+) -> uuid.UUID:
+    """agent-runtime-service only; rag-service's secret is valid for the budget route alone."""
+    if request.headers.get(SERVICE_HEADER) != "agent-runtime-service":
+        raise _unauthenticated()
+    return org_id
+
+
+@router.get("/internal/plan-features", response_model=PlanFeatures)
+async def plan_features(
+    org_id: Annotated[uuid.UUID, Depends(plan_features_caller)],
+) -> PlanFeatures:
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        await plan_for_tenant(session, org_id)
+        row = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT p.code, p.features FROM subscriptions s "
+                        "JOIN plans p ON p.id = s.plan_id"
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+    return PlanFeatures(plan_code=row["code"], features=dict(row["features"] or {}))

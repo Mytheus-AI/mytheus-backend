@@ -5,7 +5,8 @@ Budget states: ok -> throttled -> blocked. Quota enforcement never sheds durable
 
 Processes:
 - this app: `GET /usage`, `GET /plans`, and `POST /billing/internal/budget` (the agent tier's
-  budget read-through, service-authenticated)
+  budget read-through, service-authenticated), and `GET /internal/plan-features` (the
+  tenant's plan features for ProactiveAgent, service-authenticated, P11)
 - `python -m services.billing_metering_service.consumer`: the `usage-events` consumer
 - `python -m services.billing_metering_service.jobs`: the nightly derive + rollup
 

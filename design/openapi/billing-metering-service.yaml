@@ -121,6 +121,20 @@ components:
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
       type: string
+    PlanFeatures:
+      properties:
+        features:
+          additionalProperties: true
+          title: Features
+          type: object
+        plan_code:
+          title: Plan Code
+          type: string
+      required:
+      - plan_code
+      - features
+      title: PlanFeatures
+      type: object
     PlanOut:
       properties:
         code:
@@ -280,6 +294,32 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/plan-features:
+    get:
+      operationId: plan_features
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanFeatures'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Plan Features
+      tags:
+      - billing-internal
   /plans:
     get:
       description: The latest version of each plan. Global catalog; no tenant data.
