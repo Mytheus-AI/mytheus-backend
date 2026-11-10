@@ -1,4 +1,4 @@
-"""gRPC server for identity-tenant-service.GetUserContext.
+"""gRPC server for identity-tenant-service: GetUserContext and the A2A PDP `Authorize`.
 
 org_id is read from gRPC metadata ("org-id"), NOT the message body. Missing metadata fails
 closed (UNAUTHENTICATED). The handler sets app.current_org (so RLS applies), calls the shared,
@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import identity_pb2
 import identity_pb2_grpc
 from libs.shared.tenancy import set_rls
+from services.identity_tenant_service.a2a.pdp import authorize
 from services.identity_tenant_service.context.service import cache_expires_at_ms, get_user_context
 
 # rbac_grants is RLS-policied like every other tenant table, so this cannot reach across
@@ -140,6 +141,37 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
             department_id=department["id"] if department else "",
             cache_expires_at=cache_expires_at_ms(),
         )
+
+    async def Authorize(self, request: Any, context: Any) -> Any:
+        """The A2A PDP (ADR-0013). Deny by default; see `a2a/pdp.py` for the rule.
+
+        Every argument-shaped problem (missing or malformed org, an org that disagrees with the
+        caller's "org-id" metadata, an unknown role/class/scope) answers "deny". A database
+        failure aborts UNAVAILABLE instead: a "deny" here would be cached by the PEP for 60 s,
+        and an outage must not leave A2A dark for a minute after the database is back. The PEP
+        reads any RPC error as deny without caching it (P10 contract section 4).
+        """
+        deny = identity_pb2.AuthorizeResponse(decision="deny")
+        try:
+            org_id = UUID(request.org_id)
+        except ValueError:
+            return deny
+        metadata_org = dict(context.invocation_metadata()).get("org-id")
+        if metadata_org and metadata_org != str(org_id):
+            return deny
+        try:
+            async with self._session_factory() as session, session.begin():
+                decision = await authorize(
+                    session,
+                    org_id,
+                    request.grantee_role,
+                    request.query_class,
+                    request.target_scope,
+                )
+        except (SQLAlchemyError, OSError) as exc:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"grant store unavailable: {exc}")
+            raise AssertionError("unreachable: context.abort() raises") from exc
+        return identity_pb2.AuthorizeResponse(decision=decision)
 
 
 async def serve(port: int = 50051) -> None:

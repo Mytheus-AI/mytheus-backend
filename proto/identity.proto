@@ -7,6 +7,24 @@ package mytheus.identity.v1;
 // org_id travels in gRPC metadata (key: "org-id"), not in the message body.
 service IdentityService {
   rpc GetUserContext(GetUserContextRequest) returns (UserContext);
+  // The A2A policy decision point (ADR-0013, P10). Deny by default: an allow needs a live
+  // `effect = 'allow'` grant for exactly this (grantee_role, query_class, target_scope) and no
+  // matching deny. An unknown value or a missing/malformed org is "deny". An infrastructure
+  // failure is status UNAVAILABLE (never a cacheable "deny"); the PEP treats it as deny.
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+}
+
+// org_id is in the body here (P10 contract section 3); when the caller ALSO sends "org-id"
+// metadata, the two must agree or the answer is "deny".
+message AuthorizeRequest {
+  string org_id       = 1;
+  string grantee_role = 2;  // RBAC tier: "owner" | "admin" | "member"
+  string query_class  = 3;  // "meeting_context" | "decision_lineage" | "action_status"
+  string target_scope = 4;  // "self" | "same_team" | "department" | "org"
+}
+
+message AuthorizeResponse {
+  string decision = 1;  // "allow" | "deny"
 }
 
 message GetUserContextRequest {
