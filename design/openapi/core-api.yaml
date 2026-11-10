@@ -144,6 +144,45 @@ components:
           title: Due Date
       title: ActionItemUpdate
       type: object
+    ActionStatus:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        organizer_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Organizer Id
+        status:
+          title: Status
+          type: string
+      required:
+      - status
+      - assignee_id
+      - meeting_id
+      - organizer_id
+      - due_date
+      - content
+      title: ActionStatus
+      type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first.'
       properties:
@@ -581,6 +620,60 @@ components:
       - status
       title: DependsOn
       type: object
+    DigestAction:
+      properties:
+        assignee_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Assignee Id
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        status:
+          title: Status
+          type: string
+      required:
+      - content
+      - assignee_id
+      - due_date
+      - status
+      title: DigestAction
+      type: object
+    DigestDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+      required:
+      - content
+      title: DigestDecision
+      type: object
+    DigestParticipant:
+      properties:
+        email:
+          title: Email
+          type: string
+        open_actions:
+          title: Open Actions
+          type: integer
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - email
+      - open_actions
+      title: DigestParticipant
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -605,7 +698,51 @@ components:
       - NOT_IMPLEMENTED
       - NOT_A_PARTICIPANT
       - CONSENT_REQUIRED
+      - PROVIDER_NOT_CONFIGURED
+      - PM_ALREADY_CONNECTED
       type: string
+    ExternalStatus:
+      additionalProperties: false
+      properties:
+        external_key:
+          maxLength: 100
+          minLength: 1
+          title: External Key
+          type: string
+        source:
+          const: jira
+          title: Source
+          type: string
+        status:
+          enum:
+          - done
+          - confirmed
+          title: Status
+          type: string
+      required:
+      - status
+      - source
+      - external_key
+      title: ExternalStatus
+      type: object
+    ExternalStatusResult:
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        changed:
+          title: Changed
+          type: boolean
+        status:
+          title: Status
+          type: string
+      required:
+      - action_id
+      - status
+      - changed
+      title: ExternalStatusResult
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -1307,6 +1444,51 @@ components:
       - id
       - email
       title: ScopePerson
+      type: object
+    SlackDigest:
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/DigestAction'
+          title: Actions
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/DigestDecision'
+          title: Decisions
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        participants:
+          items:
+            $ref: '#/components/schemas/DigestParticipant'
+          title: Participants
+          type: array
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
+        status:
+          title: Status
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - meeting_id
+      - title
+      - status
+      - scheduled_start
+      - participants
+      - decisions
+      - actions
+      title: SlackDigest
       type: object
     SpeakerAssign:
       additionalProperties: false
@@ -3489,6 +3671,98 @@ paths:
       summary: Action Context
       tags:
       - core-internal
+  /internal/actions/{action_id}/external-status:
+    post:
+      operationId: external_status
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalStatus'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalStatusResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: External Status
+      tags:
+      - core-internal
+  /internal/actions/{action_id}/status:
+    get:
+      operationId: action_status
+      parameters:
+      - in: path
+        name: action_id
+        required: true
+        schema:
+          format: uuid
+          title: Action Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionStatus'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Action Status
+      tags:
+      - core-internal
   /internal/meetings/{meeting_id}/participants:
     get:
       operationId: meeting_participants
@@ -3664,6 +3938,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Report Room State
+      tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/slack-digest:
+    get:
+      operationId: slack_digest
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlackDigest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Slack Digest
       tags:
       - core-internal
   /internal/retrieval/records:
