@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic.json_schema import SkipJsonSchema
+from pydantic.json_schema import WithJsonSchema
 
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
 # Where the call happens: a Mytheus room, or an external call captured by the browser extension
@@ -80,9 +80,12 @@ class AgendaItemStatusUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # `SkipJsonSchema[None]`: optional, but the published schema keeps the plain enum it had
-    # before `extend_minutes` existed (a nullable union reads to oasdiff as the enum removed).
-    status: AgendaStatus | SkipJsonSchema[None] = None
+    # Optional, but the published schema keeps the plain enum it had before `extend_minutes`
+    # existed (a nullable union reads to oasdiff as every enum value removed).
+    status: Annotated[
+        AgendaStatus | None,
+        WithJsonSchema({"enum": list(get_args(AgendaStatus)), "title": "Status", "type": "string"}),
+    ] = None
     extend_minutes: Annotated[int, Field(ge=1, le=MAX_EXTEND_MINUTES)] | None = None
 
     @model_validator(mode="after")
