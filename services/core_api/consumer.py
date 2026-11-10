@@ -120,6 +120,14 @@ _COLLAB_AUDIT = {
     "foreign_org": ACTION_A2A_REQUEST_BLOCKED,
 }
 
+# ADR-0038 D7/D8: one MeetingAgent record per meeting per window. Each `updates` entry moves
+# an agenda item of that meeting to `in_progress` or `covered`; the `nudge` is for the host's
+# screen only (realtime-gateway) and is never persisted here.
+_MEETING_UPDATE = ("MeetingAgent", "meeting_update")
+_AGENT_AGENDA_STATUSES = frozenset({"in_progress", "covered"})
+MAX_AGENDA_NOTE_CHARS = 300
+MAX_AGENDA_UPDATES = 20
+
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
     ("DecisionAgent", "decision_candidate"): "decisions",
@@ -208,8 +216,9 @@ async def handle_agent_result(
     and `ActionAgent`/`action_candidate` go to `decisions` / `action_items` as `proposed` rows
     (P8 Part A; True if any candidate row was new), never to the outbox.
     `QuestionAgent`/`suggestion` goes to `agent_suggestions` as `open` rows for the result's
-    `user_id` (P9, ADR-0034; True if any row was new). Other kinds are recorded in the inbox
-    and otherwise ignored.
+    `user_id` (P9, ADR-0034; True if any row was new). `MeetingAgent`/`meeting_update` moves
+    agenda items (ADR-0038 D7; True if any item changed). Other kinds - including ones this
+    consumer does not know yet - are recorded in the inbox and otherwise ignored.
 
     `surfaced` is decided HERE, not trusted from the payload (ADR-0030 D3): `core-api` can read
     the tenant's `agent_confidence_overrides`, the AI tier cannot. Below `silent` nothing is
@@ -264,12 +273,18 @@ async def _apply_agent_result(
     candidate_table = _CANDIDATE_TABLES.get((agent, kind))
     is_suggestion = (agent, kind) == _SUGGESTION
     is_context_fill = (agent, kind) == _CONTEXT_FILL
+    is_meeting_update = (agent, kind) == _MEETING_UPDATE
     if (
         candidate_table is None
         and not is_suggestion
         and not is_context_fill
+        and not is_meeting_update
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
+        # Anything else - including an agent class or kind this consumer has never heard of -
+        # is claimed in the inbox and otherwise ignored, never dead-lettered: the decoder reads
+        # with the WRITER's schema (no reader schema is passed to AvroDeserializer), so a new
+        # enum symbol arrives here as a plain string rather than failing the decode.
         return False
 
     meeting_id = _uuid(value.get("meeting_id"), "meeting_id")
@@ -294,6 +309,8 @@ async def _apply_agent_result(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
         )
+    if is_meeting_update:
+        return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
     surface, silent = _thresholds(visible[2], agent)
     if is_context_fill:
         return await _persist_collaborations(
@@ -533,6 +550,56 @@ async def _persist_suggestions(
         ).first()
         written = written or inserted is not None
     return written
+
+
+async def _apply_agenda_updates(
+    session: AsyncSession, meeting_id: uuid.UUID, payload_json: Any
+) -> bool:
+    """Apply a MeetingAgent `meeting_update`'s `updates` to `meeting_agenda_items` (ADR-0038 D7).
+    True if any item changed.
+
+    Per entry, in SQL so the rules hold against the row as it is now, not as it was read:
+    - only an item OF THIS MEETING (`meeting_id` in the predicate; RLS already confines it to
+      the tenant), so an id from another meeting is a no-op, not a cross-meeting write;
+    - never one whose `status_source = 'host'`: the host wins, for good;
+    - never `covered` back to `in_progress`;
+    - sets `status_source = 'agent'` and `agent_note` (null when the entry has no note).
+    A malformed entry is skipped and the rest applied, like suggestions. Re-applying the same
+    record changes nothing (the inbox claim already makes a redelivery a no-op; the WHERE clause
+    makes a replay with a lost inbox row one too). The `nudge` is ignored here.
+    """
+    updates = _payload_list(payload_json, "updates")
+    if updates is None:
+        return False
+    changed = False
+    seen: set[uuid.UUID] = set()
+    for u in updates[:MAX_AGENDA_UPDATES]:
+        if not isinstance(u, dict):
+            continue
+        item_id = _optional_uuid(u.get("item_id"))
+        new_status = u.get("status")
+        if item_id is None or item_id in seen or new_status not in _AGENT_AGENDA_STATUSES:
+            continue
+        seen.add(item_id)
+        note = _bounded_text(u.get("note"), MAX_AGENDA_NOTE_CHARS)
+        updated = (
+            await session.execute(
+                text(
+                    "UPDATE meeting_agenda_items SET status = CAST(:s AS text), "
+                    "status_source = 'agent', agent_note = CAST(:n AS text), "
+                    "updated_at = now() "
+                    "WHERE id = :id AND meeting_id = :m "
+                    "AND status_source IS DISTINCT FROM 'host' "
+                    "AND NOT (status = 'covered' AND CAST(:s AS text) = 'in_progress') "
+                    "AND NOT (status = CAST(:s AS text) AND status_source = 'agent' "
+                    "         AND agent_note IS NOT DISTINCT FROM CAST(:n AS text)) "
+                    "RETURNING 1"
+                ),
+                {"s": new_status, "n": note, "id": str(item_id), "m": str(meeting_id)},
+            )
+        ).first()
+        changed = changed or updated is not None
+    return changed
 
 
 def _bounded_text(raw: Any, limit: int) -> str | None:
