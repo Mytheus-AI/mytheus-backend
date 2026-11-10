@@ -237,6 +237,83 @@ components:
       - open_actions_total
       title: BriefMemory
       type: object
+    BriefMinutes:
+      description: 'What the previous meeting''s minutes left open (minutes for everyone): its shared
+        open
+
+        items (the caller''s own first, `mine`) and unanswered questions, and the caller''s own
+
+        promises from their personal minutes of it.'
+      properties:
+        my_promises:
+          items:
+            $ref: '#/components/schemas/BriefMinutesPromise'
+          title: My Promises
+          type: array
+        open_items:
+          items:
+            $ref: '#/components/schemas/BriefOpenItem'
+          title: Open Items
+          type: array
+        unanswered_questions:
+          items:
+            type: string
+          title: Unanswered Questions
+          type: array
+      required:
+      - open_items
+      - unanswered_questions
+      - my_promises
+      title: BriefMinutes
+      type: object
+    BriefMinutesPromise:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        text:
+          title: Text
+          type: string
+        to_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To Name
+      required:
+      - text
+      title: BriefMinutesPromise
+      type: object
+    BriefOpenItem:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        mine:
+          default: false
+          title: Mine
+          type: boolean
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: BriefOpenItem
+      type: object
     BriefPromise:
       properties:
         content:
@@ -876,6 +953,10 @@ components:
         previous_meeting:
           anyOf:
           - $ref: '#/components/schemas/PreviousMeeting'
+          - type: 'null'
+        previous_minutes:
+          anyOf:
+          - $ref: '#/components/schemas/BriefMinutes'
           - type: 'null'
         proxies:
           items:
@@ -1520,7 +1601,11 @@ paths:
 
         topics, recurring questions, open promises, open actions count); null when empty or when
 
-        they switched learning off.'
+        they switched learning off.
+
+        Also `previous_minutes`: what the previous meeting''s minutes left open (null without
+
+        minutes).'
       operationId: meeting_brief
       parameters:
       - in: path

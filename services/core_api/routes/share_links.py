@@ -6,7 +6,10 @@ rules, each enforced here:
 - **Created by participants.** The creator must be a participant of the meeting (404 if the
   tenant cannot see it, 403 `NOT_A_PARTICIPANT` otherwise). A **confidential** meeting
   (ADR-0039 B2) is never shareable unless its host shares it: only the host may create a link
-  for it (403, reason `confidential_host_only`), which is the host allowing it.
+  for it (403, reason `confidential_host_only`). For a recap the host must also say so
+  explicitly: `confirm_confidential: true` in the body, else 409 with reason
+  `confidential_confirmation_required` (minutes for everyone: the recap now publishes the
+  meeting's shared minutes, so sharing a confidential meeting is never a side effect).
 - **Content limited to what the creator can see.** The page is built as the creator sees it
   (`services/core_api/records.py`): confirmed decisions and actions only, no private promises,
   notes, chat or transcript, people by name and never by email, and lineage steps from
@@ -63,6 +66,11 @@ class ShareLinkCreate(BaseModel):
         ge=1,
         le=share_tokens.MAX_TTL_DAYS,
         description="How long the link works, 1 to 365 days. Default 30.",
+    )
+    confirm_confidential: bool = Field(
+        default=False,
+        description="The host confirms publishing the recap of a confidential meeting. "
+        "Required (409 `confidential_confirmation_required`) for a confidential meeting's recap.",
     )
 
 
@@ -197,6 +205,7 @@ async def _create(
     meeting_id: uuid.UUID,
     decision_id: uuid.UUID | None,
     ttl_days: int,
+    confirm_confidential: bool = True,
 ) -> ShareLink:
     if not share_tokens.configured():
         raise ProblemDetail(
@@ -206,6 +215,13 @@ async def _create(
             extra={"reason": "not_configured"},
         )
     access, user_id = await _access_or_raise(session, ctx, meeting_id, to_share=True)
+    if access.confidential and not confirm_confidential:
+        raise ProblemDetail(
+            409,
+            ErrorCode.VERSION_CONFLICT,
+            "This meeting is confidential: confirm that you want to publish its recap",
+            extra={"reason": "confidential_confirmation_required"},
+        )
     link = await share_tokens.create_link(
         session,
         org_id=ctx.org_id,
@@ -276,12 +292,18 @@ _CREATED = {
 }
 
 
+_RECAP_CREATED = {
+    **_CREATED,
+    409: {"description": "A confidential meeting's recap needs `confirm_confidential`."},
+}
+
+
 @router.post(
     "/meetings/{meeting_id}/share-links",
     response_model=ShareLink,
     status_code=status.HTTP_201_CREATED,
     summary="Share a meeting recap",
-    responses=_CREATED,  # type: ignore[arg-type]
+    responses=_RECAP_CREATED,  # type: ignore[arg-type]
 )
 async def create_recap_link(
     meeting_id: uuid.UUID,
@@ -289,13 +311,17 @@ async def create_recap_link(
     session: Annotated[AsyncSession, Depends(tenant_session)],
     body: ShareLinkCreate | None = None,
 ) -> ShareLink:
+    """The public recap: confirmed decisions and actions and the meeting's shared minutes
+    (never anyone's personal minutes or promises)."""
+    req = body or ShareLinkCreate()
     return await _create(
         session,
         ctx,
         kind="meeting_recap",
         meeting_id=meeting_id,
         decision_id=None,
-        ttl_days=(body or ShareLinkCreate()).expires_in_days,
+        ttl_days=req.expires_in_days,
+        confirm_confidential=req.confirm_confidential,
     )
 
 

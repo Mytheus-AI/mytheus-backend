@@ -2,12 +2,14 @@
 
 - GET is for participants (403 otherwise, 404 across tenants) and starts from the defaults;
 - PUT is the host's alone; guests are validated, lowercased, de-duplicated, at most 20;
-- send is the host's, only once the meeting has ended and while the follow-up is on (409);
+- send is the host's, only once the meeting has ended (409); the on/off setting governs only the
+  automatic send, so a host can still send by hand with the follow-up off;
 - one dispatch: one `notifications` outbox row per participant carrying the confirmed headline
   only (never a proposed candidate), the host's recap share link, the guests mailed through
   notification-service, the result stored and audited; a second send adds no outbox rows;
 - notification-service without a caller secret skips the guests (`not_configured`); down is 503;
-- a confidential meeting's follow-up still goes out (the host's own act);
+- a confidential meeting's follow-up still goes out (the host's own act), but without a NEW
+  public recap link (only one the host created with `confirm_confidential` is reused);
 - the internal dispatch takes only workflow-service's caller token.
 """
 
@@ -42,9 +44,13 @@ SECRET = "w" * 40
 
 
 class FakeNotifications:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, email: bool | None = True) -> None:
         self.calls: list[dict[str, Any]] = []
         self.error = error
+        self.email = email
+
+    async def email_status(self, org_id: uuid.UUID) -> bool | None:
+        return self.email
 
     async def send_email(self, org_id: uuid.UUID, **kwargs: Any) -> dict[str, Any]:
         if self.error is not None:
@@ -161,20 +167,22 @@ def test_put_is_the_hosts_and_validates_guests(client):
     many = {"enabled": True, "guest_emails": [f"g{i}@x.io" for i in range(21)]}
     assert client.put(f"/api/v1/meetings/{m}/follow-up", json=many).status_code == 422
     off = client.put(f"/api/v1/meetings/{m}/follow-up", json={"enabled": False})
-    assert off.json()["enabled"] is False and off.json()["can_send"] is False
+    # Off turns the automatic send off; the host can still send by hand.
+    assert off.json()["enabled"] is False and off.json()["can_send"] is True
 
 
-def test_send_needs_the_host_an_ended_meeting_and_the_follow_up_on(client, fake):
+def test_send_needs_the_host_and_an_ended_meeting(client, fake):
     host, member, live = meeting_with_host(ended=False)
     sign_in(member)
     assert client.post(f"/api/v1/meetings/{live}/follow-up/send").status_code == 403
     sign_in(host)
     assert client.post(f"/api/v1/meetings/{live}/follow-up/send").status_code == 409
+    assert fake.calls == []
     host2, _, ended = meeting_with_host()
     sign_in(host2)
     client.put(f"/api/v1/meetings/{ended}/follow-up", json={"enabled": False})
-    assert client.post(f"/api/v1/meetings/{ended}/follow-up/send").status_code == 409
-    assert fake.calls == []
+    res = client.post(f"/api/v1/meetings/{ended}/follow-up/send")
+    assert res.status_code == 200 and res.json()["status"] == "sent"
 
 
 def test_dispatch_notifies_participants_mails_guests_and_records(client, fake):
@@ -249,6 +257,13 @@ def test_a_confidential_meetings_follow_up_is_the_hosts_to_send(client, fake):
     sign_in(host)
     out = client.post(f"/api/v1/meetings/{m}/follow-up/send").json()
     assert out["status"] == "sent" and out["participants_notified"] == 2
+    assert out["share_url"] is None  # no public link is made for a confidential meeting
+    assert (
+        _sql("SELECT count(*) AS n FROM share_links WHERE meeting_id = %(m)s", {"m": str(m)})[0][
+            "n"
+        ]
+        == 0
+    )
 
 
 def test_internal_dispatch_takes_only_the_workflow_token(client, fake):

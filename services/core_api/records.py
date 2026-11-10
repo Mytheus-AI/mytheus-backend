@@ -19,7 +19,10 @@ What a record may contain is decided here and nowhere else, so the four surfaces
   a meeting the viewer was not in is kept as a placeholder with its content withheld, so the
   chain stays honest ("replaced by a later decision") without leaking what that decision says.
 - **No private material.** Promises (`commitments`), personal notes, suggestions, chat and the
-  transcript are private or raw and are never part of a shared record.
+  transcript are private or raw and are never part of a shared record. The recap carries the
+  meeting's SHARED minutes (`minutes.py`: summary, decisions with status, open items and
+  unanswered questions), never anyone's personal minutes or promises, and people in them by
+  name only (no user ids).
 - **People by name, not by address.** `users` has no display name, so a person is shown by a
   name derived from the local part of their email (`maya.patel@x` -> `Maya Patel`). An email
   address never appears in a record a stranger can open.
@@ -66,6 +69,32 @@ class RecordAction(BaseModel):
     status: ActionState
 
 
+class RecapMinutesDecision(BaseModel):
+    text: str
+    status: str
+
+
+class RecapMinutesItem(BaseModel):
+    text: str
+    owner_name: str | None = None
+    due: str | None = None
+
+
+class RecapMinutesQuestion(BaseModel):
+    text: str
+    asked_by_name: str | None = None
+
+
+class RecapMinutes(BaseModel):
+    """The meeting's shared minutes as a stranger may read them: no ids, no promises."""
+
+    summary: str
+    decisions: list[RecapMinutesDecision]
+    open_items: list[RecapMinutesItem]
+    unanswered_questions: list[RecapMinutesQuestion]
+    updated_at: datetime
+
+
 class MeetingRecap(BaseModel):
     """A meeting's confirmed outcome, as its viewer may see it."""
 
@@ -80,6 +109,7 @@ class MeetingRecap(BaseModel):
     agenda: list[RecordAgendaItem]
     decisions: list[RecordDecision]
     actions: list[RecordAction]
+    minutes: RecapMinutes | None = None
 
 
 class LineageStep(BaseModel):
@@ -313,6 +343,29 @@ async def build_recap(
             for d in decisions
         ],
         actions=await _actions(session, meeting_id),
+        minutes=await recap_minutes(session, meeting_id),
+    )
+
+
+async def recap_minutes(session: AsyncSession, meeting_id: uuid.UUID) -> RecapMinutes | None:
+    """The shared minutes, public-safe; None when there are none worth showing."""
+    from services.core_api.minutes import shared_minutes
+
+    shared = await shared_minutes(session, meeting_id)
+    if shared is None or shared.status != "ready":
+        return None
+    return RecapMinutes(
+        summary=shared.summary,
+        decisions=[RecapMinutesDecision(text=d.text, status=d.status) for d in shared.decisions],
+        open_items=[
+            RecapMinutesItem(text=o.text, owner_name=o.owner_name, due=o.due)
+            for o in shared.open_items
+        ],
+        unanswered_questions=[
+            RecapMinutesQuestion(text=q.text, asked_by_name=q.asked_by_name)
+            for q in shared.unanswered_questions
+        ],
+        updated_at=shared.updated_at,
     )
 
 

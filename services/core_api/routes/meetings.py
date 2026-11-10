@@ -42,6 +42,7 @@ from libs.shared.authz import (
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
+from services.core_api import minutes
 from services.core_api.brain import latest_statuses, may_see_source
 from services.core_api.schemas import (
     MAX_AGENDA_ITEMS,
@@ -59,6 +60,8 @@ from services.core_api.schemas import (
     CarryForward,
     CarryForwardAction,
     CarryForwardDecision,
+    CarryForwardOpenItem,
+    CarryForwardOpenQuestion,
     CarryForwardQuestion,
     Meeting,
     MeetingCreate,
@@ -1081,7 +1084,10 @@ async def carry_forward(
 
     ADR-0039: each open action carries `latest_status` (its assignee's most recent answer to a
     status request, or null). A confidential previous meeting is never a source for a caller
-    who was not in it (B2): they get the same empty answer as for no link."""
+    who was not in it (B2): they get the same empty answer as for no link.
+
+    Minutes for everyone: the open items and unanswered questions of the previous meeting's
+    shared minutes (never anyone's personal minutes)."""
     row = await _fetch_meeting(session, meeting_id)
     previous = await _meeting_ref(session, row["previous_meeting_id"])
     if previous is not None and not await may_see_source(session, previous.id, ctx.user_id):
@@ -1120,8 +1126,28 @@ async def carry_forward(
                 {**prev, "u": str(ctx.user_id)},
             )
         ]
+    shared = await minutes.shared_minutes(session, previous.id)
+    ready = shared is not None and shared.status == "ready"
     return CarryForward(
         previous_meeting=previous,
+        open_items=(
+            [
+                CarryForwardOpenItem(
+                    text=o.text, owner_user_id=o.owner_user_id, owner_name=o.owner_name, due=o.due
+                )
+                for o in shared.open_items
+            ]
+            if ready and shared
+            else []
+        ),
+        unanswered_questions=(
+            [
+                CarryForwardOpenQuestion(text=q.text, asked_by_name=q.asked_by_name)
+                for q in shared.unanswered_questions
+            ]
+            if ready and shared
+            else []
+        ),
         decisions=[CarryForwardDecision(id=r[0], content=r[1]) for r in decisions],
         open_actions=[
             CarryForwardAction(
@@ -1155,10 +1181,13 @@ async def draft_agenda(
 
     In order, at most 20: the template's items (`template`); the previous meeting's agenda items
     not `covered`, by position (`unfinished`); its open confirmed action items, oldest first, as
-    `Status: {content}` owned by the assignee (`open_action`). Both ids must name rows of this
+    `Status: {content}` owned by the assignee (`open_action`). Beside the items,
+    `open_questions`: the questions its shared minutes left unanswered. Both ids must name
+    rows of this
     tenant (422 naming the field). A confidential previous meeting contributes nothing for a
     caller who was not in it (B2)."""
     items: list[AgendaDraftItem] = []
+    questions: list[str] = []
     if body.template_id is not None:
         agenda = (
             await session.execute(
@@ -1220,7 +1249,10 @@ async def draft_agenda(
                 )
                 for r in actions
             )
-    return AgendaDraft(items=items[:MAX_AGENDA_ITEMS])
+            shared = await minutes.shared_minutes(session, previous)
+            if shared is not None and shared.status == "ready":
+                questions = [q.text for q in shared.unanswered_questions]
+    return AgendaDraft(items=items[:MAX_AGENDA_ITEMS], open_questions=questions)
 
 
 # --- ADR-0039 B5: send your agent instead ---------------------------------------------------

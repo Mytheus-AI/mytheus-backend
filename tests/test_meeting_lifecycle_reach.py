@@ -170,6 +170,7 @@ async def test_a_disabled_followup_is_a_no_op(base_app):
         "guests": [],
         "email_configured": None,
         "share_url": None,
+        "waiting_for_minutes": False,
     }
     assert followup_rows(m) == []
 
