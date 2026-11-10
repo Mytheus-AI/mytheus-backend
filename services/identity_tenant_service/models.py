@@ -216,6 +216,11 @@ class TenantSettings(Base, TimestampMixin):
     consent_required: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    # ADR-0039 A5: topics no agent may note, suggest or record. Written only by
+    # `PUT /api/v1/org/ground-rules`.
+    never_record_topics: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
 
 
 class DataResidency(Base):
