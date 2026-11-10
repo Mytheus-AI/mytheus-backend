@@ -10,6 +10,7 @@ from services.identity_tenant_service.a2a import routes as a2a_routes
 from services.identity_tenant_service.brain import routes as brain_routes
 from services.identity_tenant_service.pii_vault import routes as pii_vault_routes
 from services.identity_tenant_service.routes import (
+    api_tokens,
     auth,
     context,
     internal_status,
@@ -41,3 +42,4 @@ app.include_router(internal_status.router)
 # The company brain (ADR-0039 Part A): /api/v1/org/{profile,glossary,topic-owners,goals,
 # ground-rules,readiness,welcome} and /api/v1/users/me/topic-watches.
 app.include_router(brain_routes.router)
+app.include_router(api_tokens.router)  # /api/v1/api-tokens (personal access tokens, Phase 4)

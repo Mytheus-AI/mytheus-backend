@@ -127,6 +127,15 @@ async def resolve_tenant_from_token(request: Request) -> UUID | None:
     if scheme.lower() != "bearer" or not token:
         return None
 
+    from libs.shared import pat
+
+    if pat.is_pat(token):
+        # Resolved by `PatAuthMiddleware`, which sits outside this middleware.
+        principal = pat.current_principal()
+        if principal is None or principal.token_hash != pat.hash_token(token):
+            return None
+        return principal.org_id
+
     try:
         claims = verify_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
         clerk_org = clerk_org_id_from(claims)

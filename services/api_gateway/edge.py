@@ -19,12 +19,18 @@ import hashlib
 import hmac
 import logging
 import os
+import time
+from datetime import UTC, datetime
 from urllib.parse import unquote
 
 from fastapi import Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
+from redis.asyncio import Redis
+from redis.asyncio import from_url as redis_from_url
+from redis.exceptions import RedisError
 from starlette.middleware.base import RequestResponseEndpoint
 
+from libs.shared import pat
 from libs.shared.auth import clerk_org_id_from, verify_token
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail, problem_response
@@ -58,6 +64,9 @@ PUBLIC_PREFIXES = (
     # completion is a signed-in POST from the web app, bound to the user who started it.
     # `/integrations` (the settings API) is JWT-gated like everything else.
     "/webhooks/",
+    # Share links (Phase 4): the token in the path is the credential, an HMAC-signed,
+    # expiring, revocable link a participant created; core-api verifies it before any read.
+    "/api/v1/public/",
 )
 
 # Never forwarded, whatever the token: every service's service-to-service surface lives under
@@ -167,6 +176,10 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
     # checking the signature, it is a cross-tenant read with no exploit required.
     _strip_internal_headers(request)
 
+    token = pat.bearer_of(request.headers)
+    if pat.is_pat(token):
+        return await _pat_request(request, call_next, str(token))
+
     if request.method == "POST" and request.url.path == SELF_SERVE_ORG_PATH:
         try:
             verify_token(_bearer(request))
@@ -189,6 +202,98 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
 
     _attach_internal_headers(request, str(org_id), user_id)
     return await call_next(request)
+
+
+# --- personal access tokens (Phase 4) ----------------------------------------------------------
+
+PAT_RATE_ENV = "PAT_RATE_LIMIT_PER_MINUTE"
+DEFAULT_PAT_RATE = 120
+LAST_USED_TTL_S = 90 * 86400
+
+
+def pat_rate_limit() -> int:
+    try:
+        return max(1, int(os.environ.get(PAT_RATE_ENV, DEFAULT_PAT_RATE)))
+    except ValueError:
+        return DEFAULT_PAT_RATE
+
+
+def _gateway_redis(request: Request) -> Redis[bytes]:
+    """One client per app (and so per event loop), created on first use."""
+    client: Redis[bytes] | None = getattr(request.app.state, "pat_redis", None)
+    if client is None:
+        client = redis_from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
+        )
+        request.app.state.pat_redis = client
+    return client
+
+
+def rate_limit_key(principal: pat.PatPrincipal, window: int) -> str:
+    return f"nexus:{principal.org_id}:ratelimit:pat:{principal.token_id}:{window}"
+
+
+def last_used_key(org_id: object, token_id: object) -> str:
+    """Read by identity-tenant-service's token list (`last_used_at`)."""
+    return f"nexus:{org_id}:pat:last_used:{token_id}"
+
+
+async def _count_request(request: Request, principal: pat.PatPrincipal) -> tuple[int, int]:
+    """(requests in this minute including this one, seconds until the window resets). Also
+    stamps the token's last use. A fixed one-minute window per token, shared by every gateway
+    replica because it lives in Redis."""
+    now = time.time()
+    window = int(now // 60)
+    pipe = _gateway_redis(request).pipeline(transaction=False)
+    pipe.incr(rate_limit_key(principal, window))
+    pipe.expire(rate_limit_key(principal, window), 120)
+    pipe.set(
+        last_used_key(principal.org_id, principal.token_id),
+        datetime.now(UTC).isoformat(),
+        ex=LAST_USED_TTL_S,
+    )
+    count, _, _ = await pipe.execute()
+    return int(count), max(1, 60 - int(now % 60))
+
+
+async def _pat_request(
+    request: Request, call_next: RequestResponseEndpoint, token: str
+) -> Response:
+    """A `mytheus_pat_` bearer: resolve it, gate the path and scope, rate limit, forward.
+
+    Fails closed throughout: a bad token is the single 401, a path outside the public API or a
+    write with a read token is 403, and a rate-limit store that cannot be reached is 503 rather
+    than an unlimited token.
+    """
+    try:
+        principal = await pat.authenticate(token, request.method, request.url.path)
+    except ProblemDetail as exc:
+        return problem_response(exc.status, exc.code, exc.detail, extra=exc.extra)
+    limit = pat_rate_limit()
+    try:
+        used, reset = await _count_request(request, principal)
+    except RedisError:
+        logger.exception("gateway: PAT rate-limit store unavailable")
+        return problem_response(
+            503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Rate limiting is unavailable; retry shortly"
+        )
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(max(0, limit - used)),
+        "X-RateLimit-Reset": str(reset),
+    }
+    if used > limit:
+        response: Response = problem_response(
+            429,
+            ErrorCode.RATE_LIMITED,
+            f"This API token is limited to {limit} requests per minute",
+        )
+        response.headers.update({**headers, "Retry-After": str(reset)})
+        return response
+    _attach_internal_headers(request, str(principal.org_id), principal.clerk_user_id)
+    response = await call_next(request)
+    response.headers.update(headers)
+    return response
 
 
 def _bearer(request: Request) -> HTTPAuthorizationCredentials:
@@ -267,6 +372,14 @@ ROUTE_MAP: dict[str, str] = {
     # The settings API (list, connect, disconnect). JWT-gated; owner/admin enforced by the
     # service. `/internal/*` is deliberately absent, as for every service.
     "/integrations": "integration-service",
+    # Phase 4 reach. Personal access tokens are identity's (the token list a user manages in
+    # settings; the gateway itself only resolves them, see `_pat_request`).
+    "/api/v1/api-tokens": "identity-tenant-service",
+    # The public read of a share link: no bearer token, the signed token is in the path.
+    "/api/v1/public": "core-api",
+    # The MCP server (Streamable HTTP, JSON-RPC over POST). A route group in bff: it is a
+    # client-shaped aggregation over the same public API, like bff's screens.
+    "/mcp": "bff",
 }
 
 

@@ -139,3 +139,11 @@ ACTION_MEETING_TEMPLATE_DELETED = "meeting_template.deleted"
 # who opted in, and to the host's listed external guests). Who triggered it and who was mailed
 # is a compliance fact: it sends meeting content outside the product.
 ACTION_MEETING_FOLLOWUP_SENT = "meeting.followup_sent"
+
+# Phase 4: personal access tokens (identity-tenant-service /api/v1/api-tokens), the actions
+# a person takes through one (core-api `POST /api/v1/actions`), and share links (core-api).
+ACTION_API_TOKEN_CREATED = "api_token.created"
+ACTION_API_TOKEN_REVOKED = "api_token.revoked"
+ACTION_ACTION_CREATED = "action.created"
+ACTION_SHARE_LINK_CREATED = "share_link.created"
+ACTION_SHARE_LINK_REVOKED = "share_link.revoked"
