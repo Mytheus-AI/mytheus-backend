@@ -205,7 +205,8 @@ def test_create_validation_and_cap(manage):
     assert manage.post("/api/v1/api-tokens", json={"name": " "}).status_code == 422
     bad_days = {"name": "x", "expires_in_days": 400}
     assert manage.post("/api/v1/api-tokens", json=bad_days).status_code == 422
-    assert manage.post("/api/v1/api-tokens", json={"name": "x", "scope": "admin"}).status_code == 422
+    bad_scope = {"name": "x", "scope": "admin"}
+    assert manage.post("/api/v1/api-tokens", json=bad_scope).status_code == 422
     for _ in range(api_tokens.MAX_ACTIVE_PER_USER):
         mint(me)
     res = manage.post("/api/v1/api-tokens", json={"name": "one too many"})
