@@ -133,6 +133,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         status:
           enum:
           - proposed
@@ -141,6 +168,11 @@ components:
           - dismissed
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -557,6 +589,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -565,6 +624,11 @@ components:
         status:
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - kind
@@ -807,6 +871,12 @@ components:
     Commitment:
       description: One of the caller's own promises. Never served to anyone else.
       properties:
+        action_item_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Action Item Id
         content:
           title: Content
           type: string
@@ -844,6 +914,12 @@ components:
           - type: string
           - type: 'null'
           title: Meeting Title
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         status:
           enum:
           - open
@@ -1159,6 +1235,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -1178,6 +1281,11 @@ components:
             type: string
           - type: 'null'
           title: Supersedes
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -3595,6 +3703,12 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
         priority:
           maximum: 3.0
           minimum: 1.0
@@ -3603,6 +3717,27 @@ components:
         question:
           title: Question
           type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         rationale:
           anyOf:
           - type: string
@@ -3616,6 +3751,11 @@ components:
           - saved
           title: Status
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
       required:
       - id
       - meeting_id
@@ -3994,6 +4134,33 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_end_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote End Ms
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
         relevance_score:
           anyOf:
           - type: number
@@ -4009,6 +4176,11 @@ components:
           format: uuid
           title: User Id
           type: string
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
         window_id:
           title: Window Id
           type: string

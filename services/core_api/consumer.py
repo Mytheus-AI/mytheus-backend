@@ -350,10 +350,12 @@ async def _apply_agent_result(
         await session.execute(
             text(
                 "INSERT INTO worklogs (org_id, meeting_id, user_id, window_id, content, "
-                "relevance_score, confidence, created_by_agent, source_chunk_ids, surfaced) "
-                "VALUES (:o, :m, :u, :w, :c, :r, :conf, true, CAST(:chunks AS uuid[]), :s)"
+                f"relevance_score, confidence, created_by_agent, source_chunk_ids, surfaced, "
+                f"{_MOMENT_SQL}) VALUES (:o, :m, :u, :w, :c, :r, :conf, true, "
+                f"CAST(:chunks AS uuid[]), :s, {_MOMENT_VALUES})"
             ),
             {
+                **await _moment(session, _payload_object(value.get("payload_json"))),
                 "o": str(org_id),
                 "m": str(meeting_id),
                 "u": str(user_id),
@@ -394,6 +396,37 @@ def _optional_date(raw: Any) -> date | None:
         return None
 
 
+MAX_WHY_CHARS = 200
+MAX_QUOTE_CHARS = 300
+_MOMENT_SQL = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+_MOMENT_VALUES = ":mo, :why, :qt, :qs, :qa, :qb"
+
+
+def _ms(raw: Any) -> int | None:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+async def _moment(session: AsyncSession, item: Any) -> dict[str, Any]:
+    """Polish program (one card per moment): the moment fields of one payload item as SQL
+    params (`:mo :why :qt :qs :qa :qb`), each null when absent or malformed. A quote speaker is
+    a `users.id` this tenant can see, or null (gap 31: never store another tenant's id)."""
+    item = item if isinstance(item, dict) else {}
+    speaker = _optional_uuid(item.get("speaker_id"))
+    if speaker is not None and not await is_visible(session, "users", speaker):
+        speaker = None
+    mo = _optional_uuid(item.get("moment_id"))
+    return {
+        "mo": str(mo) if mo else None,
+        "why": _bounded_text(item.get("why"), MAX_WHY_CHARS),
+        "qt": _bounded_text(item.get("quote"), MAX_QUOTE_CHARS),
+        "qs": str(speaker) if speaker else None,
+        "qa": _ms(item.get("start_ms")),
+        "qb": _ms(item.get("end_ms")),
+    }
+
+
 async def _persist_candidates(
     session: AsyncSession,
     org_id: uuid.UUID,
@@ -412,6 +445,10 @@ async def _persist_candidates(
     A payload that is not JSON is poison (the producer is broken); a candidate with a bad
     shape is skipped and the rest are applied. The band is re-derived from the tenant's
     thresholds here, never trusted from the payload's `surfaced`.
+
+    Polish program (memory inside the meeting): a candidate with `updates_candidate_id` is an
+    UPDATE of an existing card of this meeting (`_apply_update`), not a new row. Every row
+    stores the candidate's moment fields (`_moment`).
     """
     try:
         payload = json.loads(payload_json) if isinstance(payload_json, str) else None
@@ -440,14 +477,15 @@ async def _persist_candidates(
             "m": str(meeting_id),
             "c": content,
             "conf": confidence,
+            **await _moment(session, cand),
         }
         if table == "decisions":
             rationale = cand.get("rationale")
             params["r"] = (rationale.strip() or None) if isinstance(rationale, str) else None
             sql = (
                 "INSERT INTO decisions (id, org_id, meeting_id, content, rationale, confidence, "
-                "status) VALUES (:id, :o, :m, :c, :r, :conf, 'proposed') "
-                "ON CONFLICT (id) DO NOTHING RETURNING 1"
+                f"status, {_MOMENT_SQL}) VALUES (:id, :o, :m, :c, :r, :conf, 'proposed', "
+                f"{_MOMENT_VALUES}) ON CONFLICT (id) DO NOTHING RETURNING 1"
             )
         else:
             # A foreign key resolves another tenant's user with RLS bypassed (gap 31): an
@@ -464,12 +502,67 @@ async def _persist_candidates(
             params["d"] = _optional_date(cand.get("due_date"))
             sql = (
                 "INSERT INTO action_items (id, org_id, meeting_id, content, assignee_id, "
-                "due_date, confidence, status) VALUES (:id, :o, :m, :c, :a, :d, :conf, "
-                "'proposed') ON CONFLICT (id) DO NOTHING RETURNING 1"
+                f"due_date, confidence, status, {_MOMENT_SQL}) VALUES (:id, :o, :m, :c, :a, "
+                f":d, :conf, 'proposed', {_MOMENT_VALUES}) ON CONFLICT (id) DO NOTHING RETURNING 1"
             )
+        target = _optional_uuid(cand.get("updates_candidate_id"))
+        if target is not None:
+            applied = await _apply_update(session, table, meeting_id, target, params)
+            if applied is not None:
+                written = written or applied
+                continue  # the card exists: updated, or left alone (resolved / edited)
+            params["id"] = str(target)  # the card was never stored (below silent): create it
         if (await session.execute(text(sql), params)).first() is not None:
             written = True
     return written
+
+
+async def _apply_update(
+    session: AsyncSession,
+    table: str,
+    meeting_id: uuid.UUID,
+    target: uuid.UUID,
+    params: dict[str, Any],
+) -> bool | None:
+    """Apply an agent's update to the existing card `target` of this meeting. None when there
+    is no such card (the caller inserts it), True when it changed, False when it is left alone:
+    only a `proposed` card no person has edited (`edited_at` null) is ever updated, so an agent
+    never reopens a confirmed or dismissed card and never overwrites a person's words.
+
+    New text, confidence, the latest words (quote, speaker, time) and the why line replace the
+    old; a rationale, an assignee and a due date only fill in or change, never clear (a
+    refinement that does not repeat the owner keeps the owner); the moment stays the card's
+    first, so every link to it (a promise, a note) still holds. The live card is updated in the
+    room by realtime-gateway from the same `agent-results` record (the candidate keeps its id).
+    """
+    row = (
+        await session.execute(
+            text(
+                f"SELECT status, edited_at FROM {table} "  # noqa: S608 - closed set of tables
+                "WHERE id = :t AND meeting_id = :m AND deleted_at IS NULL FOR UPDATE"
+            ),
+            {"t": str(target), "m": str(meeting_id)},
+        )
+    ).first()
+    if row is None:
+        return None
+    if row[0] != "proposed" or row[1] is not None:
+        return False
+    if table == "decisions":
+        extra = "rationale = COALESCE(:r, rationale)"
+    else:
+        extra = "assignee_id = COALESCE(:a, assignee_id), due_date = COALESCE(:d, due_date)"
+    await session.execute(
+        text(
+            f"UPDATE {table} SET content = :c, confidence = :conf, {extra}, "  # noqa: S608
+            "moment_id = COALESCE(moment_id, :mo), why = COALESCE(:why, why), "
+            "quote = COALESCE(:qt, quote), quote_speaker_id = COALESCE(:qs, quote_speaker_id), "
+            "quote_start_ms = COALESCE(:qa, quote_start_ms), "
+            "quote_end_ms = COALESCE(:qb, quote_end_ms) WHERE id = :t"
+        ),
+        {**params, "t": str(target)},
+    )
+    return True
 
 
 async def _persist_commitments(
@@ -509,7 +602,7 @@ async def _persist_commitments(
             await session.execute(
                 text(
                     "INSERT INTO commitments (org_id, user_id, meeting_id, content, due_hint, "
-                    "source_window_id) VALUES (:o, :u, :m, :c, :d, :w) "
+                    "source_window_id, moment_id) VALUES (:o, :u, :m, :c, :d, :w, :mo) "
                     "ON CONFLICT DO NOTHING RETURNING 1"
                 ),
                 {
@@ -519,11 +612,23 @@ async def _persist_commitments(
                     "c": content,
                     "d": _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS),
                     "w": window_id,
+                    # polish: the moment the promise was made (a confirmed action of the same
+                    # moment for this person closes it, routes/candidates.py)
+                    "mo": (str(mo) if (mo := _optional_uuid(entry.get("moment_id"))) else None),
                 },
             )
         ).first()
         written = written or inserted is not None
     return written
+
+
+def _payload_object(payload_json: Any) -> dict[str, Any]:
+    """The payload as an object, {} when absent or not JSON (a note never fails on it)."""
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else None
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _payload_list(payload_json: Any, key: str) -> list[Any] | None:
@@ -598,12 +703,14 @@ async def _persist_suggestions(
             await session.execute(
                 text(
                     "INSERT INTO agent_suggestions (id, org_id, user_id, meeting_id, question, "
-                    "priority, status, confidence, rationale, citations) "
-                    "SELECT :id, :o, :u, :m, :q, :p, 'open', :c, :r, CAST(:cit AS jsonb) "
+                    f"priority, status, confidence, rationale, citations, {_MOMENT_SQL}) "
+                    "SELECT :id, :o, :u, :m, :q, :p, 'open', :c, :r, CAST(:cit AS jsonb), "
+                    f"{_MOMENT_VALUES} "
                     "WHERE NOT EXISTS (SELECT 1 FROM agent_suggestions WHERE id = :id) "
                     "ON CONFLICT DO NOTHING RETURNING 1"
                 ),
                 {
+                    **await _moment(session, s),
                     "id": str(sid),
                     "o": str(org_id),
                     "u": str(user_id),

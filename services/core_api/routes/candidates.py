@@ -44,6 +44,7 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from services.core_api.confidence import thresholds
+from services.core_api.meeting_ledger import mark_candidate
 from services.core_api.routes.chat import (
     _fetch_meeting_exists,
     _not_a_participant,
@@ -65,11 +66,15 @@ router = APIRouter(prefix="/api/v1")
 PRODUCER = "core-api"
 _EPOCH = date(1970, 1, 1)
 
+# polish program (one card per moment): the moment, the words and the why line ride every read
+_MOMENT_COLS = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
 _DECISION_COLS = (
-    "id, meeting_id, content, rationale, confidence, status, confirmed_by, supersedes, created_at"
+    "id, meeting_id, content, rationale, confidence, status, confirmed_by, supersedes, created_at, "
+    + _MOMENT_COLS
 )
 _ACTION_COLS = (
-    "id, meeting_id, content, assignee_id, due_date, confidence, status, confirmed_by, created_at"
+    "id, meeting_id, content, assignee_id, due_date, confidence, status, confirmed_by, created_at, "
+    + _MOMENT_COLS
 )
 
 # A meeting's candidates are bounded by its windows (~90 per hour per agent), so one page.
@@ -230,8 +235,18 @@ async def get_candidate(
     return CandidateState(kind="action", **{k: action[k] for k in _STATE_ACTION})
 
 
-_STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by")
-_STATE_ACTION = ("id", "meeting_id", "status", "content", "assignee_id", "due_date", "confirmed_by")
+_MOMENT = ("moment_id", "why", "quote", "quote_speaker_id", "quote_start_ms", "quote_end_ms")
+_STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by", *_MOMENT)
+_STATE_ACTION = (
+    "id",
+    "meeting_id",
+    "status",
+    "content",
+    "assignee_id",
+    "due_date",
+    "confirmed_by",
+    *_MOMENT,
+)
 
 
 # --- decisions -----------------------------------------------------------------------------
@@ -253,14 +268,23 @@ async def update_decision(
         (
             await session.execute(
                 text(
-                    f"UPDATE decisions SET {sets} WHERE id = :id "  # noqa: S608
-                    f"RETURNING {_DECISION_COLS}"
+                    f"UPDATE decisions SET {sets}, edited_at = now() "  # noqa: S608
+                    f"WHERE id = :id RETURNING {_DECISION_COLS}"
                 ),
                 {**fields, "id": str(decision_id)},
             )
         )
         .mappings()
         .one()
+    )
+    # a person's edit is final for the agents: they never update this card again
+    await mark_candidate(
+        ctx.org_id,
+        updated["meeting_id"],
+        decision_id,
+        kind="decision",
+        status="edited",
+        text=updated["content"],
     )
     return Decision(**dict(updated))
 
@@ -353,6 +377,9 @@ async def confirm_decision(
         },
         ip=ctx.ip,
     )
+    await mark_candidate(
+        ctx.org_id, confirmed["meeting_id"], decision_id, kind="decision", status="confirmed"
+    )
     return Decision(**confirmed)
 
 
@@ -391,6 +418,9 @@ async def dismiss_decision(
         metadata={"meeting_id": str(dismissed["meeting_id"])},
         ip=ctx.ip,
     )
+    await mark_candidate(
+        ctx.org_id, dismissed["meeting_id"], decision_id, kind="decision", status="dismissed"
+    )
     return Decision(**dict(dismissed))
 
 
@@ -423,14 +453,22 @@ async def update_action(
         (
             await session.execute(
                 text(
-                    f"UPDATE action_items SET {sets} WHERE id = :id "  # noqa: S608
-                    f"RETURNING {_ACTION_COLS}"
+                    f"UPDATE action_items SET {sets}, edited_at = now() "  # noqa: S608
+                    f"WHERE id = :id RETURNING {_ACTION_COLS}"
                 ),
                 {**fields, "id": str(action_id)},
             )
         )
         .mappings()
         .one()
+    )
+    await mark_candidate(
+        ctx.org_id,
+        updated["meeting_id"],
+        action_id,
+        kind="action",
+        status="edited",
+        text=updated["content"],
     )
     return ActionItem(**dict(updated))
 
@@ -489,7 +527,37 @@ async def confirm_action(
         metadata={"meeting_id": str(confirmed["meeting_id"])},
         ip=ctx.ip,
     )
+    await close_matching_promises(session, confirmed)
+    await mark_candidate(
+        ctx.org_id, confirmed["meeting_id"], action_id, kind="action", status="confirmed"
+    )
     return ActionItem(**confirmed)
+
+
+async def close_matching_promises(session: AsyncSession, action: dict[str, Any]) -> int:
+    """One card per moment: a confirmed action closes the promise its assignee made at the
+    same moment (the PersonalListener commitment and the ActionAgent candidate quote the same
+    words, so they carry the same `moment_id`). The promise becomes `done` and points at the
+    task that now tracks it (`action_item_id`). Only the assignee's own open promises of this
+    meeting; nothing without an assignee or a moment. Returns how many were closed."""
+    if action.get("assignee_id") is None or action.get("moment_id") is None:
+        return 0
+    closed = (
+        await session.execute(
+            text(
+                "UPDATE commitments SET status = 'done', done_at = now(), updated_at = now(), "
+                "action_item_id = :a WHERE meeting_id = :m AND moment_id = :mo "
+                "AND user_id = :u AND status = 'open' RETURNING id"
+            ),
+            {
+                "a": str(action["id"]),
+                "m": str(action["meeting_id"]),
+                "mo": str(action["moment_id"]),
+                "u": str(action["assignee_id"]),
+            },
+        )
+    ).all()
+    return len(closed)
 
 
 @router.post("/actions/{action_id}/dismiss", response_model=ActionItem, tags=["actions"])
@@ -526,6 +594,9 @@ async def dismiss_action(
         target_id=action_id,
         metadata={"meeting_id": str(dismissed["meeting_id"])},
         ip=ctx.ip,
+    )
+    await mark_candidate(
+        ctx.org_id, dismissed["meeting_id"], action_id, kind="action", status="dismissed"
     )
     return ActionItem(**dict(dismissed))
 

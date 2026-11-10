@@ -274,6 +274,13 @@ def test_get_serves_my_open_surfaced_ones_and_my_saved_ones(client, migrated_db)
         "rationale",
         "citations",
         "created_at",
+        # polish program (one card per moment)
+        "moment_id",
+        "why",
+        "quote",
+        "quote_speaker_id",
+        "quote_start_ms",
+        "quote_end_ms",
     }
 
 

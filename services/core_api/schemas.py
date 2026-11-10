@@ -443,7 +443,23 @@ class MeetingSpeakerList(BaseModel):
     items: list[MeetingSpeaker]
 
 
-class Worklog(BaseModel):
+class CardMoment(BaseModel):
+    """Polish program (one card per moment): the moment a card points at. `moment_id` is the
+    same for every card, note and promise about the same words (uuid5 over the meeting and the
+    quoted transcript final); `quote` the words, `quote_speaker_id` who said them (a
+    `users.id`), `quote_start_ms` / `quote_end_ms` when (meeting time, the transcript's clock);
+    `why` one line saying why the card exists or why the person sees it. All null for rows
+    written before the agents sent them."""
+
+    moment_id: uuid.UUID | None = None
+    why: str | None = None
+    quote: str | None = None
+    quote_speaker_id: uuid.UUID | None = None
+    quote_start_ms: int | None = None
+    quote_end_ms: int | None = None
+
+
+class Worklog(CardMoment):
     """One `PersonalListenerAgent` note from `worklogs` (Plan 7-9 section 3.3).
 
     Only `surfaced` notes are ever served; the 0.4-0.7 silent-log band stays in the table and
@@ -474,7 +490,7 @@ ActionStatus = Literal["proposed", "confirmed", "done", "dismissed"]
 _CANDIDATE_TEXT_MAX = 4000
 
 
-class Decision(BaseModel):
+class Decision(CardMoment):
     """One `decisions` row. `proposed` until a participant confirms or dismisses it."""
 
     id: uuid.UUID
@@ -488,7 +504,7 @@ class Decision(BaseModel):
     created_at: datetime
 
 
-class ActionItem(BaseModel):
+class ActionItem(CardMoment):
     """One `action_items` row. `proposed` until a participant confirms or dismisses it."""
 
     id: uuid.UUID
@@ -510,7 +526,7 @@ class CandidateList(BaseModel):
     actions: list[ActionItem]
 
 
-class CandidateState(BaseModel):
+class CandidateState(CardMoment):
     """`GET /meetings/:id/candidates/:candidate_id`: one decision or action candidate of this
     meeting, in any status. Read by `realtime-gateway` to verify a room-wide resolution event
     against the stored row before it tells the room (the shared candidate ledger)."""
@@ -598,7 +614,7 @@ class SuggestionCitation(BaseModel):
     title: str | None = None
 
 
-class Suggestion(BaseModel):
+class Suggestion(CardMoment):
     """One `agent_suggestions` row, as its owner sees it. Never served to anyone else."""
 
     id: uuid.UUID
@@ -744,6 +760,10 @@ class Commitment(BaseModel):
     created_at: datetime
     updated_at: datetime
     done_at: datetime | None
+    # polish (one card per moment): the moment the promise was made, and the task that closed
+    # it when an action of the same moment was confirmed for this person
+    moment_id: uuid.UUID | None = None
+    action_item_id: uuid.UUID | None = None
 
 
 class CommitmentList(BaseModel):

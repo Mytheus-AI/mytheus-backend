@@ -40,12 +40,16 @@ from libs.shared.audit import (
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.core_api.confidence import thresholds
+from services.core_api.meeting_ledger import mark_suggestion
 from services.core_api.routes.candidates import _require_meeting_participant
 from services.core_api.schemas import Suggestion, SuggestionList, SuggestionStatus
 
 router = APIRouter(prefix="/api/v1")
 
-_COLS = "id, meeting_id, question, priority, status, confidence, rationale, citations, created_at"
+_COLS = (
+    "id, meeting_id, question, priority, status, confidence, rationale, citations, created_at, "
+    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+)
 MAX_OPEN = 200  # bounded by windows x 2 per meeting
 MAX_SAVED = 50
 
@@ -163,6 +167,15 @@ async def _transition(
         target_id=suggestion_id,
         metadata={"meeting_id": str(updated["meeting_id"]), "from": current},
         ip=ctx.ip,
+    )
+    # memory inside the meeting: the agent does not suggest this question to this person again
+    await mark_suggestion(
+        ctx.org_id,
+        updated["meeting_id"],
+        ctx.user_id,
+        suggestion_id,
+        status=target,
+        text=updated["question"],
     )
     return _suggestion(updated)
 
