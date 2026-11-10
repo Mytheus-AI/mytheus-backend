@@ -24,7 +24,7 @@ Polish program, Phase 1 "The agenda as the spine" and "Close-out ritual".
 No new table, so no new grant: `mytheus_app` already reads and writes these tables.
 
 Revision ID: d0e1f2a3b4c5
-Revises: b8c9d0e1f2a3
+Revises: c9d0e1f2a3b4
 Create Date: 2026-11-11
 """
 
@@ -37,7 +37,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d0e1f2a3b4c5"
-down_revision: Union[str, None] = "b8c9d0e1f2a3"
+down_revision: str | None = "c9d0e1f2a3b4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

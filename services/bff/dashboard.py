@@ -46,7 +46,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, require_tier, tenant_session
-from services.core_api.confidence import thresholds
+from services.core_api.learning import band_for
 from services.core_api.schemas import MeetingStatus
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,6 @@ RECENT_DECISIONS = 5
 RECENT_MEETINGS = 4
 MAX_REVIEW = 10
 
-_OVERRIDES = text("SELECT agent_confidence_overrides FROM tenant_settings")
 
 ArmStatus = Literal["ok", "degraded", "empty"]
 
@@ -336,9 +335,9 @@ async def dashboard(
         if me is None:
             return []
         async with db:
-            overrides = (await session.execute(_OVERRIDES)).scalar()
-        decision_surface, _ = thresholds(overrides, "DecisionAgent")
-        action_surface, _ = thresholds(overrides, "ActionAgent")
+            # the workspace's calibrated thresholds (polish wave 2), as the candidates read
+            decision_surface, _ = await band_for(session, "DecisionAgent")
+            action_surface, _ = await band_for(session, "ActionAgent")
         found = await rows(
             "SELECT * FROM ("
             " SELECT 'decision' AS kind, d.id, d.meeting_id, m.title AS meeting_title, "

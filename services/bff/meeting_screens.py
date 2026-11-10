@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.core_api.brain import latest_statuses, may_see_source
+from services.core_api.person_memory import brief_memory
 from services.core_api.schemas import LatestStatus
 
 router = APIRouter(prefix="/bff", tags=["bff"])
@@ -78,6 +79,23 @@ class PreviousMeeting(BaseModel):
     title: str | None
 
 
+class BriefPromise(BaseModel):
+    id: uuid.UUID
+    content: str
+    due_hint: str | None
+    meeting_id: uuid.UUID
+
+
+class BriefMemory(BaseModel):
+    """Polish wave 2, memory across meetings: what the caller's agents remember about them,
+    ranked for this meeting (topics its title or agenda names come first)."""
+
+    topics: list[str]
+    recurring_questions: list[str]
+    open_promises: list[BriefPromise]
+    open_actions_total: int
+
+
 class MeetingBrief(BaseModel):
     meeting: BriefMeeting
     my_agenda_items: list[BriefAgendaItem]
@@ -85,6 +103,7 @@ class MeetingBrief(BaseModel):
     saved_questions: list[BriefQuestion]
     proxies: list[BriefProxy]
     previous_meeting: PreviousMeeting | None
+    memory: BriefMemory | None = None
 
 
 class AgendaCoverage(BaseModel):
@@ -218,7 +237,10 @@ async def meeting_brief(
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> MeetingBrief:
     """Before a meeting: the caller's agenda items, their open actions from the previous
-    meeting with the latest status, their saved questions, and who sent their agent."""
+    meeting with the latest status, their saved questions, and who sent their agent. Since
+    polish wave 2 also `memory`: what their agents remember about them across meetings (top
+    topics, recurring questions, open promises, open actions count); null when empty or when
+    they switched learning off."""
     m = await _meeting_for_participant(session, ctx, meeting_id)
     me = str(ctx.user_id)
     agenda = await _rows(
@@ -252,6 +274,7 @@ async def meeting_brief(
         "AND attendance = 'agent' ORDER BY user_id",
         {"m": str(meeting_id)},
     )
+    memory = await _brief_memory(session, ctx, meeting_id, m["title"])
     return MeetingBrief(
         meeting=BriefMeeting(id=m["id"], title=m["title"], scheduled_start=m["scheduled_start"]),
         my_agenda_items=[BriefAgendaItem(**a) for a in agenda],
@@ -259,7 +282,25 @@ async def meeting_brief(
         saved_questions=[BriefQuestion(**q) for q in saved],
         proxies=[BriefProxy(**p) for p in proxies],
         previous_meeting=previous,
+        memory=memory,
     )
+
+
+async def _brief_memory(
+    session: AsyncSession, ctx: RequestContext, meeting_id: uuid.UUID, title: str | None
+) -> BriefMemory | None:
+    """The caller's memory block (`person_memory.brief_memory`), boosted by this meeting's
+    title and every agenda item's title; None when there is nothing to show."""
+    if ctx.user_id is None:
+        return None
+    agenda = await _rows(
+        session,
+        "SELECT title FROM meeting_agenda_items WHERE meeting_id = :m ORDER BY position, id",
+        {"m": str(meeting_id)},
+    )
+    boost = [t for t in [title, *(a["title"] for a in agenda)] if t]
+    found = await brief_memory(session, ctx.user_id, boost)
+    return BriefMemory(**found) if found is not None else None
 
 
 _COUNTS = (

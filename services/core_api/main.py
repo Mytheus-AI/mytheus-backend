@@ -20,11 +20,13 @@ from services.core_api.routes import (
     followups,
     internal_agents,
     internal_integrations,
+    internal_learning,
     internal_lifecycle,
     internal_meetings,
     internal_policy,
     internal_reach,
     internal_retrieval,
+    me_memory,
     meeting_templates,
     meetings,
     my_tasks,
@@ -73,6 +75,10 @@ app.include_router(internal_reach.router)
 # and asking a stand-in agent (stand_ins).
 app.include_router(room_closeout.router)
 app.include_router(stand_ins.router)
+# Polish wave 2, agents that learn: the caller's own memory (GET/PATCH/DELETE /api/v1/me/memory)
+# and the internal guidance and person-memory reads for agent-runtime-service.
+app.include_router(me_memory.router)
+app.include_router(internal_learning.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
