@@ -147,3 +147,9 @@ ACTION_API_TOKEN_REVOKED = "api_token.revoked"
 ACTION_ACTION_CREATED = "action.created"
 ACTION_SHARE_LINK_CREATED = "share_link.created"
 ACTION_SHARE_LINK_REVOKED = "share_link.revoked"
+
+# Data erasure (Workspace > Data and privacy). core-api records its own share
+# (`POST /api/v1/erasures`, row counts); admin-ops-service records the whole request once every
+# leg has run (`POST /admin/tenant/erasures`), and that row is what the console lists.
+ACTION_DATA_ERASURE_APPLIED = "data_erasure.applied"
+ACTION_DATA_ERASURE_COMPLETED = "data_erasure.completed"

@@ -1473,6 +1473,73 @@ components:
       - open_actions
       title: DigestParticipant
       type: object
+    ErasureApplied:
+      properties:
+        anonymized:
+          additionalProperties:
+            type: integer
+          description: Records kept with the person removed.
+          title: Anonymized
+          type: object
+        erased:
+          additionalProperties:
+            type: integer
+          description: Rows deleted, by kind of data.
+          title: Erased
+          type: object
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        label:
+          description: 'What the confirmation matched: an email or a meeting title.'
+          title: Label
+          type: string
+        revoked_share_links:
+          title: Revoked Share Links
+          type: integer
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - kind
+      - target_id
+      - label
+      - erased
+      - anonymized
+      - revoked_share_links
+      title: ErasureApplied
+      type: object
+    ErasureRequest:
+      additionalProperties: false
+      properties:
+        confirm:
+          description: 'Typed confirmation: the person''s email, or the meeting''s title (`Untitled meeting`
+            when it has none). Case and outer spaces are ignored.'
+          maxLength: 320
+          minLength: 1
+          title: Confirm
+          type: string
+        kind:
+          enum:
+          - person
+          - meeting
+          title: Kind
+          type: string
+        target_id:
+          description: The person's `users.id` or the meeting's id.
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - kind
+      - target_id
+      - confirm
+      title: ErasureRequest
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -4928,6 +4995,60 @@ paths:
       summary: Create Department
       tags:
       - org-hierarchy
+  /api/v1/erasures:
+    post:
+      description: 'authz: admin. Erase core-api''s data for one person or one meeting (module docstring).'
+      operationId: apply_erasure
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasureRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErasureApplied'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '404':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No such person or meeting in this workspace.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The meeting is live.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The typed confirmation does not match, or it is your own data.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Apply Erasure
+      tags:
+      - erasure
   /api/v1/meeting-templates:
     get:
       operationId: list_templates
