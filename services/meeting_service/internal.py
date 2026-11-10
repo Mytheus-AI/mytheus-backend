@@ -7,7 +7,9 @@ writing that table (one writer per store):
   (`rooms.ensure_meeting_room`) and, after that commits, make sure the LiveKit room exists with
   its tenant metadata (`rooms.sync_livekit_metadata`, which never raises and leaves the row
   unsynced for the next caller to retry). A meeting that is already `ended`/`cancelled` is not
-  re-opened (`opened: false`). Idempotent.
+  re-opened (`opened: false`). Idempotent. The response carries the meeting's
+  `scheduled_start`: `meeting-events` does not, and the workflow bounds how long it waits for
+  `ended` from the scheduled start rather than from when the meeting was created.
 - `POST /internal/meetings/{meeting_id}/room/close`: mark the room `ended`
   (`rooms.mark_room_ended`). Idempotent; a meeting that never had a room is `changed: false`.
 
@@ -26,11 +28,13 @@ from __future__ import annotations
 import hmac
 import os
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
@@ -39,7 +43,6 @@ from libs.shared.tenancy import set_rls
 from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_ended,
-    meeting_has_ended,
     meeting_is_visible,
     sync_livekit_metadata,
 )
@@ -69,6 +72,7 @@ class RoomOpened(BaseModel):
     meeting_id: uuid.UUID
     room: str | None
     opened: bool
+    scheduled_start: datetime | None = None
 
 
 class RoomClosed(BaseModel):
@@ -133,15 +137,35 @@ async def open_room(
     session_factory = get_sessionmaker()
     async with session_factory() as session, session.begin():
         await set_rls(session, org_id)
-        if not await meeting_is_visible(session, meeting_id):
+        # Same RLS-scoped read `rooms.meeting_is_visible` / `meeting_has_ended` make, in one query
+        # so the scheduled start comes back with it.
+        meeting = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT status, scheduled_start FROM meetings "
+                        "WHERE id = :id AND deleted_at IS NULL"
+                    ),
+                    {"id": str(meeting_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if meeting is None:
             raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
-        if await meeting_has_ended(session, meeting_id):
-            return RoomOpened(meeting_id=meeting_id, room=None, opened=False)
+        scheduled = meeting["scheduled_start"]
+        if meeting["status"] in ("ended", "cancelled"):
+            return RoomOpened(
+                meeting_id=meeting_id, room=None, opened=False, scheduled_start=scheduled
+            )
         result = await ensure_meeting_room(session, org_id, meeting_id)
     if result.needs_livekit_sync:
         # After the commit, never inside it (rooms.py: no network call in an open transaction).
         await sync_livekit_metadata(session_factory, transport, org_id=org_id, room=result.room)
-    return RoomOpened(meeting_id=meeting_id, room=result.room, opened=True)
+    return RoomOpened(
+        meeting_id=meeting_id, room=result.room, opened=True, scheduled_start=scheduled
+    )
 
 
 @router.post("/internal/meetings/{meeting_id}/room/close", response_model=RoomClosed)

@@ -101,6 +101,12 @@ components:
           - type: string
           - type: 'null'
           title: Room
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Scheduled Start
       required:
       - meeting_id
       - room

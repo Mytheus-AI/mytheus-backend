@@ -9,7 +9,10 @@ real Postgres as `mytheus_app`. Nothing is mocked except the network hop.
   `ended` signals it; post-processing then close run; a replay after the run finished starts
   nothing (REJECT_DUPLICATE). `updated` is ignored; a bad message is poison.
 - `ended` with no prior run starts one already ended (signal-with-start).
-- a meeting that never ends is closed after `MAX_OPEN`, without post-processing.
+- a meeting that never ends is closed after `MAX_OPEN` and its run fails `MeetingNeverEnded`;
+  an `ended` that arrives later starts a fresh run that post-processes, exactly once.
+- the bound counts from the meeting's scheduled start, so a meeting booked weeks ahead is not
+  closed before it happens.
 - the run survives a worker restart while it waits for the signal.
 - a transient 503 is retried by the RetryPolicy; a 404 (another tenant's meeting) is not.
 - the internal routes the activities call refuse a caller without the workflow-service token.
@@ -20,14 +23,14 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
 from temporalio.worker import Worker
@@ -42,7 +45,9 @@ from services.workflow_service.activities import LifecycleActivities
 from services.workflow_service.consumer import PoisonMessage, handle_meeting_event
 from services.workflow_service.workflows.meeting_lifecycle import (
     MAX_OPEN,
+    NEVER_ENDED,
     MeetingLifecycleWorkflow,
+    wait_bound,
     workflow_id_for,
 )
 from tests.conftest import APP_URL
@@ -196,6 +201,7 @@ async def test_created_starts_once_and_ended_runs_post_processing_then_close(app
                 "meeting_id": str(m),
                 "room": f"meeting-{m}",
                 "opened": True,
+                "scheduled_start": None,
             }
             assert out["ended"] is True
             digest = out["post_meeting"]
@@ -223,9 +229,12 @@ async def test_ended_without_a_run_starts_one_already_ended(app):
     assert out["room_close"] == {"meeting_id": str(m), "changed": False}  # never had a room
 
 
-async def test_a_meeting_that_never_ends_is_closed_after_max_open(app):
+async def test_a_meeting_that_never_ends_fails_its_run_and_a_late_ended_still_post_processes(
+    app,
+):
     t = seed_tenant()
-    m = seed_meeting(t.org_id)
+    m = seed_meeting(t.org_id)  # no scheduled start: the bound counts from the run's start
+    wid = workflow_id_for(str(m))
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with worker(env.client, activities(app)):
             await handle_meeting_event(env.client, event(t.org_id, m, "created"), task_queue=QUEUE)
@@ -234,11 +243,61 @@ async def test_a_meeting_that_never_ends_is_closed_after_max_open(app):
             # A handle from get_workflow_handle is not auto-time-skipping (only start_workflow's
             # is), so skip the 7 days explicitly.
             await env.sleep(MAX_OPEN + timedelta(minutes=1))
-            out = await env.client.get_workflow_handle(workflow_id_for(str(m))).result()
+            with pytest.raises(WorkflowFailureError) as failed:
+                await env.client.get_workflow_handle(wid).result()
             assert await env.get_current_time() - before >= MAX_OPEN
-    assert out["ended"] is False and "post_meeting" not in out
+            cause = failed.value.cause
+            assert isinstance(cause, ApplicationError) and cause.type == NEVER_ENDED
+            assert room(m)["status"] == "ended"  # type: ignore[index]  # closed anyway
+
+            # the meeting does end, later: a fresh run does the post-processing
+            end_meeting(m)
+            ended = event(t.org_id, m, "ended")
+            assert await handle_meeting_event(env.client, ended, task_queue=QUEUE) == "signalled"
+            out = await env.client.get_workflow_handle(wid).result()
+            assert out["ended"] is True and out["post_meeting"]["status"] == "ended"
+            assert "room_open" not in out
+
+            # and exactly once: neither a replayed ended nor a replayed created starts another
+            assert await handle_meeting_event(env.client, ended, task_queue=QUEUE) == "duplicate"
+            created = event(t.org_id, m, "created")
+            assert await handle_meeting_event(env.client, created, task_queue=QUEUE) == "duplicate"
+
+
+async def test_the_bound_counts_from_the_scheduled_start_not_from_created(app):
+    t = seed_tenant()
+    m = seed_meeting(t.org_id)
+    _sql(
+        "UPDATE meetings SET scheduled_start = now() + interval '20 days' WHERE id = %(m)s",
+        {"m": str(m)},
+    )
+    wid = workflow_id_for(str(m))
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with worker(env.client, activities(app)):
+            await handle_meeting_event(env.client, event(t.org_id, m, "created"), task_queue=QUEUE)
+            await wait_for_room(m)
+            # well past 7 days after `created`, still 13 days before the meeting even starts
+            await env.sleep(MAX_OPEN + timedelta(days=1))
+            desc = await env.client.get_workflow_handle(wid).describe()
+            assert desc.status == WorkflowExecutionStatus.RUNNING
+            assert room(m)["status"] != "ended"  # type: ignore[index]
+
+            end_meeting(m)
+            ended = event(t.org_id, m, "ended")
+            assert await handle_meeting_event(env.client, ended, task_queue=QUEUE) == "signalled"
+            out = await env.client.get_workflow_handle(wid).result()
+    assert out["room_open"]["scheduled_start"] is not None
+    assert out["ended"] is True and out["post_meeting"]["status"] == "ended"
     assert out["room_close"]["changed"] is True
-    assert room(m)["status"] == "ended"  # type: ignore[index]
+
+
+def test_wait_bound_is_measured_from_the_later_of_now_and_the_scheduled_start():
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    assert wait_bound(now, None) == MAX_OPEN
+    assert wait_bound(now, "garbage") == MAX_OPEN
+    assert wait_bound(now, "2026-11-01T09:00:00Z") == MAX_OPEN  # already past
+    assert wait_bound(now, "2026-11-30T12:00:00+00:00") == MAX_OPEN + timedelta(days=20)
+    assert wait_bound(now, "2026-11-11T12:00:00") == MAX_OPEN + timedelta(days=1)  # naive: UTC
 
 
 async def test_the_run_survives_a_worker_restart(app):
@@ -295,7 +354,12 @@ async def test_activities_call_the_real_routes_and_a_404_is_not_retryable(app):
     acts = activities(app)
     env = ActivityEnvironment()
     opened = await env.run(acts.open_meeting_room, str(m), str(t.org_id))
-    assert opened == {"meeting_id": str(m), "room": f"meeting-{m}", "opened": True}
+    assert opened == {
+        "meeting_id": str(m),
+        "room": f"meeting-{m}",
+        "opened": True,
+        "scheduled_start": None,
+    }
     assert room(m) is not None and room(m)["livekit_room"] == f"meeting-{m}"  # type: ignore[index]
     with pytest.raises(ApplicationError) as exc:
         await env.run(acts.open_meeting_room, str(m), str(other.org_id))  # wrong tenant

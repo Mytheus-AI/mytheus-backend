@@ -13,11 +13,19 @@ Steps, each an activity over REST (`services/workflow_service/activities.py`) wi
    open for a meeting that is already over). A failure here is recorded, not fatal: the token
    mint and meeting-service's own consumer open the room too, and the meeting still needs its
    post-processing and close.
-2. Wait for `meeting_ended`, at most `MAX_OPEN`. `meeting-events` has no `cancelled` type (a
-   cancel is an `updated`), so without the bound a cancelled meeting would leave an execution
-   open forever; after it the room is closed and post-processing is skipped.
+2. Wait for `meeting_ended`, at most `MAX_OPEN` past the meeting's scheduled start (from the
+   open response; `meeting-events` does not carry it), or past the run's start when there is no
+   scheduled start or it is already past. `meeting-events` has no `cancelled` type (a cancel is
+   an `updated`), so without a bound a cancelled meeting would leave an execution open forever.
+   Counting from the scheduled start is what keeps a meeting booked weeks ahead from being
+   closed before it happens.
 3. `run_post_processing` (only when ended). A failure is recorded and the room is still closed.
 4. `close_meeting_room`. A failure here fails the run: it is the one step nothing else retries.
+5. When the bound expired instead (step 2), the room is closed and the run then FAILS with
+   `MeetingNeverEnded`. Failing is the point: the consumer signal-with-starts `ended` with
+   `ALLOW_DUPLICATE_FAILED_ONLY`, so a meeting that does end later (rescheduled, or simply
+   longer than anyone expected) gets a fresh run that does its post-processing, while a run
+   that completed normally can never be started again by a replayed `ended`.
 
 All workflow state is in Temporal history, so the run survives a worker restart: the next worker
 replays history and resumes waiting at step 2.
@@ -25,12 +33,12 @@ replays history and resumes waiting at step 2.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 ENDED_SIGNAL = "meeting_ended"
 MAX_OPEN = timedelta(days=7)
@@ -44,8 +52,26 @@ ROOM_TIMEOUT = timedelta(seconds=30)
 POST_PROCESSING_TIMEOUT = timedelta(minutes=10)
 
 
+NEVER_ENDED = "MeetingNeverEnded"
+
+
 def workflow_id_for(meeting_id: str) -> str:
     return f"meetinglifecycle-{meeting_id}"
+
+
+def wait_bound(now: datetime, scheduled_start: object) -> timedelta:
+    """How long to wait for `ended`: `MAX_OPEN` past the scheduled start, or past `now` when
+    there is none (or it has already passed). Pure, so the workflow stays deterministic."""
+    anchor = now
+    if isinstance(scheduled_start, str):
+        try:
+            parsed = datetime.fromisoformat(scheduled_start)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            anchor = max(now, parsed)
+    return anchor + MAX_OPEN - now
 
 
 @workflow.defn(name="MeetingLifecycleWorkflow")
@@ -66,6 +92,7 @@ class MeetingLifecycleWorkflow:
         out: dict[str, Any] = {"meeting_id": meeting_id, "ended": False}
         args = [meeting_id, org_id]
 
+        scheduled_start: object = None
         if not self._ended:
             try:
                 out["room_open"] = await workflow.execute_activity(
@@ -74,15 +101,17 @@ class MeetingLifecycleWorkflow:
                     start_to_close_timeout=ROOM_TIMEOUT,
                     retry_policy=RETRY_POLICY,
                 )
+                scheduled_start = out["room_open"].get("scheduled_start")
             except ActivityError as exc:
                 workflow.logger.warning("open_meeting_room failed for %s: %s", meeting_id, exc)
                 out["room_open_error"] = str(exc.cause or exc)
 
+        bound = wait_bound(workflow.now(), scheduled_start)
         try:
-            await workflow.wait_condition(lambda: self._ended, timeout=MAX_OPEN)
+            await workflow.wait_condition(lambda: self._ended, timeout=bound)
             out["ended"] = True
         except TimeoutError:
-            workflow.logger.info("meeting %s never ended within %s; closing", meeting_id, MAX_OPEN)
+            workflow.logger.info("meeting %s never ended within %s; closing", meeting_id, bound)
 
         if out["ended"]:
             try:
@@ -102,4 +131,12 @@ class MeetingLifecycleWorkflow:
             start_to_close_timeout=ROOM_TIMEOUT,
             retry_policy=RETRY_POLICY,
         )
+        if not out["ended"]:
+            raise ApplicationError(
+                f"meeting {meeting_id} did not end within {bound}; room closed, no "
+                "post-processing. A later meeting-events ended starts a fresh run.",
+                out,
+                type=NEVER_ENDED,
+                non_retryable=True,
+            )
         return out

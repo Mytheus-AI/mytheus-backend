@@ -10,10 +10,13 @@ meeting-service reporting the LiveKit room finished (`POST /internal/meetings/{i
 - `created`: start `meetinglifecycle-{meeting_id}` with `REJECT_DUPLICATE`. A redelivery (or a
   replay after the run finished) raises `WorkflowAlreadyStartedError`, which is the dedupe:
   nothing else is needed because Temporal owns the state and this service owns no table.
-- `ended`: signal-with-start `meeting_ended` on the same id. A running execution is signalled;
-  one that never started (its `created` was lost or predates this consumer) starts already
-  ended and goes straight to post-processing; a finished one is left alone. Re-signalling is
-  harmless (the signal sets a flag).
+- `ended`: signal-with-start `meeting_ended` on the same id with
+  `ALLOW_DUPLICATE_FAILED_ONLY`. A running execution is signalled; one that never started (its
+  `created` was lost or predates this consumer) starts already ended and goes straight to
+  post-processing; one that FAILED (it timed out waiting with `MeetingNeverEnded`, or its close
+  failed) is started again, already ended, so post-processing still happens; one that
+  COMPLETED (post-processing done) is left alone, so a replayed `ended` never runs it twice.
+  Re-signalling a running one is harmless (the signal sets a flag).
 - `updated`: ignored.
 
 A message that can never apply (no header org, a non-UUID, an unknown event type) is poison:
@@ -82,6 +85,7 @@ async def handle_meeting_event(
     }
     if event_type == "ended":
         start["start_signal"] = ENDED_SIGNAL
+        start["id_reuse_policy"] = WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
     try:
         handle: WorkflowHandle[Any, Any] = await client.start_workflow(
             MeetingLifecycleWorkflow.run, **start
