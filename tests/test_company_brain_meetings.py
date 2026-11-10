@@ -782,3 +782,23 @@ def test_reminders_read_for_the_workflow(client):
         client.get(url, headers=_headers(seed_tenant().org_id, "workflow-service")).status_code
         == 404
     )
+
+
+# --- notification-service: ADR-0039 C7 alert types --------------------------------------------
+
+
+@pytest.mark.parametrize("alert_type", ["already_decided", "topic_watch"])
+async def test_new_proactive_alert_types_become_in_app_rows(migrated_db, alert_type):
+    from tests.test_notifications import alert_obj, alert_result
+    from tests.test_notifications import apply as notify
+
+    t = seed_tenant()
+    watcher = seed_user(t)
+    m = seed_meeting(t.org_id)  # the watcher is not in it: topic_watch reaches outsiders
+    alert = alert_obj(alert_type=alert_type, priority=3, link=f"/meetings/{m}")
+    assert await notify("agent-results", alert_result(t, m, alert, recipient=watcher.user_id))
+    [row] = _sql(
+        "SELECT alert_type, link, source FROM notification_log WHERE user_id = %(u)s",
+        {"u": str(watcher.user_id)},
+    )
+    assert row == {"alert_type": alert_type, "link": f"/meetings/{m}", "source": "agent_alert"}

@@ -291,7 +291,9 @@ async def _load_participants(
                 text(
                     "SELECT meeting_id, user_id, role_in_meeting, attendance, proxy_update, "
                     "proxy_questions FROM meeting_participants WHERE meeting_id = ANY(:ids) "
-                    "ORDER BY meeting_id, user_id"
+                    # Deterministic: the host first, then by user id. Heap order (what the
+                    # list relied on before) is not an ordering Postgres promises.
+                    "ORDER BY meeting_id, (role_in_meeting = 'host') DESC, user_id"
                 ),
                 {"ids": meeting_ids},
             )
