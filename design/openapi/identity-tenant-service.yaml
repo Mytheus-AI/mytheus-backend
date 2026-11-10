@@ -2236,7 +2236,7 @@ paths:
     put:
       description: 'authz: admin. Upsert, for the reason `routes/tenant_settings.py` gives: provisioning
 
-        does not create a `tenant_settings` row. Saving an empty list counts as setting them (A7).'
+        does not create a `tenant_settings` row.'
       operationId: put_ground_rules
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key

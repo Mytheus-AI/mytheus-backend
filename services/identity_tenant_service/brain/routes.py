@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.audit import audit
+from libs.shared.auth import verify_token
 from libs.shared.authz import RequestContext, not_found, require_tier
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
@@ -40,7 +41,10 @@ from libs.shared.tenancy import set_rls
 from services.identity_tenant_service.brain import schemas as s
 from services.identity_tenant_service.brain.context import invalidate_org_context
 
-router = APIRouter(prefix="/api/v1", tags=["company-brain"])
+# The token check is declared at the router as well as inside `require_tier`, so the authz gate
+# (scripts/check_authz.py) sees it without resolving the `Member`/`Admin` aliases. FastAPI caches
+# dependencies per request, so the token is still verified once.
+router = APIRouter(prefix="/api/v1", tags=["company-brain"], dependencies=[Depends(verify_token)])
 
 # Audit actions. Kept beside the routes that write them; the vocabulary is `org_brain.*`.
 ACTION_PROFILE_UPDATED = "org_brain.profile.updated"

@@ -26,7 +26,7 @@ table since `9b2c4d1e6f30`.
   log them in-app like the other four instead of failing the insert.
 
 Revision ID: d2b3c4d5e6f7
-Revises: 0b91a00079a7
+Revises: c1a2b3d4e5f6
 Create Date: 2026-11-10
 """
 
@@ -39,7 +39,7 @@ from alembic import op
 from migrations._grants import grant_tenant_table
 
 revision: str = "d2b3c4d5e6f7"
-down_revision: Union[str, None] = "0b91a00079a7"
+down_revision: Union[str, None] = "c1a2b3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
