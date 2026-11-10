@@ -73,6 +73,40 @@ components:
       - status
       - code
       type: object
+    RoomClosed:
+      properties:
+        changed:
+          title: Changed
+          type: boolean
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - meeting_id
+      - changed
+      title: RoomClosed
+      type: object
+    RoomOpened:
+      properties:
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        opened:
+          title: Opened
+          type: boolean
+        room:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Room
+      required:
+      - meeting_id
+      - room
+      - opened
+      title: RoomOpened
+      type: object
     TokenResponse:
       properties:
         livekit_url:
@@ -124,6 +158,12 @@ components:
         a path, query, body or client header.
       scheme: bearer
       type: http
+    MytheusServiceToken:
+      description: INTERNAL ONLY. Per-caller shared secret from MYTHEUS_MEETING_CALLER_TOKENS, sent with
+        `X-Mytheus-Service` (caller name) and `X-Mytheus-Org` (tenant).
+      in: header
+      name: X-Mytheus-Service-Token
+      type: apiKey
 info:
   title: meeting-service
   version: 1.0.0
@@ -194,6 +234,100 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/meetings/{meeting_id}/room/close:
+    post:
+      operationId: close_room
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomClosed'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Close Room
+      tags:
+      - meeting-internal
+  /internal/meetings/{meeting_id}/room/open:
+    post:
+      operationId: open_room
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomOpened'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Open Room
+      tags:
+      - meeting-internal
   /livekit/webhook:
     post:
       operationId: livekit_webhook

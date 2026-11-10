@@ -3,6 +3,9 @@
 Run with: uv run python -m services.workflow_service.worker
 
 Workers are stateless — Temporal owns workflow state. Scale on task-queue depth.
+
+The `meeting-events` consumer that starts and signals MeetingLifecycleWorkflow is a separate
+process: `python -m services.workflow_service.consumer`.
 """
 
 import asyncio
@@ -11,6 +14,7 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from services.workflow_service.activities import LifecycleActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
@@ -24,6 +28,8 @@ _TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "mytheus-backend")
 
 async def main() -> None:
     client = await Client.connect(_TEMPORAL_ADDRESS, namespace=_TEMPORAL_NAMESPACE)
+    # MeetingLifecycleWorkflow's REST activities (P10). The other workflows are still stubs.
+    lifecycle = LifecycleActivities.from_env()
     worker = Worker(
         client,
         task_queue=_TASK_QUEUE,
@@ -34,7 +40,7 @@ async def main() -> None:
             DunningSagaWorkflow,
             UsageRollupWorkflow,
         ],
-        activities=[],  # TODO: register activity functions
+        activities=lifecycle.all(),
     )
     if await ensure_schedule(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")
