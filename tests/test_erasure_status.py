@@ -1,5 +1,5 @@
 """Erasure status per store: admin-ops' `admin-ops-service.erasure-status` consumer and the
-`status`/`stores` fields of `GET /admin/tenant/erasures`.
+`progress`/`stores` fields of `GET /admin/tenant/erasures`.
 
 Real Postgres as `mytheus_app`, fakeredis. Covered:
 - a new request is `in_progress`, with `core_api` done and the four remote stores pending;
@@ -96,7 +96,8 @@ def _request_meeting_erasure(client: Any) -> tuple[Any, str]:  # noqa: F811
 def _stores(client: Any, erasure_id: str) -> tuple[str, dict[str, dict[str, Any]]]:  # noqa: F811
     items = client.get("/admin/tenant/erasures").json()["items"]
     item = next(i for i in items if i["id"] == erasure_id)
-    return item["status"], {s["store"]: s for s in item["stores"]}
+    assert item["status"] == "completed"  # core-api applied it; `progress` is the whole
+    return item["progress"], {s["store"]: s for s in item["stores"]}
 
 
 async def test_a_request_is_in_progress_until_every_store_reports(client):  # noqa: F811

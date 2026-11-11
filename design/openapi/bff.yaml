@@ -571,6 +571,11 @@ components:
           - type: string
           - type: 'null'
           title: Livekit Room
+        recorded_in_person:
+          default: false
+          description: 'Held in a room and recorded on a phone: no call or room to join (wave 3).'
+          title: Recorded In Person
+          type: boolean
         scheduled_end:
           anyOf:
           - format: date-time

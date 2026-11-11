@@ -2711,6 +2711,12 @@ components:
             type: string
           - type: 'null'
           title: Previous Meeting Id
+        recorded_in_person:
+          default: false
+          description: 'True for a meeting held in a room and recorded on a phone: it has no call and
+            no Mytheus room to join (its `source` is `mytheus`).'
+          title: Recorded In Person
+          type: boolean
         scheduled_end:
           anyOf:
           - format: date-time
@@ -2730,7 +2736,6 @@ components:
           - meet
           - teams
           - zoom
-          - in_person
           title: Source
           type: string
         status:
@@ -2917,6 +2922,12 @@ components:
             type: string
           - type: 'null'
           title: Previous Meeting Id
+        recorded_in_person:
+          default: false
+          description: 'True for a meeting held in a room and recorded on a phone: it has no call and
+            no Mytheus room to join (its `source` is `mytheus`).'
+          title: Recorded In Person
+          type: boolean
         scheduled_end:
           anyOf:
           - format: date-time
@@ -2936,7 +2947,6 @@ components:
           - meet
           - teams
           - zoom
-          - in_person
           title: Source
           type: string
         status:
