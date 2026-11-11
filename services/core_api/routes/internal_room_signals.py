@@ -128,7 +128,8 @@ async def room_signals_source(
             (
                 await session.execute(
                     text(
-                        "SELECT p.user_id, u.email, p.attendance, p.role_in_meeting, "
+                        "SELECT p.user_id, u.email, u.display_name, p.attendance, "
+                        "p.role_in_meeting, "
                         "COALESCE(u.listen_for, '{}') AS listen_for "
                         "FROM meeting_participants p JOIN users u ON u.id = p.user_id "
                         "AND u.deleted_at IS NULL WHERE p.meeting_id = :m "
@@ -244,7 +245,7 @@ async def room_signals_source(
         participants=[
             SignalsParticipant(
                 user_id=p["user_id"],
-                name=records.display_name(p["email"]),
+                name=records.person_name(p["display_name"], p["email"]),
                 attendance=p["attendance"],
                 role_in_meeting=p["role_in_meeting"],
                 listen_for=[str(t) for t in p["listen_for"]][:15],

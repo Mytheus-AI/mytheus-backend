@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.authz import not_found
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 from services.core_api.visibility import is_visible
 
 PRODUCER = "core-api"
@@ -110,12 +110,12 @@ async def people(session: AsyncSession, ids: list[uuid.UUID | None]) -> dict[uui
         return {}
     rows = await session.execute(
         text(
-            "SELECT id, email FROM users WHERE id = ANY(CAST(:ids AS uuid[])) "
+            "SELECT id, email, display_name FROM users WHERE id = ANY(CAST(:ids AS uuid[])) "
             "AND deleted_at IS NULL"
         ),
         {"ids": wanted},
     )
-    return {r[0]: Person(user_id=r[0], name=display_name(r[1]) or "A colleague") for r in rows}
+    return {r[0]: Person(user_id=r[0], name=person_name(r[2], r[1]) or "A colleague") for r in rows}
 
 
 async def person(session: AsyncSession, user_id: uuid.UUID | None) -> Person | None:

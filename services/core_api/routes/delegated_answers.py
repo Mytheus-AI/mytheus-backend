@@ -35,7 +35,7 @@ from libs.shared.authz import RequestContext, require_tier, tenant_session
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 from services.core_api.routes.chat import (
     _fetch_meeting_exists,
     _not_a_participant,
@@ -263,7 +263,8 @@ async def delegated_answer_log(
                 text(
                     "SELECT l.id, l.question, l.answer, l.covered, l.statement_id, "
                     "COALESCE(l.statement_text, s.text) AS statement_text, l.asked_by, "
-                    "u.email AS asked_by_email, l.created_at "
+                    "u.email AS asked_by_email, u.display_name AS asked_by_display_name, "
+                    "l.created_at "
                     "FROM delegated_answer_log l "
                     "LEFT JOIN delegated_answer_statements s ON s.id = l.statement_id "
                     "LEFT JOIN users u ON u.id = l.asked_by "
@@ -286,7 +287,7 @@ async def delegated_answer_log(
                 statement_id=r["statement_id"],
                 statement_text=r["statement_text"] if r["covered"] else None,
                 asked_by=r["asked_by"],
-                asked_by_name=display_name(r["asked_by_email"]),
+                asked_by_name=person_name(r["asked_by_display_name"], r["asked_by_email"]),
                 created_at=r["created_at"],
             )
             for r in rows
@@ -309,7 +310,7 @@ async def internal_delegated_answers(
         rows = (
             await session.execute(
                 text(
-                    "SELECT p.user_id, u.email, s.id, s.text "
+                    "SELECT p.user_id, u.email, s.id, s.text, u.display_name "
                     "FROM meeting_participants p "
                     "JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL "
                     "JOIN delegated_answer_statements s ON s.meeting_id = p.meeting_id "
@@ -321,11 +322,11 @@ async def internal_delegated_answers(
             )
         ).all()
     out: dict[uuid.UUID, InternalDelegate] = {}
-    for user_id, email, sid, stext in rows:
+    for user_id, email, sid, stext, stored in rows:
         d = out.get(user_id)
         if d is None:
             d = out[user_id] = InternalDelegate(
-                user_id=user_id, name=display_name(email) or "Your colleague", statements=[]
+                user_id=user_id, name=person_name(stored, email) or "Your colleague", statements=[]
             )
         d.statements.append(InternalStatement(id=sid, text=stext))
     return InternalDelegates(delegates=list(out.values()))

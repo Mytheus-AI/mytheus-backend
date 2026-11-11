@@ -46,7 +46,7 @@ from libs.shared.cache import get_redis, redis_key
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 logger = logging.getLogger(__name__)
 
@@ -258,10 +258,10 @@ async def names(session: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, P
     if not ids:
         return {}
     rows = await session.execute(
-        text("SELECT id, email FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
+        text("SELECT id, email, display_name FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
         {"ids": [str(i) for i in ids]},
     )
-    return {r[0]: Person(id=r[0], name=display_name(r[1])) for r in rows}
+    return {r[0]: Person(id=r[0], name=person_name(r[2], r[1])) for r in rows}
 
 
 async def visible_decision(

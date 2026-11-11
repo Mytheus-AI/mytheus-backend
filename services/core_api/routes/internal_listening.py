@@ -95,7 +95,8 @@ async def meeting_listeners(
             (
                 await session.execute(
                     text(
-                        "SELECT p.user_id, u.email, u.listen_for FROM meeting_participants p "
+                        "SELECT p.user_id, u.email, u.display_name, "
+                        "u.listen_for FROM meeting_participants p "
                         "JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL "
                         "WHERE p.meeting_id = :m AND p.attendance = 'agent' "
                         "AND p.attendance_choice IS DISTINCT FROM 'skip' ORDER BY p.user_id"
@@ -109,7 +110,7 @@ async def meeting_listeners(
         listeners: list[Listener] = []
         for p in people:
             uid = p["user_id"]
-            name = records.display_name(p["email"]) or "Your colleague"
+            name = records.person_name(p["display_name"], p["email"]) or "Your colleague"
             teams = [
                 r[0]
                 for r in await session.execute(

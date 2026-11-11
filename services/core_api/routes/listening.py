@@ -988,12 +988,13 @@ def _chat_text(kind: str, name: str, body: str) -> str:
 
 
 _VIEW_COLUMNS = (
-    "v.id, v.meeting_id, v.user_id, u.email, v.kind, v.text, v.status, v.decided_at, v.created_at"
+    "v.id, v.meeting_id, v.user_id, u.email, u.display_name, v.kind, v.text, v.status, "
+    "v.decided_at, v.created_at"
 )
 
 
 def _view(row: Any) -> MeetingView:
-    name = records.display_name(row["email"]) or "A teammate"
+    name = records.person_name(row["display_name"], row["email"]) or "A teammate"
     return MeetingView(
         id=row["id"],
         meeting_id=row["meeting_id"],

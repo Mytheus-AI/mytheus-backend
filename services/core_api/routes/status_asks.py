@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.authz import RequestContext, require_tier, tenant_session
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 router = APIRouter(prefix="/api/v1", tags=["status-requests"])
 
@@ -72,17 +72,19 @@ async def ask_for_status(
     asker = ctx.user_id
     asker_name = None
     if asker is not None:
-        email = (
-            await session.execute(text("SELECT email FROM users WHERE id = :u"), {"u": str(asker)})
-        ).scalar()
-        asker_name = display_name(email)
+        asker_row = (
+            await session.execute(
+                text("SELECT email, display_name FROM users WHERE id = :u"), {"u": str(asker)}
+            )
+        ).first()
+        asker_name = person_name(asker_row[1], asker_row[0]) if asker_row else None
     for action_id in dict.fromkeys(body.action_ids):
         row = (
             (
                 await session.execute(
                     text(
                         "SELECT a.id, a.content, a.status, a.assignee_id, a.meeting_id, "
-                        "u.email AS owner_email, "
+                        "u.email AS owner_email, u.display_name AS owner_display_name, "
                         "(a.assignee_id = :me OR EXISTS (SELECT 1 FROM meeting_participants p "
                         "  WHERE p.meeting_id = a.meeting_id AND p.user_id = :me)) AS visible "
                         "FROM action_items a LEFT JOIN users u ON u.id = a.assignee_id "
@@ -98,7 +100,7 @@ async def ask_for_status(
         if row is None or asker is None or not row["visible"]:
             items.append(StatusAskItem(action_id=action_id, reason="not_found"))
             continue
-        owner_name = display_name(row["owner_email"])
+        owner_name = person_name(row["owner_display_name"], row["owner_email"])
         if row["status"] != "confirmed":
             items.append(
                 StatusAskItem(action_id=action_id, owner_name=owner_name, reason="not_open")

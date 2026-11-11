@@ -410,6 +410,28 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
     assert client.get(f"/api/v1/briefings/{briefing}/audio").status_code == 404
 
 
+async def test_the_briefing_greets_by_the_real_name_not_the_email(client):
+    """A person whose email is `nnm23ad071@nmamit.in` and whose name is Samar is greeted as
+    Samar, and their agent is "Samar's agent"; whoever waits on them is named the same way."""
+    host, member, m = meeting()
+    _sql(
+        "UPDATE users SET email = 'nnm23ad071@nmamit.in', display_name = 'Samar Rao' "
+        "WHERE id = %(u)s",
+        {"u": str(member.user_id)},
+    )
+    _sql("UPDATE users SET display_name = 'Maya P.' WHERE id = %(u)s", {"u": str(host.user_id)})
+    seed_records(host, member, m)
+    await personal_minutes(host, member, m)
+    briefing = str(briefing_rows(member.user_id)[0]["id"])
+
+    res = client.post(f"/internal/briefings/{briefing}/claim", headers=_agent_headers(host.org_id))
+    assert res.status_code == 200, res.text
+    src = res.json()
+    assert src["person"] == {"name": "Samar Rao", "first_name": "Samar"}
+    assert src["agent"]["name"] == "Samar's agent"
+    assert src["waiting"][0]["who"] == "Maya P."
+
+
 async def test_on_demand_briefings_do_not_notify_and_length_is_bounded(client):
     host, member, m = meeting()
     sign_in(member)

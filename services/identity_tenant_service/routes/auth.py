@@ -44,6 +44,7 @@ from services.identity_tenant_service.provisioning import (
     remove_member,
     tier_for_clerk_role,
 )
+from services.identity_tenant_service.schemas import clerk_display_name
 
 router = APIRouter(tags=["auth"])
 
@@ -194,6 +195,7 @@ async def _apply(session: Any, org_id: UUID, event_type: str, data: dict[str, An
             email=str(member.get("identifier") or ""),
             avatar_url=member.get("image_url"),
             tier=tier_for_clerk_role(str(data.get("role") or "")),
+            display_name=clerk_display_name(member.get("first_name"), member.get("last_name")),
         )
         return True
 
@@ -204,14 +206,17 @@ async def _apply(session: Any, org_id: UUID, event_type: str, data: dict[str, An
     if event_type in ("user.created", "user.updated"):
         await session.execute(
             text(
-                "INSERT INTO users (org_id, clerk_user_id, email, avatar_url) "
-                "VALUES (:org, :cuid, :email, :avatar) "
+                "INSERT INTO users (org_id, clerk_user_id, email, avatar_url, display_name) "
+                "VALUES (:org, :cuid, :email, :avatar, :name) "
                 # The conflict target is (org_id, clerk_user_id), which only became possible
                 # once the global unique on clerk_user_id was dropped. One person can belong
                 # to several organizations, and each membership is its own mirror row.
                 "ON CONFLICT (org_id, clerk_user_id) DO UPDATE SET "
                 "  email = EXCLUDED.email, "
                 "  avatar_url = EXCLUDED.avatar_url, "
+                # Clerk's first + last name, NULL when both are empty: Clerk is the source of
+                # the name, and every user.updated carries the whole user object.
+                "  display_name = EXCLUDED.display_name, "
                 "  updated_at = now(), "
                 # An update for a previously soft-deleted user is a re-invite: clear the
                 # tombstone rather than leaving them invisible with fresh data.
@@ -222,6 +227,7 @@ async def _apply(session: Any, org_id: UUID, event_type: str, data: dict[str, An
                 "cuid": clerk_user_id,
                 "email": _primary_email(data),
                 "avatar": data.get("image_url"),
+                "name": clerk_display_name(data.get("first_name"), data.get("last_name")),
             },
         )
         return True

@@ -69,7 +69,7 @@ from services.core_api.promise_models import (
     ProposalBrief,
     RenegotiateResult,
 )
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 router = APIRouter(prefix="/api/v1/promises", tags=["promises"])
 
@@ -79,14 +79,17 @@ EMAIL_CONNECTED = False  # no mail-reading integration exists yet (see internal_
 
 _SELECT = """
 SELECT c.id, c.user_id, c.content, c.status, c.review_state, c.channel, c.due_at, c.due_hint,
-       c.recipient_user_id, ru.email AS recipient_email, c.recipient_label,
+       c.recipient_user_id, ru.email AS recipient_email, ru.display_name AS recipient_display_name,
+       c.recipient_label,
        c.meeting_id, m.title AS meeting_title, m.scheduled_start AS meeting_start,
        c.moment_id, c.action_item_id, c.confidence,
-       c.handed_off_to, hu.email AS handed_off_to_email, c.handed_off_from,
-       c.created_by, cu.email AS created_by_email,
+       c.handed_off_to, hu.email AS handed_off_to_email,
+       hu.display_name AS handed_off_to_display_name, c.handed_off_from,
+       c.created_by, cu.email AS created_by_email, cu.display_name AS created_by_display_name,
        c.source_link, c.source_quote, c.source_at,
        c.created_at, c.updated_at, c.done_at,
-       p.id AS p_id, p.proposed_due AS p_due, p.state AS p_state, pu.email AS p_requester_email
+       p.id AS p_id, p.proposed_due AS p_due, p.state AS p_state, pu.email AS p_requester_email,
+       pu.display_name AS p_requester_display_name
 FROM commitments c
 LEFT JOIN meetings m ON m.id = c.meeting_id
 LEFT JOIN users ru ON ru.id = c.recipient_user_id
@@ -138,11 +141,11 @@ def _source(row: dict[str, Any], me: uuid.UUID) -> PromiseSource:
     elif channel == "email":
         label = "Email"
     elif row["handed_off_from"] is not None:
-        label = f"Handed off by {display_name(row['created_by_email']) or 'a teammate'}"
+        label = f"Handed off by {_person(row, 'created_by') or 'a teammate'}"
     elif row["created_by"] is None or row["created_by"] == me:
         label = "Added by you"
     else:
-        label = f"Added by {display_name(row['created_by_email']) or 'a teammate'}"
+        label = f"Added by {_person(row, 'created_by') or 'a teammate'}"
     return PromiseSource(
         channel=channel,
         label=label,
@@ -153,18 +156,21 @@ def _source(row: dict[str, Any], me: uuid.UUID) -> PromiseSource:
     )
 
 
+def _person(row: Any, prefix: str) -> str | None:
+    """The name for a `<prefix>_email` / `<prefix>_display_name` pair selected together."""
+    return person_name(row[f"{prefix}_display_name"], row[f"{prefix}_email"])
+
+
 def ledger_item(row: dict[str, Any], me: uuid.UUID) -> LedgerPromise:
     recipient = (
-        display_name(row["recipient_email"])
-        if row["recipient_user_id"]
-        else (row["recipient_label"] or None)
+        _person(row, "recipient") if row["recipient_user_id"] else (row["recipient_label"] or None)
     )
     proposal = (
         ProposalBrief(
             id=row["p_id"],
             proposed_due=row["p_due"],
             state=row["p_state"],
-            requester_name=display_name(row["p_requester_email"]),
+            requester_name=_person(row, "p_requester"),
         )
         if row["p_id"]
         else None
@@ -185,7 +191,7 @@ def ledger_item(row: dict[str, Any], me: uuid.UUID) -> LedgerPromise:
         action_item_id=row["action_item_id"],
         confidence=row["confidence"],
         handed_off_to=row["handed_off_to"],
-        handed_off_to_name=display_name(row["handed_off_to_email"]),
+        handed_off_to_name=_person(row, "handed_off_to"),
         handed_off_from=row["handed_off_from"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -229,24 +235,26 @@ async def _locked(session: AsyncSession, me: uuid.UUID, promise_id: uuid.UUID) -
     return dict(row)
 
 
-async def _live_colleague(session: AsyncSession, user_id: uuid.UUID) -> str:
-    """The colleague's email (for their name); 404 when not a live user of this workspace."""
-    email = (
+async def _live_colleague(session: AsyncSession, user_id: uuid.UUID) -> str | None:
+    """The colleague's name; 404 when not a live user of this workspace."""
+    row = (
         await session.execute(
-            text("SELECT email FROM users WHERE id = :id AND deleted_at IS NULL"),
+            text("SELECT email, display_name FROM users WHERE id = :id AND deleted_at IS NULL"),
             {"id": str(user_id)},
         )
-    ).scalar()
-    if email is None:
+    ).first()
+    if row is None:
         raise ProblemDetail(404, ErrorCode.NOT_FOUND, "No such user in this organization")
-    return str(email)
+    return person_name(row[1], row[0])
 
 
 async def _my_name(session: AsyncSession, me: uuid.UUID) -> str:
-    email = (
-        await session.execute(text("SELECT email FROM users WHERE id = :id"), {"id": str(me)})
-    ).scalar()
-    return display_name(str(email) if email else None) or "A teammate"
+    row = (
+        await session.execute(
+            text("SELECT email, display_name FROM users WHERE id = :id"), {"id": str(me)}
+        )
+    ).first()
+    return (person_name(row[1], row[0]) if row else None) or "A teammate"
 
 
 async def notify(
@@ -558,7 +566,7 @@ async def hand_off(
         raise ProblemDetail(
             409, ErrorCode.VERSION_CONFLICT, "Only an open, confirmed promise can move"
         )
-    email = await _live_colleague(session, body.to_user_id)
+    handed_to_name = await _live_colleague(session, body.to_user_id)
     copy_id = uuid.uuid4()
     external = row["channel"] in ("slack", "email")
     quote = row["source_quote"]
@@ -621,7 +629,7 @@ async def hand_off(
     )
     return HandOffResult(
         promise=await _load(session, me, promise_id),
-        handed_to_name=display_name(email),
+        handed_to_name=handed_to_name,
         copy_id=copy_id,
     )
 
@@ -734,8 +742,9 @@ async def check_capacity(
 
 _PROPOSAL_SELECT = """
 SELECT d.id, d.commitment_id, d.action_id, d.content, d.current_due, d.proposed_due, d.note,
-       d.state, d.proposer_id, pu.email AS proposer_email, d.requester_id,
-       ru.email AS requester_email, d.created_at, d.decided_at
+       d.state, d.proposer_id, pu.email AS proposer_email, pu.display_name AS proposer_display_name,
+       d.requester_id, ru.email AS requester_email, ru.display_name AS requester_display_name,
+       d.created_at, d.decided_at
 FROM promise_date_proposals d
 LEFT JOIN users pu ON pu.id = d.proposer_id
 LEFT JOIN users ru ON ru.id = d.requester_id
@@ -754,9 +763,9 @@ def _proposal(row: dict[str, Any]) -> DateProposal:
         note=row["note"],
         state=row["state"],
         proposer_id=row["proposer_id"],
-        proposer_name=display_name(row["proposer_email"]),
+        proposer_name=_person(row, "proposer"),
         requester_id=row["requester_id"],
-        requester_name=display_name(row["requester_email"]),
+        requester_name=_person(row, "requester"),
         created_at=row["created_at"],
         decided_at=row["decided_at"],
     )

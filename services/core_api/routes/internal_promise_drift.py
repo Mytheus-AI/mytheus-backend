@@ -33,7 +33,7 @@ from libs.shared.db import get_sessionmaker
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 from services.core_api.routes.internal_lifecycle import workflow_caller
 
 router = APIRouter(tags=["core-internal"])
@@ -148,7 +148,7 @@ async def nudge(
                     await session.execute(
                         text(
                             "SELECT a.id, a.content, a.due_date, a.assignee_id, a.meeting_id, "
-                            "u.email AS owner_email, "
+                            "u.email AS owner_email, u.display_name AS owner_display_name, "
                             "(SELECT COALESCE((SELECT p.user_id FROM meeting_participants p "
                             "   WHERE p.meeting_id = m.id AND p.role_in_meeting = 'host' "
                             "   ORDER BY p.user_id LIMIT 1), m.created_by) "
@@ -234,7 +234,7 @@ async def nudge(
             ).first()
             if created is None:
                 continue
-            owner = display_name(row["owner_email"]) or "A teammate"
+            owner = person_name(row["owner_display_name"], row["owner_email"]) or "A teammate"
             late = (body.as_of - due).days
             await _notify(
                 session,

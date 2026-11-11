@@ -677,10 +677,10 @@ async def names(session: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, s
     if not ids:
         return {}
     rows = await session.execute(
-        text("SELECT id, email FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
+        text("SELECT id, email, display_name FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
         {"ids": [str(i) for i in ids]},
     )
-    return {r[0]: records.display_name(r[1]) or "A former member" for r in rows}
+    return {r[0]: records.person_name(r[2], r[1]) or "A former member" for r in rows}
 
 
 _NUDGE_SELECT = """
@@ -762,7 +762,8 @@ async def meeting_nudge(
 
 
 _LATE_SELECT = """
-SELECT c.id, c.meeting_id, c.user_id, u.email, c.nudge_id, c.decision_id, c.at_ms, c.body,
+SELECT c.id, c.meeting_id, c.user_id, u.email, u.display_name, c.nudge_id, c.decision_id,
+       c.at_ms, c.body,
        c.audio IS NOT NULL AS has_audio, c.audio_duration_ms, c.created_at
 FROM late_contributions c LEFT JOIN users u ON u.id = c.user_id
 """
@@ -773,7 +774,7 @@ def _late(r: Any, viewer: uuid.UUID | None) -> LateContribution:
         id=r["id"],
         meeting_id=r["meeting_id"],
         user_id=r["user_id"],
-        author_name=records.display_name(r["email"]) or "A former member",
+        author_name=records.person_name(r["display_name"], r["email"]) or "A former member",
         nudge_id=r["nudge_id"],
         decision_id=r["decision_id"],
         at_ms=r["at_ms"],
@@ -998,7 +999,8 @@ async def agreement_view(
         (
             await session.execute(
                 text(
-                    "SELECT k.status, k.answer, k.note, k.share_name, k.answered_at, u.email "
+                    "SELECT k.status, k.answer, k.note, k.share_name, k.answered_at, u.email, "
+                    "u.display_name "
                     "FROM agreement_checks k LEFT JOIN users u ON u.id = k.user_id "
                     "WHERE k.decision_id = :d ORDER BY k.answered_at NULLS LAST, k.id"
                 ),
@@ -1031,7 +1033,9 @@ async def agreement_view(
         AgreementNote(
             text=c["note"],
             author_name=(
-                (records.display_name(c["email"]) or "A former member") if c["share_name"] else None
+                (records.person_name(c["display_name"], c["email"]) or "A former member")
+                if c["share_name"]
+                else None
             ),
             answer=c["answer"],
             at=c["answered_at"],

@@ -966,7 +966,9 @@ components:
     Member:
       description: 'One person in the caller''s tenant: who to show in a members list or an invite picker.
 
-        Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.
+        `display_name` is the person''s real name as synced from Clerk (or set by the person); null
+
+        until known, in which case clients join on `clerk_user_id` or fall back to the email.
 
         `agent_name` / `agent_avatar_seed` let a meeting room label everyone''s agent (ADR-0038 D3);
 
@@ -992,6 +994,11 @@ components:
           - type: string
           - type: 'null'
           title: Clerk User Id
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display Name
         email:
           title: Email
           type: string
@@ -2055,6 +2062,11 @@ components:
           format: date-time
           title: Created At
           type: string
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display Name
         email:
           title: Email
           type: string
@@ -2156,6 +2168,11 @@ components:
             type: string
           - type: 'null'
           title: Bio
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display Name
         ignore_topics:
           anyOf:
           - items:

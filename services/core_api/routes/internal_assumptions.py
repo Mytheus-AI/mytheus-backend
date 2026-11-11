@@ -39,7 +39,7 @@ from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.core_api import decision_why as why
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 from services.core_api.routes.internal_agents import agent_runtime_caller
 from services.core_api.routes.internal_lifecycle import workflow_caller
 
@@ -208,7 +208,8 @@ async def why_source(
         people = (
             await session.execute(
                 text(
-                    "SELECT p.user_id, u.email FROM meeting_participants p JOIN users u "
+                    "SELECT p.user_id, u.email, "
+                    "u.display_name FROM meeting_participants p JOIN users u "
                     "ON u.id = p.user_id AND u.deleted_at IS NULL WHERE p.meeting_id = :m "
                     "ORDER BY u.email, p.user_id"
                 ),
@@ -299,7 +300,8 @@ async def why_source(
         ),
         meeting_title=d["meeting_title"],
         participants=[
-            WhyParticipant(user_id=p[0], name=display_name(p[1]) or "A colleague") for p in people
+            WhyParticipant(user_id=p[0], name=person_name(p[2], p[1]) or "A colleague")
+            for p in people
         ],
         speakers=speakers,
         turns=turns,

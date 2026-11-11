@@ -48,7 +48,7 @@ from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 from services.core_api import briefing_audio, minutes
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,7 @@ async def persona(session: AsyncSession, user_id: uuid.UUID) -> tuple[BriefingAg
         (
             await session.execute(
                 text(
-                    "SELECT email, agent_name, agent_avatar_seed, agent_personality, "
+                    "SELECT email, display_name, agent_name, agent_avatar_seed, agent_personality, "
                     "agent_instructions FROM users WHERE id = :u"
                 ),
                 {"u": str(user_id)},
@@ -276,7 +276,7 @@ async def persona(session: AsyncSession, user_id: uuid.UUID) -> tuple[BriefingAg
         .first()
     )
     data: dict[str, Any] = dict(row) if row is not None else {}
-    name = display_name(data.get("email")) or "you"
+    name = person_name(data.get("display_name"), data.get("email")) or "you"
     first = name.split()[0] if name.split() else "you"
     agent_name = " ".join(str(data.get("agent_name") or "").split())[:40]
     personality = str(data.get("agent_personality") or "balanced")
@@ -820,7 +820,7 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
         await session.execute(
             text(
                 "SELECT a.id, a.meeting_id, m.title, a.content, a.due_date, u.email, "
-                "a.quote_start_ms FROM action_status_requests s "
+                "a.quote_start_ms, u.display_name FROM action_status_requests s "
                 "JOIN action_items a ON a.id = s.action_id "
                 "LEFT JOIN meetings m ON m.id = a.meeting_id "
                 "LEFT JOIN users u ON u.id = s.requested_by "
@@ -837,7 +837,7 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
                 meeting_title=_short(r[2], 200) if r[2] else None,
                 text=_short(r[3]),
                 status="asked you for an update",
-                who=display_name(r[5]),
+                who=person_name(r[7], r[5]),
                 due=_due(r[4]),
                 at_ms=r[6],
             )
@@ -847,10 +847,12 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
         await session.execute(
             text(
                 "SELECT a.id, a.meeting_id, m.title, a.content, a.due_date, "
-                "(SELECT u.email FROM meeting_participants p JOIN users u ON u.id = p.user_id "
-                " WHERE p.meeting_id = a.meeting_id AND p.role_in_meeting = 'host' "
-                " AND p.user_id <> :u LIMIT 1), a.quote_start_ms "
+                "h.email, a.quote_start_ms, h.display_name "
                 "FROM action_items a LEFT JOIN meetings m ON m.id = a.meeting_id "
+                "LEFT JOIN LATERAL (SELECT u.email, u.display_name FROM meeting_participants p "
+                " JOIN users u ON u.id = p.user_id "
+                " WHERE p.meeting_id = a.meeting_id AND p.role_in_meeting = 'host' "
+                " AND p.user_id <> :u LIMIT 1) h ON true "
                 "WHERE a.assignee_id = :u AND a.status = 'confirmed' AND a.deleted_at IS NULL "
                 "AND a.due_date IS NOT NULL AND a.due_date <= (now() + interval '3 days')::date "
                 "AND (m.id IS NULL OR m.deleted_at IS NULL) ORDER BY a.due_date LIMIT 6"
@@ -868,7 +870,7 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
                 meeting_title=_short(r[2], 200) if r[2] else None,
                 text=_short(r[3]),
                 status="overdue" if overdue else "due soon",
-                who=display_name(r[5]),
+                who=person_name(r[7], r[5]),
                 due=_due(r[4]),
                 at_ms=r[6],
             )

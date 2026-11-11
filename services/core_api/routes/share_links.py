@@ -118,10 +118,10 @@ async def _names(session: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, 
     if not ids:
         return {}
     rows = await session.execute(
-        text("SELECT id, email FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
+        text("SELECT id, email, display_name FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
         {"ids": [str(i) for i in ids]},
     )
-    return {r[0]: records.display_name(r[1]) for r in rows}
+    return {r[0]: records.person_name(r[2], r[1]) for r in rows}
 
 
 def _out(

@@ -75,11 +75,20 @@ def client(migrated_db):
     db_mod.get_sessionmaker.cache_clear()
 
 
-def _user_event(clerk_org: str, clerk_user: str, event_type: str, email: str) -> dict[str, Any]:
+def _user_event(
+    clerk_org: str,
+    clerk_user: str,
+    event_type: str,
+    email: str,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> dict[str, Any]:
     return {
         "type": event_type,
         "data": {
             "id": clerk_user,
+            "first_name": first_name,
+            "last_name": last_name,
             "primary_email_address_id": "idn_1",
             "email_addresses": [{"id": "idn_1", "email_address": email}],
             "image_url": "https://img.clerk.com/x",
@@ -216,6 +225,29 @@ def test_a_later_update_for_the_same_user_is_applied(client):
     assert rows[0]["email"] == "after@example.com"
 
 
+def _name_of(clerk_user: str) -> str | None:
+    rows = _sql("SELECT display_name FROM users WHERE clerk_user_id = %(c)s", {"c": clerk_user})
+    return rows[0]["display_name"]
+
+
+def test_the_clerk_name_is_stored_updated_and_cleared(client):
+    _, clerk_org = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:16]}"
+    email = "nnm23ad071@nmamit.in"
+
+    _post(client, _user_event(clerk_org, clerk_user, "user.created", email, " Nnm ", None))
+    assert _name_of(clerk_user) == "Nnm"
+
+    _post(client, _user_event(clerk_org, clerk_user, "user.updated", email, "Samar", " Rao "))
+    assert _name_of(clerk_user) == "Samar Rao"
+
+    _post(client, _user_event(clerk_org, clerk_user, "user.updated", email, "S" * 90, None))
+    assert _name_of(clerk_user) == "S" * 80
+
+    _post(client, _user_event(clerk_org, clerk_user, "user.updated", email, "  ", ""))
+    assert _name_of(clerk_user) is None
+
+
 def test_user_deleted_soft_deletes(client):
     org_id, clerk_org = _seed_org()
     clerk_user = f"user_{uuid.uuid4().hex[:16]}"
@@ -304,6 +336,18 @@ def test_an_accepted_invitation_makes_a_member_of_that_tenant(client):
     assert _member(org_id, clerk_user) == [
         {"email": f"{clerk_user}@x.test", "active": True, "tier": "member"}
     ]
+
+
+def test_a_membership_event_names_the_member_and_never_erases_a_name(client):
+    _, clerk_org = _seed_org()
+    clerk_user = f"user_{uuid.uuid4().hex[:12]}"
+    named = _membership_event(clerk_org, clerk_user, "organizationMembership.created")
+    named["data"]["public_user_data"].update(first_name="Samar", last_name=None)
+    _post(client, named)
+    assert _name_of(clerk_user) == "Samar"
+
+    _post(client, _membership_event(clerk_org, clerk_user, "organizationMembership.updated"))
+    assert _name_of(clerk_user) == "Samar"
 
 
 def test_a_clerk_admin_becomes_an_admin_and_a_role_change_follows(client):

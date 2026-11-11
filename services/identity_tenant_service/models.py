@@ -69,6 +69,9 @@ class User(Base, TimestampMixin):
     )
     clerk_user_id: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False)
+    # The person's real name (Clerk first + last, or set by the person themselves). NULL until
+    # known; readers fall back to a name derived from `email` (`core_api.records.person_name`).
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     # DOMAIN role (job title, function). NOT a permission tier - authorization reads
     # `rbac_grants.tier` and nothing else (resolved decision, plan section 8 item 2). Keeping
     # them in one column is how "promote someone to team lead" silently becomes "grant admin".
@@ -98,6 +101,10 @@ class User(Base, TimestampMixin):
         CheckConstraint(
             "agent_personality IN ('balanced', 'concise', 'detailed', 'direct', 'friendly')",
             name="agent_personality",
+        ),
+        CheckConstraint(
+            "display_name IS NULL OR (char_length(display_name) BETWEEN 1 AND 80)",
+            name="display_name_length",
         ),
         # Per tenant, not globally (gap 13). A global unique on clerk_user_id makes one Clerk
         # user a member of exactly one Mytheus organization for all time, which Clerk itself

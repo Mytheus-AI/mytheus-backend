@@ -115,13 +115,14 @@ async def speaker_names(
     names: dict[str, str | None] = {}
     mapped = await session.execute(
         text(
-            "SELECT s.speaker_id, u.email FROM meeting_speakers s JOIN users u ON u.id = s.user_id "
+            "SELECT s.speaker_id, u.email, u.display_name FROM meeting_speakers s "
+            "JOIN users u ON u.id = s.user_id "
             "WHERE s.meeting_id = :m AND s.speaker_id = ANY(CAST(:ids AS text[]))"
         ),
         {"m": str(meeting_id), "ids": list(speaker_ids)},
     )
-    for sid, email in mapped:
-        names[str(sid)] = records.display_name(email)
+    for sid, email, stored in mapped:
+        names[str(sid)] = records.person_name(stored, email)
     as_users = []
     for sid in speaker_ids - set(names):
         try:
@@ -130,11 +131,11 @@ async def speaker_names(
             continue
     if as_users:
         rows = await session.execute(
-            text("SELECT id, email FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            text("SELECT id, email, display_name FROM users WHERE id = ANY(CAST(:ids AS uuid[]))"),
             {"ids": as_users},
         )
-        for uid, email in rows:
-            names[str(uid)] = records.display_name(email)
+        for uid, email, stored in rows:
+            names[str(uid)] = records.person_name(stored, email)
     return names
 
 

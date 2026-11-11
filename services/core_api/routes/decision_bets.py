@@ -33,7 +33,7 @@ from libs.shared.audit import audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.core_api import bets
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 router = APIRouter(prefix="/api/v1", tags=["decision-bets"])
 
@@ -83,7 +83,8 @@ async def _view(
         (
             await session.execute(
                 text(
-                    "SELECT p.user_id, u.email FROM meeting_participants p JOIN users u "
+                    "SELECT p.user_id, u.email, "
+                    "u.display_name FROM meeting_participants p JOIN users u "
                     "ON u.id = p.user_id AND u.deleted_at IS NULL WHERE p.meeting_id = :m "
                     "ORDER BY u.email, p.user_id"
                 ),
@@ -116,7 +117,9 @@ async def _view(
         bet=bet,
         can_edit=bets.can_edit(facts, owner, viewer),
         owner_candidates=[
-            bets.OwnerOption(user_id=p["user_id"], name=display_name(p["email"]) or "Teammate")
+            bets.OwnerOption(
+                user_id=p["user_id"], name=person_name(p["display_name"], p["email"]) or "Teammate"
+            )
             for p in people
         ],
         teams=[bets.TeamOption(id=t["id"], name=t["name"]) for t in teams],
