@@ -41,7 +41,7 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,6 +80,10 @@ class DashboardMeeting(BaseModel):
     scheduled_start: datetime | None
     scheduled_end: datetime | None
     livekit_room: str | None
+    recorded_in_person: bool = Field(
+        default=False,
+        description="Held in a room and recorded on a phone: no call or room to join (wave 3).",
+    )
 
 
 class _ArmBase[ItemT](BaseModel):
@@ -246,8 +250,8 @@ async def dashboard(
 
     async def upcoming_meetings() -> list[DashboardMeeting]:
         found = await rows(
-            "SELECT id, title, status, scheduled_start, scheduled_end, livekit_room "
-            "FROM meetings "
+            "SELECT id, title, status, scheduled_start, scheduled_end, livekit_room, "
+            "source = 'in_person' AS recorded_in_person FROM meetings "
             "WHERE deleted_at IS NULL AND status IN ('scheduled', 'live') "
             # NULLS LAST so undated meetings sort after dated ones instead of
             # monopolising the top of the panel, which is what ASC does by default.

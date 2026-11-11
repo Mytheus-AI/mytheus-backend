@@ -67,7 +67,7 @@ def build_status(
     requested_at: datetime,
     completed: Mapping[str, tuple[datetime, dict[str, int]]],
 ) -> tuple[str, list[ErasureStore]]:
-    """(`in_progress`|`completed`, the per-store checklist) for one request."""
+    """(`progress`: `in_progress`|`completed`, the per-store checklist) for one request."""
     expected = request_meta.get("expected_stores")
     if not isinstance(expected, list):
         # Recorded before stores reported back: core-api's share is all that ever ran here.

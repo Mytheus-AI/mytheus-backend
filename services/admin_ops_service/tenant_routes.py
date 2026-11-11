@@ -31,15 +31,15 @@ token), in order:
    outbox row with `target_type` `person` or `meeting` (never a tenant), so the stores this repo
    does not own (`transcript_chunks`, vectors, the search index, the graph) can purge their share.
 
-Status per store (wave 3). The request row records `status: in_progress` and the stores it waits
+Progress per store (wave 3). The request row records the stores it waits
 for (`erasure_status.EXPECTED_STORES`); `core_api` is done with the request. Each other store
 answers on `admin-events` `erasure_completed`, which `erasure_consumer.py` records as one
-`data_erasure.store_completed` row; `GET` derives each request's `status` and `stores` from
-those rows (`erasure_status.py`).
+`data_erasure.store_completed` row; `GET` derives each request's `progress` and `stores` from
+those rows (`erasure_status.py`). `status` stays the published `completed`: core-api applied it.
 
 Every leg is idempotent, so a failure part-way (a 503 from an upstream) is fixed by asking
-again: what was already erased matches nothing the second time and nothing is recorded as
-recorded until every leg here has run. `GET /admin/tenant/erasures` lists the requests.
+again: what was already erased matches nothing the second time and nothing is recorded
+until every leg here has run. `GET /admin/tenant/erasures` lists the requests.
 """
 
 from __future__ import annotations
@@ -398,7 +398,7 @@ async def create_erasure(
     requested_at = datetime.now(UTC)
     metadata: dict[str, Any] = {
         "kind": body.kind,
-        "status": "in_progress",
+        "status": "completed",
         "expected_stores": request_metadata_stores(),
         "target_id": str(body.target_id),
         "erased": applied.get("erased", {}),
@@ -437,7 +437,7 @@ async def create_erasure(
         kind=body.kind,
         target_id=body.target_id,
         label=applied.get("label"),
-        status=state,  # type: ignore[arg-type]
+        progress=state,  # type: ignore[arg-type]
         stores=stores,
         requested_by=ctx.user_id,
         requested_at=requested_at,
@@ -480,7 +480,7 @@ async def list_erasures(
                 kind=kind,
                 target_id=uuid.UUID(str(meta.get("target_id"))),
                 label=email if kind == "person" else meta.get("label"),
-                status=state,  # type: ignore[arg-type]
+                progress=state,  # type: ignore[arg-type]
                 stores=stores,
                 requested_by=actor_id,
                 requested_at=occurred_at,

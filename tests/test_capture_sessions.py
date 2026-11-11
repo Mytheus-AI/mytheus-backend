@@ -210,3 +210,29 @@ def test_other_meetings_are_not_found(client, configured):
         res = client.post(f"/api/v1/capture/sessions/{mid}/refresh", json={"consent_at": now})
         assert res.status_code == 404
         assert client.post(f"/api/v1/capture/sessions/{mid}/end").status_code == 404
+
+
+def test_meetings_publish_in_person_without_widening_the_source_enum():
+    """The published `source` enum is frozen (oasdiff): an in-person meeting reads as `mytheus`
+    with `recorded_in_person: true`; every other source reads as before."""
+    from services.core_api.schemas import Meeting
+
+    now = datetime.now(UTC)
+    row = {
+        "id": uuid.uuid4(),
+        "title": "Standup",
+        "status": "live",
+        "scheduled_start": None,
+        "scheduled_end": None,
+        "livekit_room": None,
+        "created_by": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    in_person = Meeting(**row, source="in_person")
+    assert (in_person.source, in_person.recorded_in_person) == ("mytheus", True)
+    for source in ("mytheus", "meet", "teams", "zoom"):
+        m = Meeting(**row, source=source)
+        assert (m.source, m.recorded_in_person) == (source, False)
+    schema = Meeting.model_json_schema(mode="serialization")["properties"]["source"]
+    assert schema["enum"] == ["mytheus", "meet", "teams", "zoom"]

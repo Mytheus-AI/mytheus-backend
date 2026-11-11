@@ -110,9 +110,13 @@ class Erasure(BaseModel):
         default=None,
         description="The person's email or the meeting's title; null when no longer readable.",
     )
-    status: Literal["in_progress", "completed"] = Field(
+    status: Literal["completed"] = Field(
         default="completed",
-        description="`completed` once every store in `stores` has finished.",
+        description="core-api applied the request (always `completed`; see `progress`).",
+    )
+    progress: Literal["in_progress", "completed"] = Field(
+        default="completed",
+        description="The erasure across every store: `completed` once each of `stores` has run.",
     )
     stores: list[ErasureStore] = Field(
         default_factory=list,

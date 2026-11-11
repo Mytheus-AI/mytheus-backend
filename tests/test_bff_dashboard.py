@@ -106,6 +106,7 @@ def test_composite_shape_with_the_real_meetings_arm(client):
 
     assert body["upcoming_meetings"]["status"] == "ok"
     assert [m["title"] for m in body["upcoming_meetings"]["items"]] == ["Standup"]
+    assert body["upcoming_meetings"]["items"][0]["recorded_in_person"] is False
 
     for arm in ("action_items", "worklogs", "decisions", "recent_meetings", "needs_review"):
         # `empty`, not `degraded`: this caller genuinely has nothing in them, which is a

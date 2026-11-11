@@ -249,6 +249,14 @@ components:
           - type: 'null'
           description: The person's email or the meeting's title; null when no longer readable.
           title: Label
+        progress:
+          default: completed
+          description: 'The erasure across every store: `completed` once each of `stores` has run.'
+          enum:
+          - in_progress
+          - completed
+          title: Progress
+          type: string
         requested_at:
           format: date-time
           title: Requested At
@@ -268,11 +276,9 @@ components:
           title: Revoked Tokens
           type: integer
         status:
+          const: completed
           default: completed
-          description: '`completed` once every store in `stores` has finished.'
-          enum:
-          - in_progress
-          - completed
+          description: core-api applied the request (always `completed`; see `progress`).
           title: Status
           type: string
         stores:

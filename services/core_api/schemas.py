@@ -13,15 +13,24 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import WithJsonSchema
 
 MeetingStatus = Literal["scheduled", "live", "ended", "cancelled"]
 # Where the call happens: a Mytheus room, or an external call captured by the browser extension
-# (no Mytheus room is opened for those; `meetings.source`, migration b8c9d0e1f2a3).
+# (no Mytheus room is opened for those; `meetings.source`, migration b8c9d0e1f2a3). The value set
+# a meetings RESPONSE publishes is frozen: `PublishedMeetingSource`. Wave 3's `in_person` (a
+# meeting in a room, recorded on a phone) is stored and accepted on create, but a response
+# reports it as `source: "mytheus"` plus `recorded_in_person: true`. Neither a new enum value nor
+# `null` is additive for a client written against the published, non-null enum (oasdiff flags
+# both), and `mytheus` is the honest one of the four: `source` separates Mytheus's own meetings
+# from calls captured in another product, and a phone recording is Mytheus's own. What it lacks
+# is a room, which `recorded_in_person` says (clients must not offer Join for it).
+PublishedMeetingSource = Literal["mytheus", "meet", "teams", "zoom"]
 MeetingSource = Literal["mytheus", "meet", "teams", "zoom", "in_person"]
+IN_PERSON = "in_person"
 
 # --- ADR-0038 D5/D6: the agenda ------------------------------------------------------------
 
@@ -348,13 +357,28 @@ class Meeting(BaseModel):
     # ADR-0039 B2.
     confidential: bool = False
     template_id: uuid.UUID | None = None
-    source: MeetingSource = "mytheus"
+    source: PublishedMeetingSource = "mytheus"
+    recorded_in_person: bool = Field(
+        default=False,
+        description=(
+            "True for a meeting held in a room and recorded on a phone: it has no call and no "
+            "Mytheus room to join (its `source` is `mytheus`)."
+        ),
+    )
     # Polish program, "Close-out ritual" (migration d0e1f2a3b4c5): the host opened the
     # 60-second wrap-up (null when not wrapping up), and who closed the meeting through it.
     wrap_up_started_at: datetime | None = None
     wrap_up_by: uuid.UUID | None = None
     closed_at: datetime | None = None
     closed_by: uuid.UUID | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _in_person(cls, data: Any) -> Any:
+        """A stored `in_person` source is published as `mytheus` + `recorded_in_person: true`."""
+        if isinstance(data, dict) and data.get("source") == IN_PERSON:
+            return {**data, "source": "mytheus", "recorded_in_person": True}
+        return data
 
 
 class MeetingDetail(Meeting):
