@@ -1286,7 +1286,12 @@ async def set_attendance(
             await session.execute(
                 text(
                     "UPDATE meeting_participants SET attendance = :a, proxy_update = :u, "
-                    "proxy_questions = CAST(:q AS text[]) "
+                    "proxy_questions = CAST(:q AS text[]), "
+                    # In every meeting at once: sending your agent is choosing "my agent
+                    # listens" by hand; coming in person is choosing to attend.
+                    "attendance_choice = CASE WHEN :a = 'agent' THEN 'agent_listens' "
+                    "ELSE 'attend' END, attendance_choice_source = 'manual', "
+                    "attendance_rule_id = NULL, attendance_choice_at = now() "
                     "WHERE meeting_id = :m AND user_id = :me "
                     "RETURNING user_id, role_in_meeting, attendance, proxy_update, proxy_questions"
                 ),

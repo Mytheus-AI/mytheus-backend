@@ -9,6 +9,8 @@ read) and then work per tenant over REST, never writing another service's table:
   come back; `connected: false` when the tenant has no Jira, the "not connected" state, and the
   tenant is skipped) -> core-api `POST /internal/promise-drift/nudges`.
 - `weekly_digest.run(week_start)`: per tenant, core-api `POST /internal/digests/weekly`.
+- `listening_evening.run(now)` (hourly, In every meeting at once): per tenant, core-api
+  `POST /internal/listening/evening`.
 
 Idempotent end to end (core-api's unique keys), so a retry or a manual re-run is harmless. One
 tenant's failure is logged and counted, never fatal to the others.
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 PROMISE_DRIFT_ACTIVITY = "promise_drift.run"
 WEEKLY_DIGEST_ACTIVITY = "weekly_digest.run"
+LISTENING_EVENING_ACTIVITY = "listening_evening.run"
 
 
 async def tenant_ids() -> list[str]:
@@ -169,5 +172,21 @@ class ScheduledActivities:
                 totals[key] += int(r.get(key, 0))
         return totals
 
+    @activity.defn(name=LISTENING_EVENING_ACTIVITY)
+    async def listening_evening(self, now: str) -> dict[str, int]:
+        """In every meeting at once: per tenant, core-api `POST /internal/listening/evening`."""
+        totals = {"tenants": 0, "failed": 0, "built": 0, "notified": 0, "rules_applied": 0}
+        for org_id in await tenant_ids():
+            totals["tenants"] += 1
+            try:
+                r = await self._core("POST", "/internal/listening/evening", org_id, {"now": now})
+            except Exception:  # noqa: BLE001
+                logger.exception("evening digest failed for org %s", org_id)
+                totals["failed"] += 1
+                continue
+            for key in ("built", "notified", "rules_applied"):
+                totals[key] += int(r.get(key, 0))
+        return totals
+
     def all(self) -> list[Any]:
-        return [self.promise_drift, self.weekly_digest]
+        return [self.promise_drift, self.weekly_digest, self.listening_evening]

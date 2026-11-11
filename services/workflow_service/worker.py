@@ -21,6 +21,10 @@ from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.scheduled_activities import ScheduledActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
+from services.workflow_service.workflows.listening import (
+    EveningListeningWorkflow,
+    ensure_listening_schedule,
+)
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from services.workflow_service.workflows.only_mytheus import (
@@ -59,6 +63,7 @@ async def main() -> None:
             UsageRollupWorkflow,
             PromiseDriftWorkflow,
             WeeklyDigestWorkflow,
+            EveningListeningWorkflow,
         ],
         activities=[*lifecycle.all(), *followup.all(), *reminders.all(), *scheduled.all()],
     )
@@ -66,6 +71,8 @@ async def main() -> None:
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")
     for schedule_id in await ensure_schedules(client, task_queue=_TASK_QUEUE):
         print(f"Created Temporal schedule {schedule_id}")
+    if await ensure_listening_schedule(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule listening-evening (hourly)")
     print(f"Worker started on task queue: {_TASK_QUEUE}")
     await worker.run()
 

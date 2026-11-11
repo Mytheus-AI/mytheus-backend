@@ -28,11 +28,13 @@ from services.core_api.routes import (
     internal_integrations,
     internal_learning,
     internal_lifecycle,
+    internal_listening,
     internal_meetings,
     internal_policy,
     internal_promise_drift,
     internal_reach,
     internal_retrieval,
+    listening,
     me_memory,
     meeting_templates,
     meetings,
@@ -106,6 +108,10 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond the meeting, "In every meeting at once": attendance choices and rules, live
+# interruptions, views and held lines, the evening digest (listening.py).
+app.include_router(listening.router)
+app.include_router(internal_listening.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
