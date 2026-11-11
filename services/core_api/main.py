@@ -12,6 +12,7 @@ never produces either topic.
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     action_create,
+    blast_radius,
     candidates,
     capture,
     chat,
@@ -20,11 +21,13 @@ from services.core_api.routes import (
     commitments,
     decision_log,
     decision_reversals,
+    decision_why,
     delegated_answers,
     digests,
     erasure,
     followups,
     internal_agents,
+    internal_assumptions,
     internal_integrations,
     internal_learning,
     internal_lifecycle,
@@ -42,6 +45,7 @@ from services.core_api.routes import (
     org_hierarchy,
     public_api,
     room_closeout,
+    settlements,
     share_links,
     speakers,
     stand_ins,
@@ -106,6 +110,11 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond, Layer 1: decisions that know why, blast radius, settle threads.
+app.include_router(decision_why.router)
+app.include_router(blast_radius.router)
+app.include_router(settlements.router)
+app.include_router(internal_assumptions.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

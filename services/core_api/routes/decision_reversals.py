@@ -45,6 +45,9 @@ MAX_ITEMS = 200
 SNIPPET = 140
 
 ReversalStatus = Literal["pending", "kept", "rescoped", "closed"]
+# Beyond, Layer 1: a decision reopened because a reason for it no longer holds asks its tasks'
+# owners the same question. `new_decision` is then the same decision as `old_decision`.
+ReversalKind = Literal["superseded", "reopened"]
 Resolution = Literal["keep", "rescope", "close"]
 _RESOLVED_AS: dict[str, ReversalStatus] = {"keep": "kept", "rescope": "rescoped", "close": "closed"}
 
@@ -69,6 +72,7 @@ class ReversalAction(BaseModel):
 class DecisionReversal(BaseModel):
     id: uuid.UUID
     status: ReversalStatus
+    kind: ReversalKind = "superseded"
     created_at: datetime
     resolved_at: datetime | None = None
     old_decision: ReversalDecision
@@ -198,10 +202,86 @@ async def record_reversals(
     return len(rows)
 
 
+async def record_reopen_reversals(
+    session: AsyncSession, *, org_id: uuid.UUID, decision_id: uuid.UUID, reason: str
+) -> int:
+    """The decision was reopened (a reason for it no longer holds): one reversal row of kind
+    `reopened` (old = new = the decision) and one owner notification per open, owned task of
+    its meeting, exactly like `record_reversals`. Returns the number of NEW rows."""
+    decision = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, meeting_id, content FROM decisions "
+                    "WHERE id = :d AND deleted_at IS NULL"
+                ),
+                {"d": str(decision_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if decision is None:
+        return 0
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "INSERT INTO decision_reversals (org_id, old_decision_id, new_decision_id, "
+                    "action_id, owner_user_id, kind) "
+                    "SELECT a.org_id, :d, :d, a.id, a.assignee_id, 'reopened' FROM action_items a "
+                    "JOIN users u ON u.id = a.assignee_id AND u.deleted_at IS NULL "
+                    "WHERE a.meeting_id = :m AND a.status = 'confirmed' AND a.deleted_at IS NULL "
+                    "ON CONFLICT (new_decision_id, action_id) DO NOTHING "
+                    "RETURNING id, action_id, owner_user_id"
+                ),
+                {"d": str(decision_id), "m": str(decision["meeting_id"])},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    if not rows:
+        return 0
+    contents = {
+        r[0]: r[1]
+        for r in await session.execute(
+            text("SELECT id, content FROM action_items WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": [str(r["action_id"]) for r in rows]},
+        )
+    }
+    for r in rows:
+        await enqueue(
+            session,
+            EventEnvelope(
+                topic="notifications",
+                org_id=str(org_id),
+                producer=PRODUCER,
+                idempotency_key=f"notif:decision-reversal:{r['id']}:in_app:{r['owner_user_id']}",
+                payload={
+                    "source_event_id": f"decision-reversal:{r['id']}",
+                    "channel": "in_app",
+                    "user_id": str(r["owner_user_id"]),
+                    "priority": 2,
+                    "title": (
+                        "The decision behind this task was reopened: keep, re-scope or close it?"
+                    ),
+                    "body": (
+                        f'"{_short(decision["content"])}" was reopened because a reason for it '
+                        f"no longer holds ({_short(reason)}). "
+                        f"Your task: {_short(contents.get(r['action_id']), 200)}"
+                    )[:2000],
+                    "link": f"/work/tasks?reversal={r['id']}",
+                },
+            ),
+        )
+    return len(rows)
+
+
 # --- reads ---------------------------------------------------------------------------------
 
 _SELECT = """
-SELECT r.id, r.status, r.created_at, r.resolved_at,
+SELECT r.id, r.status, r.kind, r.created_at, r.resolved_at,
        od.id AS od_id, od.content AS od_content, od.meeting_id AS od_meeting_id,
        om.title AS od_meeting_title, COALESCE(od.status_changed_at, od.created_at) AS od_at,
        nd.id AS nd_id, nd.content AS nd_content, nd.meeting_id AS nd_meeting_id,
@@ -222,6 +302,7 @@ def _row(r: Any) -> DecisionReversal:
     return DecisionReversal(
         id=r["id"],
         status=r["status"],
+        kind=r["kind"],
         created_at=r["created_at"],
         resolved_at=r["resolved_at"],
         old_decision=ReversalDecision(
