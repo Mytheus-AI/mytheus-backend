@@ -74,7 +74,11 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.core_api import briefings as briefings_mod
+from services.core_api import decision_why
 from services.core_api import minutes as minutes_mod
+from services.core_api import room_signals as room_signals_mod
+from services.core_api.capacity import warn_on_landing
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
@@ -85,6 +89,8 @@ from services.core_api.integration_events import (
 )
 from services.core_api.learning import band_for
 from services.core_api.person_memory import FeedbackPoison, handle_agent_feedback
+from services.core_api.promise_dates import parse_due_hint
+from services.core_api.routes.internal_bets import persist_bet_proposals
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
@@ -144,6 +150,10 @@ MAX_AGENDA_UPDATES = 20
 # waiting for them (`meeting_followups.awaiting_minutes_since`), the follow-up is sent once the
 # transaction has committed (`AFTER_COMMIT`, drained by `run_consumer`).
 _MINUTES = ("MeetingAgent", "minutes")
+# "After the meeting" layer 1: one MeetingAgent `room_signals` record per meeting end (nil user):
+# last-word nudges, agreement reads and checks, the resume point
+# (`services/core_api/room_signals.py`).
+_ROOM_SIGNALS = ("MeetingAgent", "room_signals")
 
 # Work to run after the current message's transaction commits (never inside it: it calls other
 # services). `run_consumer` drains it after the commit and clears it on a rollback.
@@ -154,6 +164,12 @@ AFTER_COMMIT: list[Callable[[], Awaitable[Any]]] = []
 MAX_COMMITMENTS_PER_RECORD = 5
 MAX_COMMITMENT_CHARS = 500
 MAX_DUE_HINT_CHARS = 100
+
+# Beyond, Layer 1: ProactiveAgent alerts core-api keeps (`services/core_api/decision_why.py`):
+# `decision_why` (a decision's reasons and ripple), `assumption_broken` (the watcher) and the
+# existing `conflict` (a clash, which may open a settle thread). Every other alert type is
+# notification-service's alone and is claimed and ignored here, as before.
+_ALERT = ("ProactiveAgent", "alert")
 
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
@@ -297,17 +313,21 @@ async def _apply_agent_result(
     if claimed is None:
         return False
     agent, kind = str(value.get("agent")), str(value.get("kind"))
+    if (agent, kind) == _ALERT:
+        return await decision_why.apply_alert(session, org_id, value)
     candidate_table = _CANDIDATE_TABLES.get((agent, kind))
     is_suggestion = (agent, kind) == _SUGGESTION
     is_context_fill = (agent, kind) == _CONTEXT_FILL
     is_meeting_update = (agent, kind) == _MEETING_UPDATE
     is_minutes = (agent, kind) == _MINUTES
+    is_room_signals = (agent, kind) == _ROOM_SIGNALS
     if (
         candidate_table is None
         and not is_suggestion
         and not is_context_fill
         and not is_meeting_update
         and not is_minutes
+        and not is_room_signals
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
         # Anything else - including an agent class or kind this consumer has never heard of -
@@ -324,7 +344,12 @@ async def _apply_agent_result(
     # meeting id is checked against the tenant like every other result.
     unknown_meeting = is_context_fill and meeting_id == NIL_UUID
     # The shared minutes are for nobody in particular: they carry the nil user.
-    shared_minutes = is_minutes and user_id == NIL_UUID
+    shared_minutes = (is_minutes or is_room_signals) and user_id == NIL_UUID
+    # Decisions as bets: DecisionAgent's after-meeting record proposing expected outcomes for
+    # the meeting's decisions (`payload_json.expectations`, `routes/internal_bets.py`).
+    bet_proposals = candidate_table == "decisions" and "expectations" in _payload_object(
+        value.get("payload_json")
+    )
     visible = (
         await session.execute(
             text(
@@ -335,13 +360,24 @@ async def _apply_agent_result(
             {"m": str(meeting_id), "u": str(user_id)},
         )
     ).one()
-    if (not visible[0] and not unknown_meeting) or (not visible[1] and not shared_minutes):
+    if (not visible[0] and not unknown_meeting) or (
+        not visible[1] and not shared_minutes and not (bet_proposals and user_id == NIL_UUID)
+    ):
         raise PoisonMessage(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
         )
+    if bet_proposals:
+        return await persist_bet_proposals(
+            session, org_id, meeting_id, _payload_object(value.get("payload_json"))
+        )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
+    if is_room_signals:
+        payload = room_signals_mod.parse_payload(value.get("payload_json"))
+        if payload is None:
+            return False  # nothing to file; the inbox claim keeps a redelivery a no-op
+        return await room_signals_mod.persist_result(session, org_id, meeting_id, payload)
     if is_minutes:
         return await _persist_minutes(
             session, org_id, meeting_id, None if shared_minutes else user_id, value
@@ -623,6 +659,16 @@ async def _persist_commitments(
     entries = payload.get("commitments") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
         return False
+    # Promise ledger: the channel (a phone recording is `in_person`), the date the hint names
+    # (said on the meeting's day), and the capacity warning when it makes that day tight.
+    meeting = (
+        await session.execute(
+            text("SELECT source, scheduled_start FROM meetings WHERE id = :m"),
+            {"m": str(meeting_id)},
+        )
+    ).first()
+    channel = "in_person" if meeting is not None and meeting[0] == "in_person" else "meeting"
+    said_on = meeting[1].date() if meeting is not None and meeting[1] is not None else date.today()
     written = False
     for entry in entries[:MAX_COMMITMENTS_PER_RECORD]:
         if not isinstance(entry, dict):
@@ -630,27 +676,43 @@ async def _persist_commitments(
         content = _bounded_text(entry.get("content"), MAX_COMMITMENT_CHARS)
         if content is None:
             continue
+        due_hint = _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS)
+        due_at = parse_due_hint(due_hint, max(said_on, date.today()))
         inserted = (
             await session.execute(
                 text(
                     "INSERT INTO commitments (org_id, user_id, meeting_id, content, due_hint, "
-                    "source_window_id, moment_id) VALUES (:o, :u, :m, :c, :d, :w, :mo) "
-                    "ON CONFLICT DO NOTHING RETURNING 1"
+                    "source_window_id, moment_id, channel, due_at, source_quote) "
+                    "VALUES (:o, :u, :m, :c, :d, :w, :mo, :ch, :da, :q) "
+                    "ON CONFLICT DO NOTHING RETURNING id"
                 ),
                 {
                     "o": str(org_id),
                     "u": str(user_id),
                     "m": str(meeting_id),
                     "c": content,
-                    "d": _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS),
+                    "d": due_hint,
                     "w": window_id,
                     # polish: the moment the promise was made (a confirmed action of the same
                     # moment for this person closes it, routes/candidates.py)
                     "mo": (str(mo) if (mo := _optional_uuid(entry.get("moment_id"))) else None),
+                    "ch": channel,
+                    "da": due_at,
+                    "q": _bounded_text(entry.get("quote"), 1000),
                 },
             )
         ).first()
-        written = written or inserted is not None
+        if inserted is not None:
+            written = True
+            await warn_on_landing(
+                session,
+                org_id,
+                user_id=user_id,
+                kind="commitment",
+                item_id=inserted[0],
+                content=content,
+                due=due_at,
+            )
     return written
 
 
@@ -832,6 +894,11 @@ async def _persist_minutes(
     if payload is None:
         return False  # nothing to file; the inbox claim keeps a redelivery a no-op
     written = await minutes_mod.persist(session, org_id, meeting_id, user_id, payload)
+    if written and user_id is not None and payload.get("status") != "unavailable":
+        # Beyond the meeting: the person's own minutes are in, so their agent can brief them.
+        briefing = await briefings_mod.create_after_meeting(session, org_id, meeting_id, user_id)
+        if briefing is not None:
+            AFTER_COMMIT.append(lambda: _ring_briefing(org_id, briefing))
     if written and user_id is None:
         waiting = (
             await session.execute(
@@ -846,6 +913,10 @@ async def _persist_minutes(
         if waiting is not None:
             AFTER_COMMIT.append(lambda: _send_follow_up(org_id, meeting_id))
     return written
+
+
+async def _ring_briefing(org_id: uuid.UUID, briefing_id: uuid.UUID) -> None:
+    await briefings_mod.ring(org_id, briefing_id)
 
 
 async def _send_follow_up(org_id: uuid.UUID, meeting_id: uuid.UUID) -> None:

@@ -12,27 +12,39 @@ never produces either topic.
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     action_create,
+    blast_radius,
+    briefings,
     candidates,
     capture,
     chat,
     clips,
     collaborations,
     commitments,
+    decision_bets,
+    decision_challenges,
     decision_log,
     decision_reversals,
+    decision_why,
     delegated_answers,
     digests,
     erasure,
     followups,
     internal_agents,
+    internal_assumptions,
+    internal_bets,
+    internal_decision_check,
     internal_integrations,
     internal_learning,
     internal_lifecycle,
+    internal_listening,
     internal_meetings,
     internal_policy,
     internal_promise_drift,
+    internal_promises,
     internal_reach,
     internal_retrieval,
+    internal_room_signals,
+    listening,
     me_memory,
     meeting_templates,
     meetings,
@@ -40,19 +52,27 @@ from services.core_api.routes import (
     my_tasks,
     off_record,
     org_hierarchy,
+    promises,
     public_api,
     room_closeout,
+    room_signals,
+    settlements,
     share_links,
     speakers,
     stand_ins,
     status_asks,
     status_requests,
     suggestions,
+    time_machine,
     transcript,
     worklogs,
 )
 
 app = create_app("core-api")
+# Decisions that follow you: before any `/decisions/{decision_id}` route, so the literal
+# `/decisions/check` is never read as an id.
+app.include_router(decision_challenges.router)
+app.include_router(internal_decision_check.router)
 app.include_router(meetings.router)
 app.include_router(org_hierarchy.router)
 app.include_router(chat.router)
@@ -106,6 +126,28 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond the meeting, Layer 2: one promise ledger (promises from every channel, the capacity
+# check, date proposals) and the internal capture door integration-service uses.
+app.include_router(promises.router)
+app.include_router(internal_promises.router)
+# "After the meeting" layer 1: the last word, the agreement check, pick up where we stopped.
+app.include_router(room_signals.router)
+app.include_router(internal_room_signals.router)
+# Beyond the meeting, Layer 1: a briefing from your agent (and its internal hand-off).
+app.include_router(briefings.router)
+# Beyond, Layer 1: decisions that know why, blast radius, settle threads.
+app.include_router(decision_why.router)
+app.include_router(blast_radius.router)
+app.include_router(settlements.router)
+app.include_router(internal_assumptions.router)
+# Beyond the meeting, "In every meeting at once": attendance choices and rules, live
+# interruptions, views and held lines, the evening digest (listening.py).
+app.include_router(listening.router)
+app.include_router(internal_listening.router)
+# Beyond the meeting, Layer 3: decisions as bets and the company time machine.
+app.include_router(decision_bets.router)
+app.include_router(internal_bets.router)
+app.include_router(time_machine.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

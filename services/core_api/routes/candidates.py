@@ -48,6 +48,7 @@ from libs.shared.authz import RequestContext, not_found, require_tier, tenant_se
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
+from services.core_api.capacity import warn_on_landing
 from services.core_api.learning import band_for, edit_diff, record_feedback
 from services.core_api.meeting_ledger import mark_candidate
 from services.core_api.routes.chat import (
@@ -592,6 +593,18 @@ async def confirm_action(
         ip=ctx.ip,
     )
     await close_matching_promises(session, confirmed)
+    if confirmed["assignee_id"] is not None and confirmed["assignee_id"] != user_id:
+        # Promise ledger: the assignee's agent warns them if this makes their day tight (the
+        # confirmer never sees the assignee's load).
+        await warn_on_landing(
+            session,
+            ctx.org_id,
+            user_id=confirmed["assignee_id"],
+            kind="action",
+            item_id=confirmed["id"],
+            content=confirmed["content"],
+            due=confirmed["due_date"],
+        )
     await mark_candidate(
         ctx.org_id, confirmed["meeting_id"], action_id, kind="action", status="confirmed"
     )
@@ -699,4 +712,98 @@ async def enqueue_action_confirmed(
             producer=PRODUCER,
             idempotency_key=f"action:{row['id']}:confirmed",
         ),
+    )
+
+
+# --- settle threads (Beyond, Layer 1) --------------------------------------------------------
+
+
+async def supersede_confirmed(
+    session: AsyncSession,
+    ctx: RequestContext,
+    *,
+    winner_id: uuid.UUID,
+    loser_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> None:
+    """Record that an already confirmed decision replaces another confirmed one, through the
+    same lineage path as a confirm with `supersedes`: `decisions.supersedes`, ONE `decisions`
+    outbox row (so knowledge-graph-service MERGEs the `FOLLOWS_FROM` edge; its MERGE makes a
+    replay a no-op), the audit row and the reversal questions for the loser's open tasks.
+
+    Lives here because this module is the only producer of the `decisions` topic. The caller
+    (a settle thread) has already checked who may do it. 409 when the winner already replaces
+    another decision or the loser replaces the winner (a cycle)."""
+    rows = {
+        r["id"]: dict(r)
+        for r in (
+            await session.execute(
+                text(
+                    f"SELECT {_DECISION_COLS} FROM decisions WHERE id IN (:w, :l) "
+                    "AND deleted_at IS NULL FOR UPDATE"
+                ),
+                {"w": str(winner_id), "l": str(loser_id)},
+            )
+        )
+        .mappings()
+        .all()
+    }
+    winner, loser = rows.get(winner_id), rows.get(loser_id)
+    if winner is None or loser is None:
+        raise not_found()
+    if winner["supersedes"] == loser_id:
+        return  # already recorded
+    if winner["status"] != "confirmed" or loser["status"] != "confirmed":
+        raise _conflict("Only two confirmed decisions can replace one another")
+    if winner["supersedes"] is not None:
+        raise _conflict("That decision already replaces another one")
+    if loser["supersedes"] == winner_id:
+        raise _conflict("The other decision already replaces this one")
+    updated = dict(
+        (
+            await session.execute(
+                text(
+                    f"UPDATE decisions SET supersedes = :l WHERE id = :w RETURNING {_DECISION_COLS}"
+                ),
+                {"l": str(loser_id), "w": str(winner_id)},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    await enqueue(
+        session,
+        EventEnvelope(
+            topic="decisions",
+            payload={
+                "decision_id": str(updated["id"]),
+                "meeting_id": str(updated["meeting_id"]),
+                "content": updated["content"],
+                "rationale": updated["rationale"] or "",
+                "confidence": float(updated["confidence"]),
+                "status": "confirmed",
+                "confirmed_by": str(updated["confirmed_by"] or actor_id),
+                "supersedes": str(loser_id),
+            },
+            org_id=str(ctx.org_id),
+            producer=PRODUCER,
+            idempotency_key=f"decision:{winner_id}:supersedes:{loser_id}",
+        ),
+    )
+    await audit(
+        session,
+        org_id=ctx.org_id,
+        actor_id=actor_id,
+        action=ACTION_DECISION_CONFIRMED,
+        target_type="decision",
+        target_id=winner_id,
+        metadata={
+            "meeting_id": str(updated["meeting_id"]),
+            "supersedes": str(loser_id),
+            "via": "settle_thread",
+        },
+        ip=ctx.ip,
+    )
+    await record_reversals(
+        session, org_id=ctx.org_id, old_decision_id=loser_id, new_decision_id=winner_id
     )

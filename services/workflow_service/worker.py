@@ -16,11 +16,23 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from services.workflow_service.activities import LifecycleActivities
+from services.workflow_service.assumption_activities import AssumptionWatchActivities
+from services.workflow_service.bet_activities import BetActivities
 from services.workflow_service.followup_activities import FollowUpActivities
 from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.scheduled_activities import ScheduledActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
+from services.workflow_service.workflows.assumption_watch import AssumptionWatchWorkflow
+from services.workflow_service.workflows.assumption_watch import (
+    ensure_schedule as ensure_assumption_watch,
+)
+from services.workflow_service.workflows.decision_bets import DecisionBetsWorkflow
+from services.workflow_service.workflows.decision_bets import ensure_schedule as ensure_bets
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
+from services.workflow_service.workflows.listening import (
+    EveningListeningWorkflow,
+    ensure_listening_schedule,
+)
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from services.workflow_service.workflows.only_mytheus import (
@@ -47,6 +59,10 @@ async def main() -> None:
     reminders = ReminderActivities.from_env()
     # Polish wave 3: the promise-drift and weekly-digest schedules' activities.
     scheduled = ScheduledActivities.from_env()
+    # Beyond, Layer 1: the assumption watch (decisions that know why).
+    watch = AssumptionWatchActivities.from_env()
+    # Beyond the meeting, Layer 3: the daily check of decisions as bets.
+    bet_checks = BetActivities.from_env()
     worker = Worker(
         client,
         task_queue=_TASK_QUEUE,
@@ -59,13 +75,29 @@ async def main() -> None:
             UsageRollupWorkflow,
             PromiseDriftWorkflow,
             WeeklyDigestWorkflow,
+            EveningListeningWorkflow,
+            AssumptionWatchWorkflow,
+            DecisionBetsWorkflow,
         ],
-        activities=[*lifecycle.all(), *followup.all(), *reminders.all(), *scheduled.all()],
+        activities=[
+            *lifecycle.all(),
+            *followup.all(),
+            *reminders.all(),
+            *scheduled.all(),
+            *watch.all(),
+            *bet_checks.all(),
+        ],
     )
     if await ensure_schedule(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")
     for schedule_id in await ensure_schedules(client, task_queue=_TASK_QUEUE):
         print(f"Created Temporal schedule {schedule_id}")
+    if await ensure_assumption_watch(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule assumption-watch (every 6 hours)")
+    if await ensure_listening_schedule(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule listening-evening (hourly)")
+    if await ensure_bets(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule decision-bets-daily (08:00 UTC)")
     print(f"Worker started on task queue: {_TASK_QUEUE}")
     await worker.run()
 

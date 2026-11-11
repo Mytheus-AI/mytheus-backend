@@ -80,6 +80,9 @@ class Meeting(Base, TenantMixin, TimestampMixin):
     closed_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Promise ledger (migration a0b1c2d3e4f5): the Google Calendar event type of a synced event
+    # (`focusTime`, `outOfOffice`, ...), so capacity counts focus time apart from meeting time.
+    calendar_event_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
@@ -129,6 +132,17 @@ class MeetingParticipant(Base, TenantMixin):
     proxy_update: Mapped[str | None] = mapped_column(Text, nullable=True)
     proxy_questions: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    # "In every meeting at once" (migration f5a6b7c8d9e0): the person's choice for this meeting,
+    # by hand or by one of their `attendance_rules`. NULL = no choice yet (reads as attend).
+    # core-api keeps `attendance` in step: `agent_listens` is `agent`, anything else `live`.
+    attendance_choice: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attendance_choice_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # FK to attendance_rules (ON DELETE SET NULL) is declared in the migration only: the rules
+    # table is raw-SQL DDL with no model.
+    attendance_rule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    attendance_choice_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
 
     __table_args__ = (

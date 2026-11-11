@@ -69,7 +69,7 @@ async def _dispatch(
             session, org_id, payload, row["event_type"], clients, attachments
         )
     if provider == config.SLACK:
-        return await slack.process(session, payload)
+        return await slack.process(session, payload, org_id=org_id, clients=clients, core=core)
     if provider == config.JIRA:
         return await jira.process_webhook(session, org_id, payload, core, clients)
     return "skipped"

@@ -64,13 +64,20 @@ PUBLIC_API_PREFIXES: tuple[str, ...] = (
     "/api/v1/decisions",
     "/api/v1/actions",
     "/api/v1/commitments",
+    "/api/v1/promises",
     "/api/v1/search",
     "/api/v1/ask",
+    # Decisions that follow you: challenges and reopen requests.
+    "/api/v1/decision-challenges",
+    "/api/v1/decision-reopen-requests",
+    # The company time machine (read only, participant-scoped): the MCP tool `company_as_of`.
+    "/api/v1/time-machine",
     "/mcp",
 )
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # POSTs that only read. `/mcp` is JSON-RPC over POST; its one write tool checks the scope.
-_READ_ONLY_POSTS = frozenset({"/api/v1/ask", "/mcp"})
+# `/api/v1/decisions/check` checks a draft against decisions and stores nothing.
+_READ_ONLY_POSTS = frozenset({"/api/v1/ask", "/api/v1/decisions/check", "/mcp"})
 
 
 @dataclass(frozen=True)

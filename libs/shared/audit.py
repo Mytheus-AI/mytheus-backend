@@ -194,3 +194,20 @@ ACTION_OAUTH_TOKEN_ISSUED = "oauth.token_issued"
 ACTION_OAUTH_TOKEN_REFRESHED = "oauth.token_refreshed"
 ACTION_OAUTH_TOKEN_REVOKED = "oauth.token_revoked"
 ACTION_OAUTH_GRANT_REVOKED = "oauth.grant_revoked"
+# Beyond, Layer 1 (decisions that know why, blast radius): the decision's owner adding, editing,
+# removing or re-confirming a reason behind it, reopening the decision because a reason broke,
+# booking a revisit; the two owners of clashing decisions settling it (a message, sharing their
+# wording, keeping both, one replacing the other, accepting or declining that, booking a meeting).
+ACTION_ASSUMPTION_ADDED = "assumption.added"
+ACTION_ASSUMPTION_EDITED = "assumption.edited"
+ACTION_ASSUMPTION_REMOVED = "assumption.removed"
+ACTION_ASSUMPTION_RECONFIRMED = "assumption.reconfirmed"
+ACTION_DECISION_REOPENED = "decision.reopened"
+ACTION_REVISIT_BOOKED = "decision.revisit_booked"
+ACTION_SETTLEMENT_MESSAGE = "settlement.message"
+ACTION_SETTLEMENT_SHARED = "settlement.shared"
+ACTION_SETTLEMENT_KEPT_BOTH = "settlement.kept_both"
+ACTION_SETTLEMENT_PROPOSED = "settlement.proposed"
+ACTION_SETTLEMENT_SUPERSEDED = "settlement.superseded"
+ACTION_SETTLEMENT_DECLINED = "settlement.declined"
+ACTION_SETTLEMENT_MEETING_BOOKED = "settlement.meeting_booked"

@@ -201,6 +201,14 @@ def test_person_erasure_removes_their_data_keeps_org_records_and_is_recorded(cli
         "agent_feedback": 0,
         "agent_calibration": 0,
         "clips": 0,
+        "date_proposals": 0,
+        "capture_preferences": 0,
+        "room_signals": 0,
+        "late_contributions": 0,
+        "last_word_nudges": 0,
+        "agreement_checks": 0,
+        "briefings": 0,
+        "briefing_preferences": 0,
     }
     assert out["anonymized"]["decisions"] == 1
     assert out["anonymized"]["actions_unassigned"] == 1
@@ -346,3 +354,34 @@ def test_another_tenants_target_is_not_found(client):
     )
     assert res.status_code == 404
     assert _count("meetings", "id = %(m)s AND deleted_at IS NULL", {"m": meeting_b}) == 1
+
+
+def test_person_erasure_clears_their_promise_ledger_traces(client):
+    """Promise ledger: the date proposals they made or received and their capture preferences
+    go; a colleague's promise to them no longer names them."""
+    t = new_tenant()
+    target = t.add_user("member", email="erin@example.com")
+    colleague = t.add_user("member")
+    t.add_user("admin").sign_in()
+    mine = _sql(
+        "INSERT INTO commitments (org_id, user_id, content, channel, source_window_id, "
+        "recipient_user_id) VALUES (%(o)s, %(u)s, 'Send Erin the deck', 'manual', 'm1', %(r)s) "
+        "RETURNING id",
+        {"o": str(t.org_id), "u": str(colleague.user_id), "r": str(target.user_id)},
+    )[0]["id"]
+    _sql(
+        "INSERT INTO promise_date_proposals (org_id, commitment_id, proposer_id, requester_id, "
+        "content, proposed_due) VALUES (%(o)s, %(c)s, %(p)s, %(r)s, 'x', '2026-12-01')",
+        {"o": str(t.org_id), "c": mine, "p": str(colleague.user_id), "r": str(target.user_id)},
+    )
+    _sql(
+        "INSERT INTO promise_capture_preferences (org_id, user_id, slack_enabled) "
+        "VALUES (%(o)s, %(u)s, false)",
+        {"o": str(t.org_id), "u": str(target.user_id)},
+    )
+    body = {"kind": "person", "target_id": str(target.user_id), "confirm": "erin@example.com"}
+    out = client.post("/admin/tenant/erasures", json=body).json()
+    assert out["erased"]["date_proposals"] == 1 and out["erased"]["capture_preferences"] == 1
+    assert out["anonymized"]["promise_recipients"] == 1
+    row = _sql("SELECT recipient_user_id FROM commitments WHERE id = %(c)s", {"c": mine})[0]
+    assert row["recipient_user_id"] is None

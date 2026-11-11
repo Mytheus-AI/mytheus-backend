@@ -22,9 +22,15 @@ on the caller's behalf). So a tool can never see or do more than the same token 
 REST, and bff stays a non-writer: `create_action` is core-api's `POST /api/v1/actions`.
 
 Tools: `search_meetings`, `ask_meetings`, `get_meeting_outcome` (decisions, actions, agenda:
-the minutes), `get_decision_record`, `list_my_open_actions`, `list_my_promises`,
+the minutes), `get_decision_record`, `company_as_of` (the time machine: what was decided,
+believed and promised on a date, optionally for one topic), `list_my_open_actions`,
+`list_my_promises` (the promise ledger, every channel), `check_my_capacity` (the capacity
+check before a deadline is accepted), `check_against_decisions` (a draft checked against the
+confirmed decisions of the caller's meetings: core-api's `POST /api/v1/decisions/check`,
+read-only),
 `create_action` (a confirmed task for the caller, the caller's own explicit request; needs a
-`read_write` token). Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
+`read_write` token) and `add_promise` (a manual promise in the caller's ledger; `read_write`).
+Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
 Markdown, listed for the caller's recent meetings) and
 `mytheus://decisions/{decision_id}/record`.
 """
@@ -66,7 +72,9 @@ INSTRUCTIONS = (
     "Mytheus is your team's meeting memory: decisions with their history, actions with owners, "
     "promises, and meeting outcomes. Search or ask first, then open a meeting's outcome or a "
     "decision record by id. Everything is limited to meetings you took part in. "
-    "create_action records a confirmed task immediately; only call it when the user asked."
+    "Before agreeing to a deadline for the user, check_my_capacity says whether that day is "
+    "already full. create_action and add_promise write immediately; only call them when the "
+    "user asked."
 )
 
 _READ_ONLY = (
@@ -151,6 +159,26 @@ TOOLS: list[dict[str, Any]] = [
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },
     {
+        "name": "company_as_of",
+        "title": "See the company as of a date",
+        "description": (
+            "The company's decision graph as it stood at the end of a date: decisions in force "
+            "with why and the words that decided them, what had been replaced by then, open "
+            'promises with owners, and goals. Optionally only one topic ("pricing"). Limited '
+            "to meetings you took part in."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "format": "date"},
+                "topic": {"type": "string", "maxLength": 120},
+            },
+            "required": ["date"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
         "name": "list_my_open_actions",
         "title": "List my open actions",
         "description": "Your confirmed, not yet done actions, soonest due first.",
@@ -160,7 +188,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_my_promises",
         "title": "List my promises",
-        "description": "Things you said you would do in meetings (private to you).",
+        "description": (
+            "Things you promised, from every channel: meetings, phone recordings, Slack, email "
+            "and ones you added (private to you), with their due dates and where they were made."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -173,6 +204,94 @@ TOOLS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "check_against_decisions",
+        "title": "Check a draft against decisions",
+        "description": (
+            "Before you send or publish a draft (a message, a doc, a plan, a reply), check whether "
+            "it contradicts or reopens a decision your team already confirmed in a meeting you "
+            "took part in. Returns each conflicting decision with the conflicting quote, the "
+            "meeting, the date, the owner, a confidence and why. Read-only; the draft is not "
+            "stored. An empty result means no conflict was found, not that none exists."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "topic": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Optional: what the draft is about.",
+                },
+                "place": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Optional: where it will go, e.g. 'email to Acme'.",
+                },
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "check_my_capacity",
+        "title": "Check my capacity",
+        "description": (
+            "Before saying yes to a deadline: how full a day is (promises and actions due, "
+            "meeting and focus time) and, when it is tight, the first day with room. Without "
+            "`due_date`, your week day by day. Private to you."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "due_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "The date someone asked for (YYYY-MM-DD).",
+                },
+                "days": {"type": "integer", "minimum": 1, "maximum": 14, "default": 7},
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "description": "Your IANA time zone, e.g. Europe/London. Default UTC.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "add_promise",
+        "title": "Add a promise",
+        "description": (
+            "Write down a promise you made (to a colleague, a customer, anyone) in your private "
+            "promise ledger, with an optional due date; the answer says whether that day is "
+            "already full. Only call this when the user asked."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "minLength": 1, "maxLength": 500},
+                "due_date": {"type": "string", "format": "date"},
+                "recipient_id": {**_UUID, "description": "A colleague it was promised to."},
+                "recipient": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Or who, in words (a customer, a team).",
+                },
+                "timezone": {"type": "string", "maxLength": 64},
+            },
+            "required": ["content"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
     },
     {
         "name": "create_action",
@@ -279,6 +398,51 @@ def _line_action(a: dict[str, Any]) -> str:
     return f"- {a['content']}{owner}{due}{done} `{a['id']}`"
 
 
+def _line_promise(c: dict[str, Any]) -> str:
+    due = (
+        f", due {c['due_at']}"
+        if c.get("due_at")
+        else (f" ({c['due_hint']})" if c.get("due_hint") else "")
+    )
+    to = f" to {c['recipient_name']}" if c.get("recipient_name") else ""
+    source = c.get("source") or {}
+    where = f" [{source.get('label')}]" if source.get("label") else ""
+    review = (
+        " (found by your agent, not confirmed yet)" if c.get("review_state") == "pending" else ""
+    )
+    return f"- {c['content']}{to}{due}{where}{review} `{c['id']}`"
+
+
+def _capacity_check_text(body: dict[str, Any]) -> str:
+    lines = [str(body.get("message") or "")]
+    lines.append(
+        f"{body.get('items_on_day')} things due {body.get('due_label')} counting this one; "
+        f"{round(int(body.get('meeting_minutes') or 0) / 60, 1)} h of meetings. "
+        f"Level: {body.get('level')}."
+    )
+    if body.get("suggested_date"):
+        lines.append(f"First day with room: {body['suggested_date']} ({body['suggested_label']}).")
+    return "\n".join(lines)
+
+
+def _capacity_text(body: dict[str, Any]) -> str:
+    lines = []
+    for d in body.get("days", []):
+        meetings = round(int(d.get("meeting_minutes") or 0) / 60, 1)
+        focus = round(int(d.get("focus_minutes") or 0) / 60, 1)
+        extra = f", {focus} h focus" if focus else ""
+        away = ", away" if d.get("away") else ""
+        lines.append(
+            f"- {d['date']} ({d['label']}): {d['items']} due, {meetings} h meetings{extra}{away} "
+            f"-> {d['level']}"
+        )
+    if body.get("overdue"):
+        lines.append(f"Overdue: {body['overdue']}.")
+    if not body.get("calendar_synced"):
+        lines.append("Only Mytheus meetings are counted: Google Calendar is not synced for you.")
+    return "\n".join(lines) or "Nothing scheduled."
+
+
 def recap_markdown(r: dict[str, Any]) -> str:
     lines = [f"# {r['title']}", ""]
     when = r.get("scheduled_start")
@@ -313,6 +477,89 @@ def record_markdown(d: dict[str, Any]) -> str:
     if d.get("meeting_actions"):
         lines += ["", "## Actions from that meeting"]
         lines += [_line_action(a) for a in d["meeting_actions"]]
+    return "\n".join(lines)
+
+
+def check_markdown(body: dict[str, Any]) -> str:
+    conflicts = body.get("conflicts") or []
+    if body.get("status") == "skipped" and body.get("reason") == "never_record":
+        return "Not checked: the draft names a topic your workspace never records."
+    if body.get("status") == "skipped":
+        return "Not checked: the draft is too short to compare with decisions."
+    if not conflicts:
+        degraded = body.get("status") == "degraded"
+        return (
+            "Not checked fully: the workspace's AI budget is used up for now."
+            if degraded
+            else "No conflict with a confirmed decision from meetings you took part in."
+        )
+    lines = [f"{len(conflicts)} confirmed decision(s) conflict with this draft:", ""]
+    for c in conflicts:
+        when = f" on {c['decided_at']}" if c.get("decided_at") else ""
+        where = f" ({c['meeting_title']})" if c.get("meeting_title") else ""
+        owner = f", owner {c['owner']['name']}" if (c.get("owner") or {}).get("name") else ""
+        verb = "contradicts" if c.get("relation") == "contradicts" else "reopens"
+        lines += [
+            f"- Decided{when}{where}{owner}: {c['decision_content']} `{c['decision_id']}`",
+            f'  The draft {verb} it: "{c["quote"]}"',
+            f"  Why: {c.get('why') or 'it goes against the decision'} "
+            f"(confidence {float(c.get('confidence', 0)):.2f})",
+        ]
+    return "\n".join(lines)
+
+
+def as_of_markdown(s: dict[str, Any]) -> str:
+    """The time machine's snapshot as Markdown, for `company_as_of`."""
+    head = f"# The company as of {s['as_of']}" + (
+        f" (topic: {s['topic']})" if s.get("topic") else ""
+    )
+    c = s.get("counts") or {}
+    lines = [
+        head,
+        "",
+        f"{c.get('in_force', 0)} decisions in force, {c.get('replaced', 0)} replaced by then, "
+        f"{c.get('promises_open', 0)} open promises ({c.get('promises_overdue', 0)} overdue), "
+        f"{c.get('goals_active', 0)} active goals. Only meetings you were in are included.",
+        "",
+        "## Decided and in force",
+    ]
+    for d in (s.get("decisions") or [])[:40]:
+        line = f"- {d['content']} ({d['meeting']['title']}, {str(d['decided_at'])[:10]})"
+        if d.get("rationale"):
+            line += f". Why: {d['rationale']}"
+        if d.get("quote"):
+            who = f" {d['quote_speaker_name']}:" if d.get("quote_speaker_name") else ""
+            line += f'. Said:{who} "{d['quote']}"'
+        if d.get("bet"):
+            line += f". Expected: {d['bet']['statement']}"
+        lines.append(line + f" `{d['id']}`")
+    if not s.get("decisions"):
+        lines.append("- None")
+    if s.get("replaced"):
+        lines += ["", "## Replaced by then"]
+        for r in s["replaced"][:20]:
+            by = r["replaced_by"]
+            what = (
+                by.get("content")
+                if by.get("visible")
+                else "a decision from a meeting you were not in"
+            )
+            lines.append(f"- {r['content']}: replaced on {str(r['replaced_at'])[:10]} by {what}")
+    lines += ["", "## Open promises"]
+    for p in (s.get("promises") or [])[:30]:
+        due = f", due {p['due']}" if p.get("due") else ""
+        late = " (overdue)" if p.get("overdue") else ""
+        lines.append(f"- {p['content']} ({p.get('owner_name') or 'Unassigned'}{due}){late}")
+    if not s.get("promises"):
+        lines.append("- None")
+    if s.get("goals"):
+        lines += ["", "## Goals"]
+        lines += [
+            f"- {g['title']}"
+            + (f" ({g['period']})" if g.get("period") else "")
+            + f": {g['status']}"
+            for g in s["goals"]
+        ]
     return "\n".join(lines)
 
 
@@ -377,6 +624,15 @@ async def call_tool(
         decision = _uuid_arg(args, "decision_id")
         body = await core.call("GET", f"/api/v1/decisions/{decision}/record")
         return record_markdown(body), body
+    if name == "company_as_of":
+        day = str(args.get("date") or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise ToolError("`date` must be a date like 2026-06-30.")
+        params = {"as_of": day}
+        if args.get("topic"):
+            params["topic"] = str(args["topic"])[:120]
+        body = await core.call("GET", "/api/v1/time-machine/snapshot", params=params)
+        return as_of_markdown(body), body
     if name == "list_my_open_actions":
         body = await core.call("GET", "/api/v1/actions/mine", params={"status": "confirmed"})
         items = body.get("items", [])
@@ -392,15 +648,58 @@ async def call_tool(
         status = str(args.get("status") or "open")
         if status not in ("open", "done", "dismissed"):
             raise ToolError("`status` must be open, done or dismissed.")
-        body = await core.call("GET", "/api/v1/commitments", params={"status": status})
+        body = await core.call("GET", "/api/v1/promises", params={"status": status})
         items = body.get("items", [])
-        text = "\n".join(
-            f"- {c['content']}"
-            + (f" ({c['due_hint']})" if c.get("due_hint") else "")
-            + (f", said in {c['meeting_title']}" if c.get("meeting_title") else "")
-            for c in items
-        )
+        text = "\n".join(_line_promise(c) for c in items)
         return text or f"No {status} promises.", body
+    if name == "check_against_decisions":
+        draft = str(args.get("text") or "")
+        if not draft.strip():
+            raise ToolError("`text` is required.")
+        context = {
+            k: str(args[v])[:limit]
+            for k, v, limit in (("topic", "topic", 200), ("place_label", "place", 120))
+            if args.get(v)
+        }
+        body = await core.call(
+            "POST",
+            "/api/v1/decisions/check",
+            json_body={"text": draft, "source": "mcp", "context": context or None},
+        )
+        return check_markdown(body), body
+    if name == "check_my_capacity":
+        tz = str(args["timezone"]) if args.get("timezone") else None
+        if args.get("due_date"):
+            params = {"due_date": str(args["due_date"])} | ({"tz": tz} if tz else {})
+            body = await core.call("GET", "/api/v1/promises/capacity/check", params=params)
+            return _capacity_check_text(body), body
+        days = max(1, min(int(args.get("days") or 7), 14))
+        params = {"days": days} | ({"tz": tz} if tz else {})
+        body = await core.call("GET", "/api/v1/promises/capacity", params=params)
+        return _capacity_text(body), body
+    if name == "add_promise":
+        if not ctx.can_write:
+            raise ToolError(_READ_ONLY)
+        content = str(args.get("content") or "").strip()
+        if not content:
+            raise ToolError("`content` is required.")
+        payload: dict[str, Any] = {"content": content}
+        if args.get("due_date"):
+            payload["due_at"] = str(args["due_date"])
+        if args.get("recipient_id"):
+            payload["recipient_user_id"] = str(_uuid_arg(args, "recipient_id"))
+        elif args.get("recipient"):
+            payload["recipient_label"] = str(args["recipient"])
+        tz_params = {"tz": str(args["timezone"])} if args.get("timezone") else None
+        body = await core.call("POST", "/api/v1/promises", params=tz_params, json_body=payload)
+        promise = body.get("promise") or {}
+        text = f"Added to your promises: {promise.get('content', content)}"
+        if promise.get("due_at"):
+            text += f", due {promise['due_at']}"
+        check = body.get("capacity") or {}
+        if check.get("warn"):
+            text += f"\n\nHeads up: {check.get('message')}"
+        return text + f" `{promise.get('id', '')}`", body
     if name == "create_action":
         if not ctx.can_write:
             raise ToolError(_READ_ONLY)
@@ -556,8 +855,9 @@ _OPENAPI_BODY = {
         "`Authorization: Bearer mytheus_pat_...`, or add it as a Claude custom connector "
         "(OAuth: discovery at `/.well-known/oauth-protected-resource`). Tools: "
         "search_meetings, ask_meetings, get_meeting_outcome, get_decision_record, "
-        "list_my_open_actions, list_my_promises, "
-        "create_action (read_write tokens). Resources: meeting summaries and decision records."
+        "list_my_open_actions, list_my_promises, check_against_decisions, check_my_capacity, "
+        "create_action and add_promise (read_write tokens). Resources: meeting summaries and "
+        "decision records."
     ),
     openapi_extra=_OPENAPI_BODY,
     response_class=JSONResponse,

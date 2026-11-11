@@ -12,7 +12,15 @@ logs are redacted at the logger (`redaction.py`).
 """
 
 from libs.shared.app_factory import create_app
-from services.integration_service import internal, jira_status, reach, routes, webhooks
+from services.integration_service import (
+    bet_metrics,
+    internal,
+    jira_status,
+    reach,
+    routes,
+    watch_sources,
+    webhooks,
+)
 from services.integration_service.redaction import install_redaction
 
 install_redaction()
@@ -22,5 +30,7 @@ app.include_router(routes.router)
 app.include_router(webhooks.router)
 app.include_router(internal.router)
 app.include_router(jira_status.router)
+app.include_router(watch_sources.router)  # Beyond, Layer 1: the assumption watch
+app.include_router(bet_metrics.router)  # decisions as bets: a CRM number on the check date
 app.include_router(reach.internal_router)
 app.include_router(reach.router)

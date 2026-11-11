@@ -304,8 +304,10 @@ def test_completion_connects_encrypts_tokens_and_never_returns_them(client, fake
         "installed_by",
         "installed_at",
         "last_synced_at",
+        "decision_checks",  # A1: Slack only; the fake install predates the history scopes
     }
     assert item["status"] == "active" and "chat:write" in item["scopes"]
+    assert item["decision_checks"] == "needs_reconnect"
     audits = _sql(
         "SELECT action FROM audit_logs WHERE org_id = %(o)s AND action = 'integration.connected'",
         {"o": str(t.org_id)},

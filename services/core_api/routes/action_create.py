@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_ACTION_CREATED, audit
 from libs.shared.authz import RequestContext, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.core_api.capacity import warn_on_landing
 from services.core_api.routes.candidates import (
     _require_meeting_participant,
     enqueue_action_confirmed,
@@ -124,6 +125,17 @@ async def create_action(
         .one()
     )
     await enqueue_action_confirmed(session, ctx.org_id, row)
+    if assignee != ctx.user_id:
+        # Promise ledger: the assignee's own agent warns them when this lands on a full day.
+        await warn_on_landing(
+            session,
+            ctx.org_id,
+            user_id=assignee,
+            kind="action",
+            item_id=row["id"],
+            content=row["content"],
+            due=row["due_date"],
+        )
     await audit(
         session,
         org_id=ctx.org_id,

@@ -60,7 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_DATA_ERASURE_APPLIED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api import recording_client
+from services.core_api import briefings, recording_client
 
 router = APIRouter(prefix="/api/v1", tags=["erasure"])
 
@@ -132,9 +132,37 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     ("agent_calibration", "DELETE FROM agent_calibration WHERE user_id = :t"),
     # Polish wave 3: the clips they made (their share links go with them, ON DELETE CASCADE).
     ("clips", "DELETE FROM meeting_clips WHERE created_by = :t"),
+    # Promise ledger: dates they asked to move or were asked about, and where their agent looks.
+    (
+        "date_proposals",
+        "DELETE FROM promise_date_proposals WHERE proposer_id = :t OR requester_id = :t",
+    ),
+    ("capture_preferences", "DELETE FROM promise_capture_preferences WHERE user_id = :t"),
+    # "After the meeting" layer 1: what the room saw of them, their nudges, late points and
+    # private agreement answers.
+    ("room_signals", "DELETE FROM room_signals WHERE user_id = :t"),
+    ("late_contributions", "DELETE FROM late_contributions WHERE user_id = :t"),
+    ("last_word_nudges", "DELETE FROM last_word_nudges WHERE user_id = :t"),
+    ("agreement_checks", "DELETE FROM agreement_checks WHERE user_id = :t"),
+    # Beyond the meeting: their agent's briefings (audio too, below) and briefing settings.
+    ("briefings", "DELETE FROM agent_briefings WHERE user_id = :t"),
+    ("briefing_preferences", "DELETE FROM briefing_preferences WHERE user_id = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
+    # "After the meeting" layer 1: their words in a saved open thread.
+    (
+        "resume_point_cut_offs",
+        "UPDATE resume_points SET cut_off_user_id = NULL, cut_off_quote = NULL, "
+        "cut_off_start_ms = NULL, cut_off_end_ms = NULL WHERE cut_off_user_id = :t",
+    ),
+    (
+        "resume_point_positions",
+        "UPDATE resume_points SET positions = COALESCE((SELECT jsonb_agg(p) FROM "
+        "jsonb_array_elements(positions) p WHERE p->>'user_id' IS DISTINCT FROM CAST(:t AS text)), "
+        "'[]'::jsonb) WHERE positions @> jsonb_build_array(jsonb_build_object('user_id', "
+        "CAST(:t AS text)))",
+    ),
     ("decisions", "UPDATE decisions SET confirmed_by = NULL WHERE confirmed_by = :t"),
     ("actions_confirmed", "UPDATE action_items SET confirmed_by = NULL WHERE confirmed_by = :t"),
     ("actions_unassigned", "UPDATE action_items SET assignee_id = NULL WHERE assignee_id = :t"),
@@ -172,6 +200,24 @@ _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
     ),
     ("wrap_ups", "UPDATE meetings SET wrap_up_by = NULL WHERE wrap_up_by = :t"),
     ("closes", "UPDATE meetings SET closed_by = NULL WHERE closed_by = :t"),
+    # Promise ledger: other people's promises no longer name them as recipient or hand-off.
+    (
+        "promise_recipients",
+        "UPDATE commitments SET recipient_user_id = NULL WHERE recipient_user_id = :t",
+    ),
+    (
+        "promise_handoffs",
+        "UPDATE commitments SET created_by = CASE WHEN created_by = :t THEN NULL "
+        "ELSE created_by END, handed_off_to = CASE WHEN handed_off_to = :t THEN NULL "
+        "ELSE handed_off_to END WHERE created_by = :t OR handed_off_to = :t",
+    ),
+    # Decisions as bets: a kept bet no longer names its owner or quotes the person.
+    ("bet_owners", "UPDATE decision_bets SET owner_user_id = NULL WHERE owner_user_id = :t"),
+    (
+        "bet_quotes",
+        "UPDATE decision_bets SET quote = NULL, quote_speaker_id = NULL "
+        "WHERE quote_speaker_id = :t",
+    ),
 )
 
 # A never-confirmed decision is deleted only when no other decision points at it: `supersedes`
@@ -188,6 +234,15 @@ _MEETING_DELETES: tuple[tuple[str, str], ...] = (
     ("agent_feedback", "DELETE FROM agent_feedback WHERE meeting_id = :t"),
     # Polish wave 3: the meeting's clips (and with them their share links).
     ("clips", "DELETE FROM meeting_clips WHERE meeting_id = :t"),
+    # "After the meeting" layer 1.
+    ("room_signals", "DELETE FROM room_signals WHERE meeting_id = :t"),
+    ("late_contributions", "DELETE FROM late_contributions WHERE meeting_id = :t"),
+    ("last_word_nudges", "DELETE FROM last_word_nudges WHERE meeting_id = :t"),
+    ("agreement_checks", "DELETE FROM agreement_checks WHERE meeting_id = :t"),
+    ("agreement_reads", "DELETE FROM decision_agreement_reads WHERE meeting_id = :t"),
+    ("resume_points", "DELETE FROM resume_points WHERE meeting_id = :t"),
+    ("room_signal_runs", "DELETE FROM room_signal_runs WHERE meeting_id = :t"),
+    ("briefings", "DELETE FROM agent_briefings WHERE meeting_id = :t"),
     (
         "unconfirmed_decisions",
         "DELETE FROM decisions d WHERE d.meeting_id = :t AND d.status IN ('proposed', 'dismissed') "
@@ -224,6 +279,7 @@ async def _erase_person(
             extra={"reason": "confirmation_mismatch"},
         )
     params: dict[str, Any] = {"t": str(target)}
+    await briefings.erase_audio(session, ctx.org_id, user_id=target)
     erased = {name: await _count(session, sql, params) for name, sql in _PERSON_DELETES}
     anonymized = {name: await _count(session, sql, params) for name, sql in _PERSON_ANONYMIZE}
     revoked = await _count(
@@ -270,6 +326,7 @@ async def _erase_meeting(
             extra={"reason": "meeting_live"},
         )
     params: dict[str, Any] = {"t": str(target)}
+    await briefings.erase_audio(session, ctx.org_id, meeting_id=target)
     erased = {name: await _count(session, sql, params) for name, sql in _MEETING_DELETES}
     revoked = await _count(
         session,

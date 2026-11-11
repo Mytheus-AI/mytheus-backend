@@ -443,9 +443,11 @@ async def test_automatic_follow_up_waits_for_the_minutes(client, fake):
         {"k": f"notif:followup:{m}:%"},
     )
     assert len(notes) == 2 and "Agreed the price rise" in notes[0]["payload"]["body"]
-    # The personal minutes landing later queue nothing.
+    # The personal minutes landing later queue no follow-up: only the person's briefing
+    # doorbell (a briefing from your agent).
     await apply(minutes_record(host, m, member.user_id, payload("personal")))
-    assert consumer.AFTER_COMMIT == []
+    assert len(consumer.AFTER_COMMIT) == 1
+    consumer.AFTER_COMMIT.clear()
 
     # Without a transcript there is nothing to wait for: it is sent at once.
     host2, _, m2 = meeting()

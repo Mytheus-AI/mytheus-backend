@@ -10,6 +10,8 @@ integration-service presents its own `integration-service=<secret>` entry from
 - `GET /internal/meetings/{id}/crm-digest` (Phase 4): the meeting's confirmed outcome plus the
   email addresses the HubSpot matcher needs. 404 with `reason: confidential` for a confidential
   meeting, which is never pushed to a CRM.
+- `POST /internal/decisions/check`, `POST /internal/decision-challenges/{id}/dismiss|reopen`
+  ("Decisions that follow you"): a Slack message checked as its author, and its note's buttons.
 - `GET /internal/decisions/{id}/record?viewer=` (Phase 4): the decision record as that user may
   see it, for the Notion / Confluence / Slack exports. 404 when they may not.
 """
@@ -116,6 +118,42 @@ class CoreApiClient:
             org_id,
             params={"viewer": str(viewer)},
         )
+
+    async def decision_check(self, org_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:
+        """A Slack message checked against decisions as its author (A1), conflicts recorded."""
+        return await self._call("POST", "/internal/decisions/check", org_id, body)
+
+    async def challenge_act(
+        self,
+        org_id: uuid.UUID,
+        challenge_id: uuid.UUID,
+        verb: str,
+        acting_email: str,
+    ) -> dict[str, Any]:
+        """`verb` dismiss | reopen: a Slack button, pressed by the challenge's author."""
+        if verb not in ("dismiss", "reopen"):
+            raise CoreApiError(None, f"unknown verb {verb}")
+        return await self._call(
+            "POST",
+            f"/internal/decision-challenges/{challenge_id}/{verb}",
+            org_id,
+            {"acting_email": acting_email},
+        )
+
+    async def promise_capture_check(
+        self, org_id: uuid.UUID, channel: str, author_email: str
+    ) -> dict[str, Any]:
+        """Promise ledger: may this author's agent look at their `channel` messages?"""
+        return await self._call(
+            "POST",
+            "/internal/promises/capture-check",
+            org_id,
+            {"channel": channel, "author_email": author_email},
+        )
+
+    async def promises_captured(self, org_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:
+        """Promise ledger: the promises the author's agent found in one message (pending)."""
+        return await self._call("POST", "/internal/promises/captured", org_id, body)
 
 
 _core: CoreApiClient | None = None

@@ -406,12 +406,35 @@ ROUTE_MAP: dict[str, str] = {
     # ADR-0039 Part B: meeting types, promises and status requests are core-api's too.
     "/api/v1/meeting-templates": "core-api",
     "/api/v1/commitments": "core-api",
+    # Promise ledger (Beyond the meeting, Layer 2): every channel, capacity, date proposals.
+    "/api/v1/promises": "core-api",
     # Polish wave 2: the caller's own memory across meetings (core-api's person_memory).
     "/api/v1/me/memory": "core-api",
     "/api/v1/status-requests": "core-api",
     # Polish wave 3: decision reversals and the weekly digest are core-api's.
     "/api/v1/decision-reversals": "core-api",
     "/api/v1/digests": "core-api",
+    # Beyond the meeting, decisions that follow you: where a decision was challenged and the
+    # requests to reopen one (the check itself is `/api/v1/decisions/check`, core-api's too).
+    "/api/v1/decision-challenges": "core-api",
+    "/api/v1/decision-reopen-requests": "core-api",
+    # "After the meeting" layer 1: the last word, the agreement check, pick up where we stopped.
+    "/api/v1/me/last-word": "core-api",
+    "/api/v1/me/agreement-checks": "core-api",
+    "/api/v1/last-word": "core-api",
+    "/api/v1/late-contributions": "core-api",
+    "/api/v1/agreement-checks": "core-api",
+    "/api/v1/resume-points": "core-api",
+    # Beyond the meeting: a briefing from your agent.
+    "/api/v1/briefings": "core-api",
+    # Beyond, Layer 1: decisions that know why (owner edits) and settle threads.
+    "/api/v1/assumptions": "core-api",
+    "/api/v1/settlements": "core-api",
+    # Beyond the meeting: attendance choices, rules, interruptions and the evening digest.
+    "/api/v1/listening": "core-api",
+    # Beyond the meeting, Layer 3: decisions as bets and the company time machine.
+    "/api/v1/bets": "core-api",
+    "/api/v1/time-machine": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
     # The company brain (ADR-0039 Part A), identity's too.

@@ -307,11 +307,31 @@ class GoogleCalendarApi(_Http):
 
 SLACK_AUTHORIZE = "https://slack.com/oauth/v2/authorize"
 SLACK_API = "https://slack.com/api"
+SLACK_RESPONSE_PREFIX = "https://hooks.slack.com/"
 
 
 class SlackOAuth(_Http):
     provider = config.SLACK
-    scopes = ("chat:write", "users:read", "users:read.email", "im:write")
+    # `channels:history` / `groups:history` (+ `channels:read` / `groups:read` for the channel's
+    # name) let the app read messages in the channels it was invited to, for "Decisions that
+    # follow you"; `commands` is the "Check against decisions" message shortcut. `im:history` /
+    # `mpim:history` (with the history scopes above) let the person's agent read the messages they
+    # post for the promise ledger (event subscriptions `message.channels`, `message.groups`,
+    # `message.im`, `message.mpim`). A workspace installed before these keeps working for briefs
+    # and summaries; its decision checks and promise capture start once it reconnects.
+    scopes = (
+        "chat:write",
+        "users:read",
+        "users:read.email",
+        "im:write",
+        "channels:history",
+        "groups:history",
+        "channels:read",
+        "groups:read",
+        "commands",
+        "im:history",
+        "mpim:history",
+    )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
         query = {
@@ -436,6 +456,30 @@ class SlackApi(_Http):
         )
         return {"channel": str(body.get("channel") or channel), "ts": str(body.get("ts") or "")}
 
+    async def user_info(self, token: str, user_id: str) -> dict[str, str | None] | None:
+        """-> {email, name} of a workspace member, None when Slack does not know them. A bot,
+        or a member whose email the install may not read, has no email."""
+        try:
+            body = await self._web(
+                token, "user_info", "GET", "users.info", params={"user": user_id}
+            )
+        except ProviderError as exc:
+            if exc.reason in ("user_not_found", "user_not_visible"):
+                return None
+            raise
+        user = body.get("user") or {}
+        profile = user.get("profile") or {}
+        if user.get("is_bot") or user.get("deleted"):
+            return None
+        name = (
+            profile.get("display_name")
+            or profile.get("real_name")
+            or user.get("real_name")
+            or user.get("name")
+        )
+        email = profile.get("email")
+        return {"email": str(email) if email else None, "name": str(name) if name else None}
+
     async def permalink(self, token: str, *, channel: str, ts: str) -> str | None:
         try:
             body = await self._web(
@@ -449,6 +493,60 @@ class SlackApi(_Http):
             return None
         link = body.get("permalink")
         return str(link) if link else None
+
+    async def user_email(self, token: str, user_id: str) -> str | None:
+        """A Slack user's email (`users:read.email`); None for a bot, a guest without one, or
+        an unknown user."""
+        try:
+            body = await self._web(
+                token, "users_info", "GET", "users.info", params={"user": user_id}
+            )
+        except ProviderError as exc:
+            if exc.reason in ("user_not_found", "users_not_found"):
+                return None
+            raise
+        user = body.get("user") or {}
+        if user.get("is_bot") or user.get("deleted"):
+            return None
+        email = (user.get("profile") or {}).get("email")
+        return str(email) if email else None
+
+    async def channel_name(self, token: str, channel: str) -> str | None:
+        try:
+            body = await self._web(
+                token,
+                "conversations_info",
+                "GET",
+                "conversations.info",
+                params={"channel": channel},
+            )
+        except ProviderError:
+            return None
+        name = (body.get("channel") or {}).get("name")
+        return str(name) if name else None
+
+    async def post_ephemeral(
+        self,
+        token: str,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        blocks: list[dict[str, Any]],
+        thread_ts: str | None = None,
+    ) -> None:
+        """A message only `user` sees, in the thread when `thread_ts` is given."""
+        payload: dict[str, Any] = {"channel": channel, "user": user, "text": text, "blocks": blocks}
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        await self._web(token, "post_ephemeral", "POST", "chat.postEphemeral", json=payload)
+
+    async def respond(self, response_url: str, payload: dict[str, Any]) -> None:
+        """Answer an interaction through its `response_url` (only Slack's own hooks host: the
+        URL arrives in a signed request, but a URL is never followed anywhere else)."""
+        if not response_url.startswith(SLACK_RESPONSE_PREFIX):
+            raise ProviderError(self.provider, "respond", "bad_response_url")
+        await self.request(self.provider, "respond", "POST", response_url, json=payload)
 
 
 # --- Jira (Atlassian OAuth 2.0 3LO) ----------------------------------------------------------
@@ -637,6 +735,29 @@ class JiraApi(_Http):
         body: dict[str, Any] = response.json()
         return body
 
+    async def issue_for_watch(self, token: str, cloud_id: str, key: str) -> dict[str, Any] | None:
+        """Status, status category, summary and due date of one issue (the assumption watch), or
+        None when Jira no longer has it."""
+        response = await self.request(
+            self.provider,
+            "get_issue_watch",
+            "GET",
+            f"{JIRA_API}/{cloud_id}/rest/api/3/issue/{key}",
+            headers=self._auth(token),
+            params={"fields": "status,summary,duedate"},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ProviderError(
+                self.provider,
+                "get_issue_watch",
+                f"http_{response.status_code}",
+                response.status_code,
+            )
+        body: dict[str, Any] = response.json()
+        return body
+
     async def account_id_for_email(self, token: str, cloud_id: str, email: str) -> str | None:
         body = await self._call(
             token, cloud_id, "user_search", "GET", "/user/search", params={"query": email}
@@ -668,6 +789,9 @@ class HubSpotOAuth(_Http):
         "crm.objects.companies.write",
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
+        # Beyond, Layer 1: the assumption watch reads deal amount, stage and close date, and the
+        # blast radius lists customers' open deals. Read only.
+        "crm.objects.deals.read",
     )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
@@ -830,6 +954,53 @@ class HubSpotApi(_Http):
                 self.provider, "update_note", f"http_{response.status_code}", response.status_code
             )
         return True
+
+    DEAL_PROPS = (
+        "dealname",
+        "amount",
+        "closedate",
+        "dealstage",
+        "hs_is_closed_won",
+        "hs_is_closed",
+    )
+
+    async def deals_by_id(self, token: str, ids: list[str]) -> list[dict[str, Any]]:
+        """Deals by id (batch read), with the properties the assumption watch compares."""
+        if not ids:
+            return []
+        body = await self.json(
+            self.provider,
+            "read_deals",
+            "POST",
+            f"{HUBSPOT_API}/crm/v3/objects/deals/batch/read",
+            headers=self._auth(token),
+            json={"properties": list(self.DEAL_PROPS), "inputs": [{"id": i} for i in ids]},
+        )
+        return [r for r in body.get("results") or [] if isinstance(r, dict) and r.get("id")]
+
+    async def deal_ids_for_companies(
+        self, token: str, company_ids: list[str]
+    ) -> dict[str, list[str]]:
+        """company id -> its associated deal ids (v4 batch associations)."""
+        if not company_ids:
+            return {}
+        body = await self.json(
+            self.provider,
+            "company_deals",
+            "POST",
+            f"{HUBSPOT_API}/crm/v4/associations/companies/deals/batch/read",
+            headers=self._auth(token),
+            json={"inputs": [{"id": c} for c in company_ids]},
+        )
+        out: dict[str, list[str]] = {}
+        for r in body.get("results") or []:
+            if not isinstance(r, dict):
+                continue
+            src = str((r.get("from") or {}).get("id") or "")
+            ids = [str(t.get("toObjectId")) for t in r.get("to") or [] if t.get("toObjectId")]
+            if src:
+                out[src] = ids
+        return out
 
     async def associate_note(self, token: str, note_id: str, to_object: str, to_id: str) -> None:
         """v4 default association (idempotent): note -> company | contact."""
