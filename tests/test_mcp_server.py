@@ -108,6 +108,7 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
             "get_decision_record",
             "list_my_open_actions",
             "list_my_promises",
+            "check_against_decisions",
             "create_action",
         }
         found = await s.call_tool("search_meetings", {"query": "atlas"})
