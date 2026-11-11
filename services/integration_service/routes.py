@@ -33,7 +33,7 @@ import json
 import os
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -88,6 +88,13 @@ class IntegrationItem(BaseModel):
     installed_by: uuid.UUID | None
     installed_at: datetime | None
     last_synced_at: datetime | None
+    decision_checks: Literal["on", "needs_reconnect"] | None = Field(
+        default=None,
+        description=(
+            "Slack only: whether messages in channels the app is in are checked against "
+            "decisions. `needs_reconnect` for an install from before the history scopes."
+        ),
+    )
 
 
 class IntegrationList(BaseModel):
@@ -123,6 +130,9 @@ async def list_integrations(
                 installed_by=conn.installed_by if conn else None,
                 installed_at=conn.created_at if conn else None,
                 last_synced_at=conn.last_synced_at if conn else None,
+                decision_checks=(
+                    slack.decision_checks_state(conn) if provider == config.SLACK else None
+                ),
             )
         )
     return IntegrationList(items=items)

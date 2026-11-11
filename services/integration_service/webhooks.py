@@ -24,6 +24,12 @@ Per provider:
   Jira with the tenant's own token and only acts on issue keys in that tenant's id map.
   Delivery id = `X-Atlassian-Webhook-Identifier` (or the body hash).
 
+Slack interactivity (`POST /webhooks/slack/interactions`, the app's Interactivity Request URL):
+the buttons on a "decided otherwise" note (Reopen it, Dismiss) and the "Check against decisions"
+message shortcut. Same v0 signature over the raw form body; `payload` is the JSON. Tenant = the
+connection for `team.id`. Delivery id = `interaction:{trigger_id}` (one per click). Inboxed like
+an event, so the worker answers through the payload's `response_url` (valid 30 minutes).
+
 A verified request for a tenant we no longer have (disconnected, unknown workspace) gets 200 and
 is dropped, so the provider stops retrying; a request that fails verification gets 401.
 """
@@ -36,6 +42,7 @@ import json
 import time
 import uuid
 from typing import Any
+from urllib.parse import parse_qs
 
 import jwt
 from fastapi import APIRouter, Request
@@ -157,6 +164,37 @@ async def _route(provider: str, external_account_id: str) -> uuid.UUID | None:
     async with get_sessionmaker()() as session, session.begin():
         conn = await store.route_connection(session, provider, external_account_id)
     return conn.org_id if conn else None
+
+
+INTERACTIONS = ("block_actions", "message_action")
+
+
+# authz: public - verified by Slack's v0 signature over the raw body, not a JWT.
+@router.post("/webhooks/slack/interactions")
+async def slack_interactions(request: Request) -> JSONResponse:
+    body = await request.body()
+    verify_slack(request.headers, body)
+    try:
+        raw = parse_qs(body.decode("utf-8")).get("payload", [""])[0]
+        data = json.loads(raw)
+    except (UnicodeDecodeError, ValueError):
+        raise ProblemDetail(400, ErrorCode.MALFORMED_BODY, "No interaction payload") from None
+    if not isinstance(data, dict) or data.get("type") not in INTERACTIONS:
+        return _ack("ignored")
+    team_id = (data.get("team") or {}).get("id")
+    trigger = data.get("trigger_id") or hashlib.sha256(body).hexdigest()
+    if not isinstance(team_id, str):
+        return _ack("ignored")
+    org_id = await _route(config.SLACK, team_id)
+    if org_id is None:
+        return _ack("ignored")
+    return await _accept(
+        org_id,
+        config.SLACK,
+        f"interaction:{trigger}",
+        f"interaction:{data['type']}",
+        {"interaction": data},
+    )
 
 
 # authz: public - verified by the provider's signature over the raw body, not a JWT.

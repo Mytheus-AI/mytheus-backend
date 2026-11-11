@@ -307,11 +307,27 @@ class GoogleCalendarApi(_Http):
 
 SLACK_AUTHORIZE = "https://slack.com/oauth/v2/authorize"
 SLACK_API = "https://slack.com/api"
+SLACK_RESPONSE_PREFIX = "https://hooks.slack.com/"
 
 
 class SlackOAuth(_Http):
     provider = config.SLACK
-    scopes = ("chat:write", "users:read", "users:read.email", "im:write")
+    # `channels:history` / `groups:history` (+ `channels:read` / `groups:read` for the channel's
+    # name) let the app read messages in the channels it was invited to, for "Decisions that
+    # follow you"; `commands` is the "Check against decisions" message shortcut. A workspace
+    # installed before they were added keeps working; its decision checks stay off until it
+    # reconnects (`connectors/slack.py` `DECISION_CHECK_SCOPES`).
+    scopes = (
+        "chat:write",
+        "users:read",
+        "users:read.email",
+        "im:write",
+        "channels:history",
+        "groups:history",
+        "channels:read",
+        "groups:read",
+        "commands",
+    )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
         query = {
@@ -449,6 +465,60 @@ class SlackApi(_Http):
             return None
         link = body.get("permalink")
         return str(link) if link else None
+
+    async def user_email(self, token: str, user_id: str) -> str | None:
+        """A Slack user's email (`users:read.email`); None for a bot, a guest without one, or
+        an unknown user."""
+        try:
+            body = await self._web(
+                token, "users_info", "GET", "users.info", params={"user": user_id}
+            )
+        except ProviderError as exc:
+            if exc.reason in ("user_not_found", "users_not_found"):
+                return None
+            raise
+        user = body.get("user") or {}
+        if user.get("is_bot") or user.get("deleted"):
+            return None
+        email = (user.get("profile") or {}).get("email")
+        return str(email) if email else None
+
+    async def channel_name(self, token: str, channel: str) -> str | None:
+        try:
+            body = await self._web(
+                token,
+                "conversations_info",
+                "GET",
+                "conversations.info",
+                params={"channel": channel},
+            )
+        except ProviderError:
+            return None
+        name = (body.get("channel") or {}).get("name")
+        return str(name) if name else None
+
+    async def post_ephemeral(
+        self,
+        token: str,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+        blocks: list[dict[str, Any]],
+        thread_ts: str | None = None,
+    ) -> None:
+        """A message only `user` sees, in the thread when `thread_ts` is given."""
+        payload: dict[str, Any] = {"channel": channel, "user": user, "text": text, "blocks": blocks}
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        await self._web(token, "post_ephemeral", "POST", "chat.postEphemeral", json=payload)
+
+    async def respond(self, response_url: str, payload: dict[str, Any]) -> None:
+        """Answer an interaction through its `response_url` (only Slack's own hooks host: the
+        URL arrives in a signed request, but a URL is never followed anywhere else)."""
+        if not response_url.startswith(SLACK_RESPONSE_PREFIX):
+            raise ProviderError(self.provider, "respond", "bad_response_url")
+        await self.request(self.provider, "respond", "POST", response_url, json=payload)
 
 
 # --- Jira (Atlassian OAuth 2.0 3LO) ----------------------------------------------------------

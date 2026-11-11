@@ -266,6 +266,16 @@ components:
         configured:
           title: Configured
           type: boolean
+        decision_checks:
+          anyOf:
+          - enum:
+            - 'on'
+            - needs_reconnect
+            type: string
+          - type: 'null'
+          description: 'Slack only: whether messages in channels the app is in are checked against decisions.
+            `needs_reconnect` for an install from before the history scopes.'
+          title: Decision Checks
         external_account_id:
           anyOf:
           - type: string
@@ -1035,6 +1045,24 @@ paths:
       summary: Oauth Complete
       tags:
       - integrations
+  /webhooks/slack/interactions:
+    post:
+      operationId: slack_interactions
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security: []
+      summary: Slack Interactions
+      tags:
+      - webhooks
   /webhooks/{provider}:
     post:
       operationId: receive
