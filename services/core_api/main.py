@@ -18,6 +18,7 @@ from services.core_api.routes import (
     clips,
     collaborations,
     commitments,
+    decision_bets,
     decision_log,
     decision_reversals,
     delegated_answers,
@@ -25,6 +26,7 @@ from services.core_api.routes import (
     erasure,
     followups,
     internal_agents,
+    internal_bets,
     internal_integrations,
     internal_learning,
     internal_lifecycle,
@@ -48,6 +50,7 @@ from services.core_api.routes import (
     status_asks,
     status_requests,
     suggestions,
+    time_machine,
     transcript,
     worklogs,
 )
@@ -106,6 +109,10 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond the meeting, Layer 3: decisions as bets and the company time machine.
+app.include_router(decision_bets.router)
+app.include_router(internal_bets.router)
+app.include_router(time_machine.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

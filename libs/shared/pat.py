@@ -66,6 +66,8 @@ PUBLIC_API_PREFIXES: tuple[str, ...] = (
     "/api/v1/commitments",
     "/api/v1/search",
     "/api/v1/ask",
+    # The company time machine (read only, participant-scoped): the MCP tool `company_as_of`.
+    "/api/v1/time-machine",
     "/mcp",
 )
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

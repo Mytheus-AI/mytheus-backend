@@ -85,6 +85,7 @@ from services.core_api.integration_events import (
 )
 from services.core_api.learning import band_for
 from services.core_api.person_memory import FeedbackPoison, handle_agent_feedback
+from services.core_api.routes.internal_bets import persist_bet_proposals
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
@@ -325,6 +326,11 @@ async def _apply_agent_result(
     unknown_meeting = is_context_fill and meeting_id == NIL_UUID
     # The shared minutes are for nobody in particular: they carry the nil user.
     shared_minutes = is_minutes and user_id == NIL_UUID
+    # Decisions as bets: DecisionAgent's after-meeting record proposing expected outcomes for
+    # the meeting's decisions (`payload_json.expectations`, `routes/internal_bets.py`).
+    bet_proposals = candidate_table == "decisions" and "expectations" in _payload_object(
+        value.get("payload_json")
+    )
     visible = (
         await session.execute(
             text(
@@ -335,10 +341,16 @@ async def _apply_agent_result(
             {"m": str(meeting_id), "u": str(user_id)},
         )
     ).one()
-    if (not visible[0] and not unknown_meeting) or (not visible[1] and not shared_minutes):
+    if (not visible[0] and not unknown_meeting) or (
+        not visible[1] and not shared_minutes and not (bet_proposals and user_id == NIL_UUID)
+    ):
         raise PoisonMessage(
             f"agent-results names a meeting or user not in tenant {org_id}: "
             f"meeting={meeting_id} user={user_id}"
+        )
+    if bet_proposals:
+        return await persist_bet_proposals(
+            session, org_id, meeting_id, _payload_object(value.get("payload_json"))
         )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))

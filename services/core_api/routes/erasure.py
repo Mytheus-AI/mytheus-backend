@@ -172,6 +172,13 @@ _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
     ),
     ("wrap_ups", "UPDATE meetings SET wrap_up_by = NULL WHERE wrap_up_by = :t"),
     ("closes", "UPDATE meetings SET closed_by = NULL WHERE closed_by = :t"),
+    # Decisions as bets: a kept bet no longer names its owner or quotes the person.
+    ("bet_owners", "UPDATE decision_bets SET owner_user_id = NULL WHERE owner_user_id = :t"),
+    (
+        "bet_quotes",
+        "UPDATE decision_bets SET quote = NULL, quote_speaker_id = NULL "
+        "WHERE quote_speaker_id = :t",
+    ),
 )
 
 # A never-confirmed decision is deleted only when no other decision points at it: `supersedes`

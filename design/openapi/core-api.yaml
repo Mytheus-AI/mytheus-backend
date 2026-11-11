@@ -627,6 +627,631 @@ components:
       - attendance
       title: AttendanceUpdate
       type: object
+    Bet:
+      properties:
+        agent_confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Agent Confidence
+        assumption:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assumption
+        assumption_held:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Assumption Held
+        baseline:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Baseline
+        category:
+          enum:
+          - pricing
+          - product
+          - growth
+          - customers
+          - hiring
+          - operations
+          - engineering
+          - finance
+          - other
+          title: Category
+          type: string
+        check_date:
+          format: date
+          title: Check Date
+          type: string
+        checked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Checked At
+        confidence_pct:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Confidence Pct
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        direction:
+          enum:
+          - increase
+          - decrease
+          - reach
+          - hold
+          - happen
+          - not_happen
+          title: Direction
+          type: string
+        evidence:
+          items:
+            $ref: '#/components/schemas/BetEvidence'
+          title: Evidence
+          type: array
+        evidence_status:
+          enum:
+          - pending
+          - gathered
+          title: Evidence Status
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - metric
+          - event
+          title: Kind
+          type: string
+        lesson:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lesson
+        magnitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Magnitude
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        metric:
+          title: Metric
+          type: string
+        metric_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Metric Key
+        observed_value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Observed Value
+        outcome:
+          anyOf:
+          - enum:
+            - hit
+            - partly
+            - missed
+            type: string
+          - type: 'null'
+          title: Outcome
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        proposed_by:
+          enum:
+          - agent
+          - person
+          title: Proposed By
+          type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_speaker_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote Speaker Name
+        resolved_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Resolved At
+        resolved_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Resolved By Name
+        source:
+          enum:
+          - crm
+          - metrics
+          - meetings
+          - jira
+          - manual
+          title: Source
+          type: string
+        statement:
+          title: Statement
+          type: string
+        status:
+          enum:
+          - proposed
+          - open
+          - due
+          - resolved
+          - dismissed
+          title: Status
+          type: string
+        suggested_outcome:
+          anyOf:
+          - enum:
+            - hit
+            - partly
+            - missed
+            type: string
+          - type: 'null'
+          title: Suggested Outcome
+        suggested_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suggested Reason
+        team_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Team Id
+        team_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team Name
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - decision_id
+      - meeting_id
+      - status
+      - statement
+      - kind
+      - metric
+      - direction
+      - check_date
+      - source
+      - category
+      - proposed_by
+      - evidence_status
+      - created_at
+      - updated_at
+      title: Bet
+      type: object
+    BetAtDate:
+      properties:
+        check_date:
+          format: date
+          title: Check Date
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        outcome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Outcome
+        statement:
+          title: Statement
+          type: string
+        status:
+          enum:
+          - waiting
+          - resolved
+          title: Status
+          type: string
+      required:
+      - id
+      - statement
+      - check_date
+      - status
+      title: BetAtDate
+      type: object
+    BetChange:
+      properties:
+        caused_by:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingAtDate'
+          - type: 'null'
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        outcome:
+          title: Outcome
+          type: string
+        resolved_at:
+          format: date-time
+          title: Resolved At
+          type: string
+        statement:
+          title: Statement
+          type: string
+      required:
+      - id
+      - decision_id
+      - statement
+      - outcome
+      - resolved_at
+      title: BetChange
+      type: object
+    BetEvidence:
+      properties:
+        decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Decision Id
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - metric
+          - meeting
+          - decision
+          - jira
+          - note
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        observed_value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Observed Value
+        occurred_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Occurred At
+        signal:
+          anyOf:
+          - enum:
+            - supports
+            - against
+            - neutral
+            type: string
+          - type: 'null'
+          title: Signal
+        title:
+          title: Title
+          type: string
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        visible:
+          default: true
+          title: Visible
+          type: boolean
+      required:
+      - id
+      - kind
+      - title
+      title: BetEvidence
+      type: object
+    BetHints:
+      properties:
+        category:
+          anyOf:
+          - enum:
+            - pricing
+            - product
+            - growth
+            - customers
+            - hiring
+            - operations
+            - engineering
+            - finance
+            - other
+            type: string
+          - type: 'null'
+          title: Category
+        lessons:
+          items:
+            $ref: '#/components/schemas/Lesson'
+          title: Lessons
+          type: array
+        record:
+          anyOf:
+          - $ref: '#/components/schemas/CategoryRecord'
+          - type: 'null'
+      title: BetHints
+      type: object
+    BetResolve:
+      additionalProperties: false
+      properties:
+        assumption_held:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Assumption Held
+        lesson:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Lesson
+        outcome:
+          enum:
+          - hit
+          - partly
+          - missed
+          title: Outcome
+          type: string
+      required:
+      - outcome
+      title: BetResolve
+      type: object
+    BetUpsert:
+      additionalProperties: false
+      description: Create or edit the expectation. Accepting a proposed bet with edits is this too.
+      properties:
+        assumption:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Assumption
+        baseline:
+          anyOf:
+          - maximum: 1000000000000.0
+            minimum: -1000000000000.0
+            type: number
+          - type: 'null'
+          title: Baseline
+        category:
+          default: other
+          enum:
+          - pricing
+          - product
+          - growth
+          - customers
+          - hiring
+          - operations
+          - engineering
+          - finance
+          - other
+          title: Category
+          type: string
+        check_date:
+          format: date
+          title: Check Date
+          type: string
+        confidence_pct:
+          anyOf:
+          - maximum: 99.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Confidence Pct
+        direction:
+          enum:
+          - increase
+          - decrease
+          - reach
+          - hold
+          - happen
+          - not_happen
+          title: Direction
+          type: string
+        kind:
+          default: metric
+          enum:
+          - metric
+          - event
+          title: Kind
+          type: string
+        magnitude:
+          anyOf:
+          - maximum: 1000000000000.0
+            minimum: -1000000000000.0
+            type: number
+          - type: 'null'
+          title: Magnitude
+        metric:
+          maxLength: 120
+          minLength: 1
+          title: Metric
+          type: string
+        metric_key:
+          anyOf:
+          - maxLength: 60
+            type: string
+          - type: 'null'
+          title: Metric Key
+        owner_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Owner User Id
+        source:
+          default: meetings
+          enum:
+          - crm
+          - metrics
+          - meetings
+          - jira
+          - manual
+          title: Source
+          type: string
+        statement:
+          maxLength: 300
+          minLength: 1
+          title: Statement
+          type: string
+        team_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Team Id
+        unit:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Unit
+      required:
+      - statement
+      - metric
+      - direction
+      - check_date
+      title: BetUpsert
+      type: object
+    Calibration:
+      properties:
+        buckets:
+          items:
+            $ref: '#/components/schemas/CalibrationBucket'
+          title: Buckets
+          type: array
+        by_category:
+          items:
+            $ref: '#/components/schemas/GroupRecord'
+          title: By Category
+          type: array
+        by_team:
+          items:
+            $ref: '#/components/schemas/GroupRecord'
+          title: By Team
+          type: array
+        failing_assumptions:
+          items:
+            $ref: '#/components/schemas/FailingAssumption'
+          title: Failing Assumptions
+          type: array
+        lessons:
+          items:
+            $ref: '#/components/schemas/PublicLesson'
+          title: Lessons
+          type: array
+        min_team_resolved:
+          default: 3
+          title: Min Team Resolved
+          type: integer
+        months:
+          items:
+            $ref: '#/components/schemas/MonthPoint'
+          title: Months
+          type: array
+        teams_below_threshold:
+          title: Teams Below Threshold
+          type: integer
+        totals:
+          $ref: '#/components/schemas/Totals'
+      required:
+      - totals
+      - by_category
+      - by_team
+      - teams_below_threshold
+      - buckets
+      - failing_assumptions
+      - lessons
+      - months
+      title: Calibration
+      type: object
+    CalibrationBucket:
+      properties:
+        actual:
+          title: Actual
+          type: number
+        count:
+          title: Count
+          type: integer
+        high:
+          title: High
+          type: integer
+        label:
+          title: Label
+          type: string
+        low:
+          title: Low
+          type: integer
+        stated:
+          title: Stated
+          type: number
+      required:
+      - label
+      - low
+      - high
+      - count
+      - stated
+      - actual
+      title: CalibrationBucket
+      type: object
     CalibrationDetail:
       properties:
         dismiss_rate:
@@ -1129,6 +1754,46 @@ components:
       - current_item
       title: CatchUpSummary
       type: object
+    CategoryRecord:
+      properties:
+        category:
+          enum:
+          - pricing
+          - product
+          - growth
+          - customers
+          - hiring
+          - operations
+          - engineering
+          - finance
+          - other
+          title: Category
+          type: string
+        hit:
+          title: Hit
+          type: integer
+        hit_rate:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Hit Rate
+        missed:
+          title: Missed
+          type: integer
+        partly:
+          title: Partly
+          type: integer
+        resolved:
+          title: Resolved
+          type: integer
+      required:
+      - category
+      - resolved
+      - hit
+      - partly
+      - missed
+      title: CategoryRecord
+      type: object
     ChatHistory:
       description: '`GET /meetings/:id/chat`: the meeting''s most recent chat messages, oldest first.'
       properties:
@@ -1191,6 +1856,47 @@ components:
       - meeting_id
       - content
       title: ChatMessageCreate
+      type: object
+    CheckRequest:
+      additionalProperties: false
+      properties:
+        as_of:
+          format: date
+          title: As Of
+          type: string
+        jira:
+          anyOf:
+          - $ref: '#/components/schemas/JiraOutcome'
+          - type: 'null'
+        metric:
+          anyOf:
+          - $ref: '#/components/schemas/MetricReading'
+          - type: 'null'
+      required:
+      - as_of
+      title: CheckRequest
+      type: object
+    CheckResult:
+      properties:
+        evidence_added:
+          title: Evidence Added
+          type: integer
+        notified:
+          title: Notified
+          type: boolean
+        status:
+          title: Status
+          type: string
+        suggested_outcome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suggested Outcome
+      required:
+      - status
+      - evidence_added
+      - notified
+      title: CheckResult
       type: object
     Clip:
       properties:
@@ -2050,6 +2756,101 @@ components:
       - created_at
       title: Decision
       type: object
+    DecisionAtDate:
+      properties:
+        bet:
+          anyOf:
+          - $ref: '#/components/schemas/BetAtDate'
+          - type: 'null'
+        confirmed_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirmed By Name
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting:
+          $ref: '#/components/schemas/MeetingAtDate'
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_speaker_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote Speaker Name
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        replaces:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionRef'
+          - type: 'null'
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
+      required:
+      - id
+      - content
+      - meeting
+      - decided_at
+      title: DecisionAtDate
+      type: object
+    DecisionBetView:
+      properties:
+        bet:
+          anyOf:
+          - $ref: '#/components/schemas/Bet'
+          - type: 'null'
+        can_edit:
+          title: Can Edit
+          type: boolean
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        decision_status:
+          title: Decision Status
+          type: string
+        hints:
+          $ref: '#/components/schemas/BetHints'
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        owner_candidates:
+          items:
+            $ref: '#/components/schemas/OwnerOption'
+          title: Owner Candidates
+          type: array
+        teams:
+          items:
+            $ref: '#/components/schemas/TeamOption'
+          title: Teams
+          type: array
+      required:
+      - decision_id
+      - meeting_id
+      - decision_status
+      - can_edit
+      - hints
+      title: DecisionBetView
+      type: object
     DecisionConfirm:
       additionalProperties: false
       description: Confirm body. `supersedes` names an earlier confirmed decision (FOLLOWS_FROM lineage).
@@ -2200,6 +3001,36 @@ components:
       - lineage
       - meeting_actions
       title: DecisionRecord
+      type: object
+    DecisionRef:
+      description: 'A decision in the story. `visible` false: from a meeting you were not in, withheld.'
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content
+        decided_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Decided At
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        meeting:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingAtDate'
+          - type: 'null'
+        visible:
+          default: true
+          title: Visible
+          type: boolean
+      title: DecisionRef
       type: object
     DecisionReversal:
       properties:
@@ -2463,6 +3294,110 @@ components:
       - status
       title: DependsOn
       type: object
+    Diff:
+      properties:
+        bets_resolved:
+          items:
+            $ref: '#/components/schemas/BetChange'
+          title: Bets Resolved
+          type: array
+        counts:
+          $ref: '#/components/schemas/DiffCounts'
+        from:
+          format: date
+          title: From
+          type: string
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalChange'
+          title: Goals
+          type: array
+        meetings:
+          items:
+            $ref: '#/components/schemas/MeetingImpact'
+          title: Meetings
+          type: array
+        new_decisions:
+          items:
+            $ref: '#/components/schemas/DecisionAtDate'
+          title: New Decisions
+          type: array
+        promises_broken:
+          items:
+            $ref: '#/components/schemas/PromiseChange'
+          title: Promises Broken
+          type: array
+        promises_kept:
+          items:
+            $ref: '#/components/schemas/PromiseChange'
+          title: Promises Kept
+          type: array
+        promises_made:
+          items:
+            $ref: '#/components/schemas/PromiseChange'
+          title: Promises Made
+          type: array
+        reversed:
+          items:
+            $ref: '#/components/schemas/Reversal'
+          title: Reversed
+          type: array
+        to:
+          format: date
+          title: To
+          type: string
+        topic:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Topic
+      required:
+      - from
+      - to
+      - counts
+      - new_decisions
+      - reversed
+      - promises_made
+      - promises_kept
+      - promises_broken
+      - bets_resolved
+      - goals
+      - meetings
+      title: Diff
+      type: object
+    DiffCounts:
+      properties:
+        bets_resolved:
+          title: Bets Resolved
+          type: integer
+        goals_changed:
+          title: Goals Changed
+          type: integer
+        new_decisions:
+          title: New Decisions
+          type: integer
+        promises_broken:
+          title: Promises Broken
+          type: integer
+        promises_kept:
+          title: Promises Kept
+          type: integer
+        promises_made:
+          title: Promises Made
+          type: integer
+        reversed:
+          title: Reversed
+          type: integer
+      required:
+      - new_decisions
+      - reversed
+      - promises_made
+      - promises_kept
+      - promises_broken
+      - bets_resolved
+      - goals_changed
+      title: DiffCounts
+      type: object
     DigestAction:
       properties:
         assignee_id:
@@ -2636,6 +3571,64 @@ components:
       - items
       title: DueActions
       type: object
+    DueBet:
+      properties:
+        action_ids:
+          items:
+            format: uuid
+            type: string
+          title: Action Ids
+          type: array
+        bet_id:
+          format: uuid
+          title: Bet Id
+          type: string
+        check_date:
+          format: date
+          title: Check Date
+          type: string
+        decided_on:
+          format: date
+          title: Decided On
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        metric_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Metric Key
+        source:
+          enum:
+          - crm
+          - metrics
+          - meetings
+          - jira
+          - manual
+          title: Source
+          type: string
+      required:
+      - bet_id
+      - decision_id
+      - source
+      - decided_on
+      - check_date
+      - action_ids
+      title: DueBet
+      type: object
+    DueBets:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DueBet'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DueBets
+      type: object
     ErasureApplied:
       properties:
         anonymized:
@@ -2779,6 +3772,40 @@ components:
       - status
       - changed
       title: ExternalStatusResult
+      type: object
+    FailingAssumption:
+      properties:
+        assumption:
+          title: Assumption
+          type: string
+        categories:
+          items:
+            enum:
+            - pricing
+            - product
+            - growth
+            - customers
+            - hiring
+            - operations
+            - engineering
+            - finance
+            - other
+            type: string
+          title: Categories
+          type: array
+        last_failed_at:
+          format: date-time
+          title: Last Failed At
+          type: string
+        times:
+          title: Times
+          type: integer
+      required:
+      - assumption
+      - times
+      - categories
+      - last_failed_at
+      title: FailingAssumption
       type: object
     FollowUp:
       description: A meeting's follow-up settings as one participant sees them.
@@ -2994,6 +4021,108 @@ components:
       required:
       - enabled
       title: FollowUpUpdate
+      type: object
+    GoalAtDate:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        period:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Period
+        status:
+          enum:
+          - active
+          - achieved
+          - dropped
+          title: Status
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - status
+      title: GoalAtDate
+      type: object
+    GoalChange:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        change:
+          enum:
+          - added
+          - achieved
+          - dropped
+          title: Change
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - change
+      - at
+      title: GoalChange
+      type: object
+    GroupRecord:
+      properties:
+        hit:
+          title: Hit
+          type: integer
+        hit_rate:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Hit Rate
+        key:
+          title: Key
+          type: string
+        label:
+          title: Label
+          type: string
+        missed:
+          title: Missed
+          type: integer
+        open:
+          title: Open
+          type: integer
+        partly:
+          title: Partly
+          type: integer
+        resolved:
+          title: Resolved
+          type: integer
+        stated_confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Stated Confidence
+      required:
+      - key
+      - label
+      - resolved
+      - hit
+      - partly
+      - missed
+      - open
+      title: GroupRecord
       type: object
     GuestDelivery:
       properties:
@@ -3265,6 +4394,49 @@ components:
       - text
       title: InternalStatement
       type: object
+    JiraIssue:
+      additionalProperties: false
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        issue_key:
+          maxLength: 100
+          minLength: 1
+          title: Issue Key
+          type: string
+        issue_url:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Issue Url
+        open:
+          title: Open
+          type: boolean
+      required:
+      - action_id
+      - issue_key
+      - open
+      title: JiraIssue
+      type: object
+    JiraOutcome:
+      additionalProperties: false
+      properties:
+        connected:
+          title: Connected
+          type: boolean
+        issues:
+          items:
+            $ref: '#/components/schemas/JiraIssue'
+          maxItems: 50
+          title: Issues
+          type: array
+      required:
+      - connected
+      title: JiraOutcome
+      type: object
     LatestStatus:
       description: The assignee's most recent answer to a status request for an action (ADR-0039 B7).
       properties:
@@ -3279,6 +4451,65 @@ components:
       - text
       - answered_at
       title: LatestStatus
+      type: object
+    Lesson:
+      description: A resolved bet's lesson, offered when a similar decision is being made.
+      properties:
+        category:
+          enum:
+          - pricing
+          - product
+          - growth
+          - customers
+          - hiring
+          - operations
+          - engineering
+          - finance
+          - other
+          title: Category
+          type: string
+        decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Decision Id
+        failed_assumption:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Failed Assumption
+        lesson:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lesson
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        outcome:
+          enum:
+          - hit
+          - partly
+          - missed
+          title: Outcome
+          type: string
+        resolved_at:
+          format: date-time
+          title: Resolved At
+          type: string
+        statement:
+          title: Statement
+          type: string
+      required:
+      - category
+      - statement
+      - outcome
+      - resolved_at
+      title: Lesson
       type: object
     LineageStep:
       description: 'One decision in the chain around the subject, oldest first.
@@ -3457,6 +4688,25 @@ components:
       - created_at
       - updated_at
       title: Meeting
+      type: object
+    MeetingAtDate:
+      properties:
+        date:
+          format: date-time
+          title: Date
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - date
+      title: MeetingAtDate
       type: object
     MeetingCreate:
       additionalProperties: false
@@ -3668,6 +4918,26 @@ components:
       - created_at
       - updated_at
       title: MeetingDetail
+      type: object
+    MeetingImpact:
+      properties:
+        meeting:
+          $ref: '#/components/schemas/MeetingAtDate'
+        new_decisions:
+          title: New Decisions
+          type: integer
+        promises_made:
+          title: Promises Made
+          type: integer
+        reversals:
+          title: Reversals
+          type: integer
+      required:
+      - meeting
+      - new_decisions
+      - reversals
+      - promises_made
+      title: MeetingImpact
       type: object
     MeetingMinutes:
       description: One set of minutes. `promises` is always empty on the shared minutes.
@@ -4374,6 +5644,62 @@ components:
       - pinned
       title: MemoryTopic
       type: object
+    MetricReading:
+      additionalProperties: false
+      properties:
+        baseline_value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Baseline Value
+        connected:
+          title: Connected
+          type: boolean
+        error:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Error
+        label:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Label
+        provider:
+          anyOf:
+          - maxLength: 40
+            type: string
+          - type: 'null'
+          title: Provider
+        unit:
+          anyOf:
+          - maxLength: 20
+            type: string
+          - type: 'null'
+          title: Unit
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+        window_end:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Window End
+        window_start:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Window Start
+      required:
+      - connected
+      title: MetricReading
+      type: object
     MinutesDecision:
       properties:
         decision_id:
@@ -4547,6 +5873,56 @@ components:
       - actions
       - agenda
       title: MinutesSource
+      type: object
+    MonthPoint:
+      properties:
+        hit_rate:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Hit Rate
+        month:
+          title: Month
+          type: string
+        resolved:
+          title: Resolved
+          type: integer
+      required:
+      - month
+      - resolved
+      title: MonthPoint
+      type: object
+    MyBet:
+      properties:
+        bet:
+          $ref: '#/components/schemas/Bet'
+        decision_content:
+          title: Decision Content
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        needs_you:
+          title: Needs You
+          type: boolean
+      required:
+      - bet
+      - decision_content
+      - needs_you
+      title: MyBet
+      type: object
+    MyBets:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MyBet'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MyBets
       type: object
     MyTask:
       description: 'One action item as the My Tasks screen needs it: the row plus its meeting''s title,
@@ -4775,6 +6151,20 @@ components:
       - action_id
       - issue_key
       title: OpenIssue
+      type: object
+    OwnerOption:
+      properties:
+        name:
+          title: Name
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      title: OwnerOption
       type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
@@ -5052,6 +6442,102 @@ components:
       - status
       - code
       type: object
+    PromiseAtDate:
+      properties:
+        content:
+          title: Content
+          type: string
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - action
+          - promise
+          title: Kind
+          type: string
+        made_at:
+          format: date-time
+          title: Made At
+          type: string
+        meeting:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingAtDate'
+          - type: 'null'
+        overdue:
+          default: false
+          title: Overdue
+          type: boolean
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+      required:
+      - id
+      - kind
+      - content
+      - made_at
+      title: PromiseAtDate
+      type: object
+    PromiseChange:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        caused_by:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingAtDate'
+          - type: 'null'
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kept_later_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Kept Later At
+        kind:
+          enum:
+          - action
+          - promise
+          title: Kind
+          type: string
+        on_time:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: On Time
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+      required:
+      - id
+      - kind
+      - content
+      - at
+      title: PromiseChange
+      type: object
     PublicClipShare:
       description: What a public clip page renders.
       properties:
@@ -5079,6 +6565,42 @@ components:
       - view_count
       - clip
       title: PublicClipShare
+      type: object
+    PublicLesson:
+      properties:
+        category:
+          enum:
+          - pricing
+          - product
+          - growth
+          - customers
+          - hiring
+          - operations
+          - engineering
+          - finance
+          - other
+          title: Category
+          type: string
+        lesson:
+          title: Lesson
+          type: string
+        outcome:
+          enum:
+          - hit
+          - partly
+          - missed
+          title: Outcome
+          type: string
+        resolved_at:
+          format: date-time
+          title: Resolved At
+          type: string
+      required:
+      - category
+      - outcome
+      - lesson
+      - resolved_at
+      title: PublicLesson
       type: object
     PublicShare:
       description: What a share page renders. Exactly one of `recap` / `decision` is set, per `kind`.
@@ -5353,6 +6875,36 @@ components:
       - attendance
       title: ReminderParticipant
       type: object
+    ReplacedAtDate:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting:
+          $ref: '#/components/schemas/MeetingAtDate'
+        replaced_at:
+          format: date-time
+          title: Replaced At
+          type: string
+        replaced_by:
+          $ref: '#/components/schemas/DecisionRef'
+      required:
+      - id
+      - content
+      - meeting
+      - decided_at
+      - replaced_at
+      - replaced_by
+      title: ReplacedAtDate
+      type: object
     RetrievalScope:
       properties:
         meetings:
@@ -5462,6 +7014,26 @@ components:
       - decisions
       - actions
       title: RetrievedRecords
+      type: object
+    Reversal:
+      properties:
+        caused_by:
+          anyOf:
+          - $ref: '#/components/schemas/MeetingAtDate'
+          - type: 'null'
+        new:
+          $ref: '#/components/schemas/DecisionRef'
+        old:
+          $ref: '#/components/schemas/DecisionRef'
+        replaced_at:
+          format: date-time
+          title: Replaced At
+          type: string
+      required:
+      - old
+      - new
+      - replaced_at
+      title: Reversal
       type: object
     ReversalAction:
       properties:
@@ -5853,6 +7425,91 @@ components:
       - decisions
       - actions
       title: SlackDigest
+      type: object
+    Snapshot:
+      properties:
+        as_of:
+          format: date
+          title: As Of
+          type: string
+        counts:
+          $ref: '#/components/schemas/SnapshotCounts'
+        decisions:
+          items:
+            $ref: '#/components/schemas/DecisionAtDate'
+          title: Decisions
+          type: array
+        earliest:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Earliest
+        goals:
+          items:
+            $ref: '#/components/schemas/GoalAtDate'
+          title: Goals
+          type: array
+        promises:
+          items:
+            $ref: '#/components/schemas/PromiseAtDate'
+          title: Promises
+          type: array
+        replaced:
+          items:
+            $ref: '#/components/schemas/ReplacedAtDate'
+          title: Replaced
+          type: array
+        topic:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Topic
+        truncated:
+          default: false
+          title: Truncated
+          type: boolean
+      required:
+      - as_of
+      - counts
+      - decisions
+      - replaced
+      - promises
+      - goals
+      title: Snapshot
+      type: object
+    SnapshotCounts:
+      properties:
+        bets_waiting:
+          title: Bets Waiting
+          type: integer
+        goals_active:
+          title: Goals Active
+          type: integer
+        in_force:
+          title: In Force
+          type: integer
+        meetings:
+          title: Meetings
+          type: integer
+        promises_open:
+          title: Promises Open
+          type: integer
+        promises_overdue:
+          title: Promises Overdue
+          type: integer
+        replaced:
+          title: Replaced
+          type: integer
+      required:
+      - in_force
+      - replaced
+      - promises_open
+      - promises_overdue
+      - goals_active
+      - bets_waiting
+      - meetings
+      title: SnapshotCounts
       type: object
     SourceAction:
       properties:
@@ -6548,6 +8205,20 @@ components:
           title: Role
       title: TeamMemberUpsert
       type: object
+    TeamOption:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      title: TeamOption
+      type: object
     TemplateAgendaItem:
       additionalProperties: false
       properties:
@@ -6566,6 +8237,142 @@ components:
       required:
       - title
       title: TemplateAgendaItem
+      type: object
+    Timeline:
+      properties:
+        from:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: From
+        in_force_now:
+          title: In Force Now
+          type: integer
+        meetings:
+          title: Meetings
+          type: integer
+        steps:
+          items:
+            $ref: '#/components/schemas/TimelineStep'
+          title: Steps
+          type: array
+        to:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: To
+        topic:
+          title: Topic
+          type: string
+      required:
+      - topic
+      - steps
+      - meetings
+      - in_force_now
+      title: Timeline
+      type: object
+    TimelineStep:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        bet_statement:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bet Statement
+        decision:
+          $ref: '#/components/schemas/DecisionRef'
+        in_force_now:
+          title: In Force Now
+          type: boolean
+        kind:
+          enum:
+          - decided
+          - replaced
+          - bet_resolved
+          title: Kind
+          type: string
+        outcome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Outcome
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_speaker_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote Speaker Name
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        replaces:
+          anyOf:
+          - $ref: '#/components/schemas/DecisionRef'
+          - type: 'null'
+      required:
+      - at
+      - kind
+      - decision
+      - in_force_now
+      title: TimelineStep
+      type: object
+    Totals:
+      properties:
+        bets:
+          title: Bets
+          type: integer
+        brier:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Brier
+        due:
+          title: Due
+          type: integer
+        hit:
+          title: Hit
+          type: integer
+        hit_rate:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Hit Rate
+        missed:
+          title: Missed
+          type: integer
+        open:
+          title: Open
+          type: integer
+        partly:
+          title: Partly
+          type: integer
+        proposed:
+          title: Proposed
+          type: integer
+        resolved:
+          title: Resolved
+          type: integer
+      required:
+      - bets
+      - proposed
+      - open
+      - due
+      - resolved
+      - hit
+      - partly
+      - missed
+      title: Totals
       type: object
     TranscriptChunk:
       description: 'One persisted final from `transcript_chunks`, owned by `transcription-service`.
@@ -7624,6 +9431,113 @@ paths:
       summary: Reopen
       tags:
       - actions
+  /api/v1/bets/calibration:
+    get:
+      description: 'How good are our calls: the workspace''s record by decision type and by team. Aggregate
+
+        only; a team appears once it has at least three resolved bets.'
+      operationId: calibration
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Calibration'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Calibration
+      tags:
+      - decision-bets
+  /api/v1/bets/hints:
+    get:
+      operationId: hints
+      parameters:
+      - in: query
+        name: q
+        required: true
+        schema:
+          maxLength: 500
+          minLength: 1
+          title: Q
+          type: string
+      - in: query
+        name: category
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - pricing
+            - product
+            - growth
+            - customers
+            - hiring
+            - operations
+            - engineering
+            - finance
+            - other
+            type: string
+          - type: 'null'
+          title: Category
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetHints'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Hints
+      tags:
+      - decision-bets
+  /api/v1/bets/mine:
+    get:
+      description: 'Bets you own: the ones waiting for you (proposed, due) first, then open, then the
+
+        latest resolved. Private to you: nobody else''s bets are listed.'
+      operationId: my_bets
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyBets'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: My Bets
+      tags:
+      - decision-bets
   /api/v1/capture/sessions:
     post:
       description: 'authz: member. Start recording an in-person meeting on the caller''s phone.'
@@ -8283,6 +10197,321 @@ paths:
       summary: Update Decision
       tags:
       - decisions
+  /api/v1/decisions/{decision_id}/bet:
+    get:
+      operationId: get_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Bet
+      tags:
+      - decision-bets
+    put:
+      operationId: save_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BetUpsert'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Save Bet
+      tags:
+      - decision-bets
+  /api/v1/decisions/{decision_id}/bet/accept:
+    post:
+      operationId: accept_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Accept Bet
+      tags:
+      - decision-bets
+  /api/v1/decisions/{decision_id}/bet/dismiss:
+    post:
+      operationId: dismiss_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss Bet
+      tags:
+      - decision-bets
+  /api/v1/decisions/{decision_id}/bet/reopen:
+    post:
+      operationId: reopen_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Reopen Bet
+      tags:
+      - decision-bets
+  /api/v1/decisions/{decision_id}/bet/resolve:
+    post:
+      description: 'The person''s call, always: hit, partly or missed. A resolved bet may be resolved
+        again
+
+        (a changed mind or a later lesson); `reopen` takes it back to due.'
+      operationId: resolve_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BetResolve'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Resolve Bet
+      tags:
+      - decision-bets
+  /api/v1/decisions/{decision_id}/bet/restore:
+    post:
+      operationId: restore_bet
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionBetView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Restore Bet
+      tags:
+      - decision-bets
   /api/v1/decisions/{decision_id}/confirm:
     post:
       description: proposed -> confirmed, and the ONE `decisions` outbox row. Idempotent on re-confirm.
@@ -12003,6 +14232,165 @@ paths:
       summary: Add Team Member
       tags:
       - org-hierarchy
+  /api/v1/time-machine/diff:
+    get:
+      description: 'What changed between two dates: new and reversed decisions, promises made, kept and
+
+        broken, bets resolved, goals that moved, and the meetings that caused each change.'
+      operationId: diff
+      parameters:
+      - in: query
+        name: from
+        required: true
+        schema:
+          format: date
+          title: From
+          type: string
+      - in: query
+        name: to
+        required: true
+        schema:
+          format: date
+          title: To
+          type: string
+      - in: query
+        name: topic
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Topic
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Diff'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Diff
+      tags:
+      - time-machine
+  /api/v1/time-machine/snapshot:
+    get:
+      description: The company's decisions, open promises and goals as they stood at the end of `as_of`.
+      operationId: snapshot
+      parameters:
+      - in: query
+        name: as_of
+        required: true
+        schema:
+          format: date
+          title: As Of
+          type: string
+      - in: query
+        name: topic
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Topic
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Snapshot
+      tags:
+      - time-machine
+  /api/v1/time-machine/timeline:
+    get:
+      description: 'How one topic''s decisions changed, step by step, each citing the meeting and the
+
+        words that decided it.'
+      operationId: timeline
+      parameters:
+      - in: query
+        name: topic
+        required: true
+        schema:
+          maxLength: 120
+          minLength: 2
+          title: Topic
+          type: string
+      - in: query
+        name: from
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: From
+      - in: query
+        name: to
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: To
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timeline'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Timeline
+      tags:
+      - time-machine
   /api/v1/worklogs/{worklog_id}/feedback:
     post:
       description: 'Rate one of your own notes useful or not: your PersonalListenerAgent learns from it.'
@@ -12270,6 +14658,98 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Agent Policy
+      tags:
+      - core-internal
+  /internal/bets/due:
+    get:
+      operationId: due_bets
+      parameters:
+      - in: query
+        name: as_of
+        required: true
+        schema:
+          format: date
+          title: As Of
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DueBets'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Due Bets
+      tags:
+      - core-internal
+  /internal/bets/{bet_id}/check:
+    post:
+      operationId: check_bet
+      parameters:
+      - in: path
+        name: bet_id
+        required: true
+        schema:
+          format: uuid
+          title: Bet Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Check Bet
       tags:
       - core-internal
   /internal/decisions/{decision_id}/record:
