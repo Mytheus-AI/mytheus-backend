@@ -60,7 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_DATA_ERASURE_APPLIED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api import recording_client
+from services.core_api import briefings, recording_client
 
 router = APIRouter(prefix="/api/v1", tags=["erasure"])
 
@@ -144,6 +144,9 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     ("late_contributions", "DELETE FROM late_contributions WHERE user_id = :t"),
     ("last_word_nudges", "DELETE FROM last_word_nudges WHERE user_id = :t"),
     ("agreement_checks", "DELETE FROM agreement_checks WHERE user_id = :t"),
+    # Beyond the meeting: their agent's briefings (audio too, below) and briefing settings.
+    ("briefings", "DELETE FROM agent_briefings WHERE user_id = :t"),
+    ("briefing_preferences", "DELETE FROM briefing_preferences WHERE user_id = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
@@ -232,6 +235,7 @@ _MEETING_DELETES: tuple[tuple[str, str], ...] = (
     ("agreement_reads", "DELETE FROM decision_agreement_reads WHERE meeting_id = :t"),
     ("resume_points", "DELETE FROM resume_points WHERE meeting_id = :t"),
     ("room_signal_runs", "DELETE FROM room_signal_runs WHERE meeting_id = :t"),
+    ("briefings", "DELETE FROM agent_briefings WHERE meeting_id = :t"),
     (
         "unconfirmed_decisions",
         "DELETE FROM decisions d WHERE d.meeting_id = :t AND d.status IN ('proposed', 'dismissed') "
@@ -268,6 +272,7 @@ async def _erase_person(
             extra={"reason": "confirmation_mismatch"},
         )
     params: dict[str, Any] = {"t": str(target)}
+    await briefings.erase_audio(session, ctx.org_id, user_id=target)
     erased = {name: await _count(session, sql, params) for name, sql in _PERSON_DELETES}
     anonymized = {name: await _count(session, sql, params) for name, sql in _PERSON_ANONYMIZE}
     revoked = await _count(
@@ -314,6 +319,7 @@ async def _erase_meeting(
             extra={"reason": "meeting_live"},
         )
     params: dict[str, Any] = {"t": str(target)}
+    await briefings.erase_audio(session, ctx.org_id, meeting_id=target)
     erased = {name: await _count(session, sql, params) for name, sql in _MEETING_DELETES}
     revoked = await _count(
         session,
