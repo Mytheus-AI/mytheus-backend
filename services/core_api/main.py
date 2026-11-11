@@ -18,6 +18,7 @@ from services.core_api.routes import (
     clips,
     collaborations,
     commitments,
+    decision_challenges,
     decision_log,
     decision_reversals,
     delegated_answers,
@@ -25,6 +26,7 @@ from services.core_api.routes import (
     erasure,
     followups,
     internal_agents,
+    internal_decision_check,
     internal_integrations,
     internal_learning,
     internal_lifecycle,
@@ -53,6 +55,10 @@ from services.core_api.routes import (
 )
 
 app = create_app("core-api")
+# Decisions that follow you: before any `/decisions/{decision_id}` route, so the literal
+# `/decisions/check` is never read as an id.
+app.include_router(decision_challenges.router)
+app.include_router(internal_decision_check.router)
 app.include_router(meetings.router)
 app.include_router(org_hierarchy.router)
 app.include_router(chat.router)

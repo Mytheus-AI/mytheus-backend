@@ -1129,6 +1129,17 @@ components:
       - current_item
       title: CatchUpSummary
       type: object
+    ChallengeList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DecisionChallenge'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ChallengeList
+      type: object
     ChatHistory:
       description: '`GET /meetings/:id/chat`: the meeting''s most recent chat messages, oldest first.'
       properties:
@@ -1191,6 +1202,74 @@ components:
       - meeting_id
       - content
       title: ChatMessageCreate
+      type: object
+    CheckContext:
+      properties:
+        author:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Author
+        channel:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Channel
+        place_label:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Place Label
+        topic:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Topic
+      title: CheckContext
+      type: object
+    CheckDismissed:
+      properties:
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        dismissed:
+          title: Dismissed
+          type: boolean
+      required:
+      - decision_id
+      - dismissed
+      title: CheckDismissed
+      type: object
+    CheckRequest:
+      additionalProperties: false
+      properties:
+        context:
+          anyOf:
+          - $ref: '#/components/schemas/CheckContext'
+          - type: 'null'
+        source:
+          default: app
+          description: Where the text is being written.
+          enum:
+          - extension
+          - mcp
+          - app
+          title: Source
+          type: string
+        text:
+          description: The text to check.
+          maxLength: 4000
+          minLength: 1
+          title: Text
+          type: string
+      required:
+      - text
+      title: CheckRequest
       type: object
     Clip:
       properties:
@@ -2050,6 +2129,170 @@ components:
       - created_at
       title: Decision
       type: object
+    DecisionChallenge:
+      properties:
+        author:
+          anyOf:
+          - $ref: '#/components/schemas/Person'
+          - type: 'null'
+        confidence:
+          title: Confidence
+          type: number
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decision_content:
+          title: Decision Content
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        link:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Link
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        place_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Place Label
+        quote:
+          title: Quote
+          type: string
+        relation:
+          enum:
+          - contradicts
+          - reopens
+          title: Relation
+          type: string
+        reopen_request_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Reopen Request Id
+        source:
+          enum:
+          - slack
+          - extension
+          - mcp
+          - app
+          title: Source
+          type: string
+        status:
+          enum:
+          - open
+          - dismissed
+          - reopened
+          title: Status
+          type: string
+        viewer_can_dismiss:
+          default: false
+          description: True for the challenge's author and the decision's owner.
+          title: Viewer Can Dismiss
+          type: boolean
+        why:
+          title: Why
+          type: string
+      required:
+      - id
+      - decision_id
+      - decision_content
+      - meeting_id
+      - source
+      - quote
+      - why
+      - relation
+      - confidence
+      - status
+      - created_at
+      title: DecisionChallenge
+      type: object
+    DecisionChallenges:
+      properties:
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/DecisionChallenge'
+          title: Items
+          type: array
+        open_count:
+          description: Challenges still open.
+          title: Open Count
+          type: integer
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/Person'
+          - type: 'null'
+        places:
+          description: Distinct places among open and reopened challenges.
+          title: Places
+          type: integer
+        reopen_requests:
+          items:
+            $ref: '#/components/schemas/ReopenRequest'
+          title: Reopen Requests
+          type: array
+        viewer_is_owner:
+          title: Viewer Is Owner
+          type: boolean
+      required:
+      - decision_id
+      - viewer_is_owner
+      - open_count
+      - places
+      - items
+      - reopen_requests
+      title: DecisionChallenges
+      type: object
+    DecisionCheckResult:
+      properties:
+        checked_at:
+          format: date-time
+          title: Checked At
+          type: string
+        conflicts:
+          items:
+            $ref: '#/components/schemas/DecisionConflict'
+          title: Conflicts
+          type: array
+        reason:
+          anyOf:
+          - enum:
+            - too_short
+            - never_record
+            - budget
+            - no_candidates
+            type: string
+          - type: 'null'
+          title: Reason
+        status:
+          enum:
+          - ok
+          - skipped
+          - degraded
+          title: Status
+          type: string
+      required:
+      - status
+      - checked_at
+      - conflicts
+      title: DecisionCheckResult
+      type: object
     DecisionConfirm:
       additionalProperties: false
       description: Confirm body. `supersedes` names an earlier confirmed decision (FOLLOWS_FROM lineage).
@@ -2061,6 +2304,83 @@ components:
           - type: 'null'
           title: Supersedes
       title: DecisionConfirm
+      type: object
+    DecisionConflict:
+      properties:
+        challenge_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: Set when the conflict was recorded (published text).
+          title: Challenge Id
+        confidence:
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+          type: number
+        decided_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: When the decision was confirmed.
+          title: Decided At
+        decision_content:
+          title: Decision Content
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        link:
+          description: The decision page in the app.
+          title: Link
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/Person'
+          - type: 'null'
+        quote:
+          description: The part of the checked text that conflicts, verbatim.
+          title: Quote
+          type: string
+        relation:
+          enum:
+          - contradicts
+          - reopens
+          title: Relation
+          type: string
+        reopen_request_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The caller's own pending reopen request on this decision.
+          title: Reopen Request Id
+        why:
+          description: Why this conflicts, in one short sentence.
+          title: Why
+          type: string
+      required:
+      - decision_id
+      - decision_content
+      - meeting_id
+      - quote
+      - relation
+      - confidence
+      - why
+      - link
+      title: DecisionConflict
       type: object
     DecisionLog:
       properties:
@@ -2578,6 +2898,27 @@ components:
       - item_count
       - created_at
       title: DigestSummary
+      type: object
+    DismissCheck:
+      additionalProperties: false
+      properties:
+        quote:
+          maxLength: 500
+          minLength: 1
+          title: Quote
+          type: string
+        source:
+          default: app
+          enum:
+          - slack
+          - extension
+          - mcp
+          - app
+          title: Source
+          type: string
+      required:
+      - quote
+      title: DismissCheck
       type: object
     DriftNudgeRequest:
       additionalProperties: false
@@ -3279,6 +3620,78 @@ components:
       - text
       - answered_at
       title: LatestStatus
+      type: object
+    LexicalDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        rank:
+          title: Rank
+          type: number
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+      required:
+      - id
+      - meeting_id
+      - content
+      - decided_at
+      - rank
+      title: LexicalDecision
+      type: object
+    LexicalResult:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/LexicalDecision'
+          title: Items
+          type: array
+      required:
+      - items
+      title: LexicalResult
+      type: object
+    LexicalSearch:
+      additionalProperties: false
+      properties:
+        limit:
+          default: 10
+          maximum: 20.0
+          minimum: 1.0
+          title: Limit
+          type: integer
+        query:
+          maxLength: 1000
+          minLength: 1
+          title: Query
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - query
+      title: LexicalSearch
       type: object
     LineageStep:
       description: 'One decision in the chain around the subject, oldest first.
@@ -4878,6 +5291,21 @@ components:
       - user_ids
       title: ParticipantsAdd
       type: object
+    Person:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+      required:
+      - id
+      title: Person
+      type: object
     PersonMemory:
       properties:
         calibration:
@@ -5353,6 +5781,229 @@ components:
       - attendance
       title: ReminderParticipant
       type: object
+    ReopenAccept:
+      additionalProperties: false
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: 'follow_up: default a week out.'
+          title: Due Date
+        duration_minutes:
+          default: 30
+          maximum: 120.0
+          minimum: 15.0
+          title: Duration Minutes
+          type: integer
+        note:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Note
+        outcome:
+          enum:
+          - revisit
+          - follow_up
+          title: Outcome
+          type: string
+        scheduled_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 'revisit: default the next weekday, 10:00 UTC.'
+          title: Scheduled Start
+      required:
+      - outcome
+      title: ReopenAccept
+      type: object
+    ReopenCreate:
+      additionalProperties: false
+      properties:
+        challenge_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Challenge Id
+        link:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Link
+        place_label:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Place Label
+        quote:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Quote
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+        source:
+          default: app
+          enum:
+          - slack
+          - extension
+          - mcp
+          - app
+          title: Source
+          type: string
+      title: ReopenCreate
+      type: object
+    ReopenNote:
+      additionalProperties: false
+      properties:
+        note:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Note
+      title: ReopenNote
+      type: object
+    ReopenRequest:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decision_content:
+          title: Decision Content
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        follow_up_action_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Follow Up Action Id
+        id:
+          format: uuid
+          title: Id
+          type: string
+        link:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Link
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        outcome:
+          anyOf:
+          - enum:
+            - revisit
+            - follow_up
+            type: string
+          - type: 'null'
+          title: Outcome
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/Person'
+          - type: 'null'
+        place_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Place Label
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        requested_by:
+          $ref: '#/components/schemas/Person'
+        resolved_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Resolved At
+        response_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Response Note
+        revisit_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Revisit Meeting Id
+        source:
+          enum:
+          - slack
+          - extension
+          - mcp
+          - app
+          title: Source
+          type: string
+        status:
+          enum:
+          - pending
+          - accepted
+          - declined
+          - withdrawn
+          title: Status
+          type: string
+        viewer_role:
+          enum:
+          - owner
+          - requester
+          - viewer
+          title: Viewer Role
+          type: string
+      required:
+      - id
+      - decision_id
+      - decision_content
+      - meeting_id
+      - requested_by
+      - source
+      - status
+      - created_at
+      - viewer_role
+      title: ReopenRequest
+      type: object
+    ReopenRequestList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ReopenRequest'
+          title: Items
+          type: array
+      required:
+      - items
+      title: ReopenRequestList
+      type: object
     RetrievalScope:
       properties:
         meetings:
@@ -5808,6 +6459,71 @@ components:
       required:
       - items
       title: ShareLinkList
+      type: object
+    SlackAct:
+      additionalProperties: false
+      properties:
+        acting_email:
+          maxLength: 320
+          minLength: 3
+          title: Acting Email
+          type: string
+        reason:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Reason
+      required:
+      - acting_email
+      title: SlackAct
+      type: object
+    SlackCheck:
+      additionalProperties: false
+      properties:
+        author_email:
+          maxLength: 320
+          minLength: 3
+          title: Author Email
+          type: string
+        external_ref:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: External Ref
+        link:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Link
+        place_label:
+          anyOf:
+          - maxLength: 120
+            type: string
+          - type: 'null'
+          title: Place Label
+        source:
+          const: slack
+          default: slack
+          title: Source
+          type: string
+        text:
+          maxLength: 4000
+          minLength: 1
+          title: Text
+          type: string
+        topic:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Topic
+      required:
+      - author_email
+      - text
+      title: SlackCheck
       type: object
     SlackDigest:
       properties:
@@ -8073,6 +8789,323 @@ paths:
       summary: Dismiss Context Fill
       tags:
       - collaborations
+  /api/v1/decision-challenges:
+    get:
+      operationId: my_challenges
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: open
+          enum:
+          - open
+          - all
+          title: Status
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChallengeList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Challenges to the decisions you own
+      tags:
+      - decision-challenges
+  /api/v1/decision-challenges/{challenge_id}/dismiss:
+    post:
+      operationId: dismiss_challenge_route
+      parameters:
+      - in: path
+        name: challenge_id
+        required: true
+        schema:
+          format: uuid
+          title: Challenge Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionChallenge'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss a challenge
+      tags:
+      - decision-challenges
+  /api/v1/decision-reopen-requests:
+    get:
+      operationId: list_reopen_requests
+      parameters:
+      - in: query
+        name: role
+        required: false
+        schema:
+          default: owner
+          enum:
+          - owner
+          - requester
+          - all
+          title: Role
+          type: string
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: pending
+          enum:
+          - pending
+          - resolved
+          - all
+          title: Status
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequestList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Reopen requests you own or made
+      tags:
+      - decision-challenges
+  /api/v1/decision-reopen-requests/{request_id}:
+    get:
+      operationId: get_reopen_request
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          format: uuid
+          title: Request Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: One reopen request
+      tags:
+      - decision-challenges
+  /api/v1/decision-reopen-requests/{request_id}/accept:
+    post:
+      description: The decision's owner schedules a revisit (a new meeting with the person who asked,
+        the decision on its agenda) or creates a follow-up task for themselves. The decision itself stays
+        confirmed until a new decision replaces it.
+      operationId: accept_reopen
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          format: uuid
+          title: Request Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenAccept'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Accept a reopen request
+      tags:
+      - decision-challenges
+  /api/v1/decision-reopen-requests/{request_id}/decline:
+    post:
+      operationId: decline_reopen
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          format: uuid
+          title: Request Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenNote'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decline a reopen request
+      tags:
+      - decision-challenges
+  /api/v1/decision-reopen-requests/{request_id}/withdraw:
+    post:
+      operationId: withdraw_reopen
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          format: uuid
+          title: Request Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Withdraw your reopen request
+      tags:
+      - decision-challenges
   /api/v1/decision-reversals:
     get:
       description: The caller's own reversals, newest first (at most 200).
@@ -8233,6 +9266,64 @@ paths:
       summary: List Decisions
       tags:
       - decisions
+  /api/v1/decisions/check:
+    post:
+      description: 'Find the confirmed decisions, from meetings you took part in, that a piece of text
+        contradicts or reopens: the decision, the conflicting quote, the meeting, the date, the owner,
+        a confidence and a short reason. Read-only (allowed for `read` API tokens); the text is not stored.
+        Rate-limited per person (429 with `Retry-After`). 503 with `reason: check_not_connected` until
+        checks are wired on the server.'
+      operationId: check_text
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionCheckResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '429':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Too many checks this minute (`Retry-After`).
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Checks are not connected or unavailable (`reason`).
+      summary: Check text against your decisions
+      tags:
+      - decision-challenges
   /api/v1/decisions/{decision_id}:
     patch:
       operationId: update_decision
@@ -8283,6 +9374,94 @@ paths:
       summary: Update Decision
       tags:
       - decisions
+  /api/v1/decisions/{decision_id}/challenges:
+    get:
+      operationId: decision_challenges
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionChallenges'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Where a decision was challenged
+      tags:
+      - decision-challenges
+  /api/v1/decisions/{decision_id}/check-dismissals:
+    post:
+      description: 'This sentence does not conflict with this decision: it is not flagged to you again.
+        Only a fingerprint of the sentence is kept.'
+      operationId: dismiss_check
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DismissCheck'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckDismissed'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Dismiss a flagged sentence
+      tags:
+      - decision-challenges
   /api/v1/decisions/{decision_id}/confirm:
     post:
       description: proposed -> confirmed, and the ONE `decisions` outbox row. Idempotent on re-confirm.
@@ -8421,6 +9600,59 @@ paths:
       summary: A decision with its lineage
       tags:
       - public-api
+  /api/v1/decisions/{decision_id}/reopen-requests:
+    post:
+      description: The decision's owner is asked; nothing about the decision changes until they act. 200
+        with your existing request when you already have a pending one. 409 when the decision was already
+        replaced.
+      operationId: request_reopen
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask to reopen a decision
+      tags:
+      - decision-challenges
   /api/v1/decisions/{decision_id}/share-links:
     get:
       operationId: list_decision_links
@@ -12272,6 +13504,158 @@ paths:
       summary: Agent Policy
       tags:
       - core-internal
+  /internal/decision-challenges/{challenge_id}/dismiss:
+    post:
+      operationId: slack_dismiss
+      parameters:
+      - in: path
+        name: challenge_id
+        required: true
+        schema:
+          format: uuid
+          title: Challenge Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlackAct'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionChallenge'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Slack Dismiss
+      tags:
+      - core-internal
+  /internal/decision-challenges/{challenge_id}/reopen:
+    post:
+      operationId: slack_reopen
+      parameters:
+      - in: path
+        name: challenge_id
+        required: true
+        schema:
+          format: uuid
+          title: Challenge Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlackAct'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReopenRequest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Slack Reopen
+      tags:
+      - core-internal
+  /internal/decisions/check:
+    post:
+      operationId: slack_check
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlackCheck'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionCheckResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Slack Check
+      tags:
+      - core-internal
   /internal/decisions/{decision_id}/record:
     get:
       operationId: decision_record_internal_decisions__decision_id__record_get
@@ -13038,6 +14422,52 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Nudge
+      tags:
+      - core-internal
+  /internal/retrieval/decisions/search:
+    post:
+      operationId: lexical_decisions
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LexicalSearch'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LexicalResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Lexical Decisions
       tags:
       - core-internal
   /internal/retrieval/records:
