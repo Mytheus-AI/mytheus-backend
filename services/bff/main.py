@@ -15,6 +15,7 @@ from services.bff import (
     lineage,
     mcp,
     meeting_screens,
+    oauth_metadata,
     org_chart,
     people,
     precheck,
@@ -28,4 +29,7 @@ app.include_router(lineage.router)
 app.include_router(meeting_screens.router)
 app.include_router(ask.router)  # POST /api/v1/ask (public API, Phase 4)
 app.include_router(mcp.router)  # POST /mcp (MCP server, Phase 4)
+# GET /.well-known/oauth-protected-resource[/mcp] (RFC 9728): how an MCP client such as Claude
+# finds the authorization server (identity-tenant-service) for `/mcp`.
+app.include_router(oauth_metadata.router)
 app.include_router(precheck.router)  # POST /bff/meetings/precheck (polish wave 3)

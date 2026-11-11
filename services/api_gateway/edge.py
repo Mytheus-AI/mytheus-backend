@@ -30,7 +30,7 @@ from redis.asyncio import from_url as redis_from_url
 from redis.exceptions import RedisError
 from starlette.middleware.base import RequestResponseEndpoint
 
-from libs.shared import pat
+from libs.shared import oauth_config, pat
 from libs.shared.auth import clerk_org_id_from, verify_token
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail, problem_response
@@ -51,6 +51,19 @@ PUBLIC_PATHS = frozenset(
         "/openapi.json",
         "/docs",
         "/redoc",
+    }
+    # The MCP server's OAuth surface (Claude custom connectors). An MCP client calls these
+    # before anyone has signed in, so no bearer can exist yet; each authenticates another way
+    # (see `OAUTH_PUBLIC_PATHS`). Exact paths only: `/oauth/{provider}` (integration-service)
+    # stays bearer-gated.
+    | {
+        "/.well-known/oauth-protected-resource",  # RFC 9728, bff: static metadata
+        "/.well-known/oauth-protected-resource/mcp",  # the path-suffixed form of the same
+        "/.well-known/oauth-authorization-server",  # RFC 8414, identity: static metadata
+        "/oauth/register",  # RFC 7591: a public client that can do nothing until consent
+        "/oauth/authorize",  # sends the browser to the consent page; grants nothing itself
+        "/oauth/token",  # the code + PKCE verifier, or a refresh token, is the credential
+        "/oauth/revoke",  # RFC 7009: holding the token is the authority to revoke it
     }
 )
 PUBLIC_PREFIXES = (
@@ -86,6 +99,29 @@ METRICS_PATH = "/metrics"
 # attached, so nothing downstream can mistake this request for a tenant-scoped one; the route
 # re-verifies the token and checks with Clerk that the caller administers that org.
 SELF_SERVE_ORG_PATH = "/orgs/self-serve"
+
+
+# The OAuth paths above, which also answer CORS. Claude calls them server to server, but a
+# browser-based MCP client (an inspector, a web IDE) fetches discovery, registers and redeems
+# from page JavaScript; these endpoints take no cookie and no ambient credential, so `*` with no
+# `Allow-Credentials` exposes nothing a server-side caller could not already read.
+OAUTH_PUBLIC_PATHS = frozenset(
+    p for p in PUBLIC_PATHS if p.startswith(("/.well-known/oauth-", "/oauth/"))
+)
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "WWW-Authenticate, Retry-After",
+}
+_CORS_PREFLIGHT = {
+    **_CORS_HEADERS,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version",
+    "Access-Control-Max-Age": "86400",
+}
+
+
+def on_mcp(path: str) -> bool:
+    return path == oauth_config.MCP_PATH or path.startswith(oauth_config.MCP_PATH + "/")
 
 
 def _signing_key() -> bytes:
@@ -160,8 +196,32 @@ async def edge_auth(request: Request, call_next: RequestResponseEndpoint) -> Res
     request.scope["path"] = path
     request.scope["raw_path"] = path.encode("utf-8")
 
+    if path in OAUTH_PUBLIC_PATHS:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=_CORS_PREFLIGHT)
+        response = await call_next(request)
+        response.headers.update(_CORS_HEADERS)
+        return response
+
     if is_public(path):
         return await call_next(request)
+
+    response = await _authenticated(request, call_next, path)
+    if response.status_code == 401 and on_mcp(path):
+        # MCP authorization (2025-06-18) and RFC 9728 section 5.1: the 401 tells the client where
+        # the protected resource metadata is, which is how Claude finds the authorization server.
+        # The problem+json body is kept.
+        presented = pat.bearer_of(request.headers) is not None
+        response.headers["WWW-Authenticate"] = oauth_config.www_authenticate(
+            error="invalid_token" if presented else None
+        )
+    return response
+
+
+async def _authenticated(
+    request: Request, call_next: RequestResponseEndpoint, path: str
+) -> Response:
+    """Every non-public path: the metrics exemption, a personal access token, or a Clerk JWT."""
 
     if request.url.path == METRICS_PATH:
         # Internal scrape: no token (Prometheus has no Clerk session). Anything that came
@@ -269,6 +329,16 @@ async def _pat_request(
         principal = await pat.authenticate(token, request.method, request.url.path)
     except ProblemDetail as exc:
         return problem_response(exc.status, exc.code, exc.detail, extra=exc.extra)
+    if principal.kind == "oauth" and not on_mcp(request.url.path):
+        # Audience (RFC 8707, MCP 2025-06-18): an OAuth access token was issued for the MCP
+        # server and is accepted at `/mcp` only, never on the REST API. bff's tools still call
+        # core-api with it, but that hop is internal and never passes this edge.
+        return problem_response(
+            403,
+            ErrorCode.FORBIDDEN_ROLE,
+            "This token was issued to an app for the Mytheus MCP server only",
+            extra={"reason": "oauth_token_mcp_only"},
+        )
     limit = pat_rate_limit()
     try:
         used, reset = await _count_request(request, principal)
@@ -372,7 +442,31 @@ ROUTE_MAP: dict[str, str] = {
     "/notifications": "notification-service",
     "/admin/tenant": "admin-ops-service",
     "/admin/ops": "admin-ops-service",
-    "/oauth": "integration-service",
+    # integration-service's `POST /oauth/{provider}` (completing a provider connection), one
+    # entry per provider in `services/integration_service/config.py`. Spelled out rather than a
+    # bare `/oauth` because `/oauth/{register,authorize,token,revoke}` below belong to another
+    # service, and no two services may share a prefix (`test_no_two_services_share_a_prefix`).
+    # `test_every_integration_provider_is_routed` fails the build if a provider is added there
+    # and not here.
+    "/oauth/google_calendar": "integration-service",
+    "/oauth/slack": "integration-service",
+    "/oauth/jira": "integration-service",
+    "/oauth/linear": "integration-service",
+    "/oauth/hubspot": "integration-service",
+    "/oauth/notion": "integration-service",
+    "/oauth/confluence": "integration-service",
+    # The MCP server's OAuth authorization server is identity-tenant-service (it writes the
+    # `api_tokens` row an access token becomes).
+    "/oauth/register": "identity-tenant-service",
+    "/oauth/authorize": "identity-tenant-service",
+    "/oauth/token": "identity-tenant-service",
+    "/oauth/revoke": "identity-tenant-service",
+    # The signed-in half: the consent page's backend and Connected apps.
+    "/api/v1/oauth": "identity-tenant-service",
+    # Discovery: the resource server's metadata (bff serves `/mcp`) and the authorization
+    # server's (identity).
+    "/.well-known/oauth-protected-resource": "bff",
+    "/.well-known/oauth-authorization-server": "identity-tenant-service",
     "/webhooks": "integration-service",
     # The settings API (list, connect, disconnect). JWT-gated; owner/admin enforced by the
     # service. `/internal/*` is deliberately absent, as for every service.

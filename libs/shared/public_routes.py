@@ -33,9 +33,22 @@ from __future__ import annotations
 
 PUBLIC_PREFIXES = ("/healthz", "/health", "/openapi", "/docs", "/redoc", "/api/v1/public/")
 PUBLIC_CONTAINS = ("/webhook", "/clerk/", "/stripe/", "/livekit/", "/callback")
+PUBLIC_EXACT = frozenset(
+    {
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-authorization-server",
+        "/oauth/register",
+        "/oauth/authorize",
+        "/oauth/token",
+        "/oauth/revoke",
+    }
+)
 
 
 def is_public_path(path: str) -> bool:
     """True when a route at `path` is not expected to carry a Clerk bearer token."""
+    if path in PUBLIC_EXACT:
+        return True
     prefixed = any(path.startswith(p) for p in PUBLIC_PREFIXES)
     return prefixed or any(c in path for c in PUBLIC_CONTAINS)

@@ -7,9 +7,12 @@ bff replica can serve it. `GET` and `DELETE` are 405. Protocol versions 2024-11-
 2025-03-26, 2025-06-18 and 2025-11-25 are negotiated; an unknown `MCP-Protocol-Version`
 header is a 400.
 
-Auth: `Authorization: Bearer mytheus_pat_...` (a personal access token) or a Clerk session,
-resolved by the same chain as every route (`require_tier("member")`). A browser `Origin` other
-than the web app's is refused (403), the transport's DNS-rebinding guard.
+Auth: `Authorization: Bearer mytheus_pat_...` (a personal access token, or an OAuth access
+token in the same format that identity-tenant-service's authorization server minted for a
+Claude custom connector) or a Clerk session, resolved by the same chain as every route
+(`require_tier("member")`). Discovery for OAuth clients is `oauth_metadata.py`; the gateway
+answers an unauthenticated `/mcp` with `WWW-Authenticate: Bearer resource_metadata=...`. A
+browser `Origin` other than the web app's is refused (403), the transport's DNS-rebinding guard.
 
 Why a route group in bff and not a new service: MCP here is a client-shaped aggregation over
 the public API, exactly bff's job, and it needs no deployable, secret or platform change of
@@ -64,6 +67,11 @@ INSTRUCTIONS = (
     "promises, and meeting outcomes. Search or ask first, then open a meeting's outcome or a "
     "decision record by id. Everything is limited to meetings you took part in. "
     "create_action records a confirmed task immediately; only call it when the user asked."
+)
+
+_READ_ONLY = (
+    "This access is read-only. Use a read_write API token, or reconnect the app and allow it "
+    "to read and act."
 )
 
 _core_transport: httpx.AsyncBaseTransport | None = None
@@ -244,7 +252,7 @@ class CoreClient:
         if res.status_code in (403, 404):
             reason = _problem(res).get("reason")
             if reason == "read_only_token":
-                raise ToolError("This API token is read-only; create a read_write token to write.")
+                raise ToolError(_READ_ONLY)
             raise ToolError("Not found, or not from a meeting you took part in.")
         if res.status_code == 422:
             raise ToolError(f"Invalid input: {_problem(res).get('detail', 'validation failed')}")
@@ -395,7 +403,7 @@ async def call_tool(
         return text or f"No {status} promises.", body
     if name == "create_action":
         if not ctx.can_write:
-            raise ToolError("This API token is read-only; create a read_write token to write.")
+            raise ToolError(_READ_ONLY)
         payload = {
             k: args[k] for k in ("content", "due_date", "assignee_id", "meeting_id") if args.get(k)
         }
@@ -545,8 +553,10 @@ _OPENAPI_BODY = {
     summary="MCP server (Streamable HTTP)",
     description=(
         "Model Context Protocol endpoint. Point an MCP client at `{API}/mcp` with "
-        "`Authorization: Bearer mytheus_pat_...`. Tools: search_meetings, ask_meetings, "
-        "get_meeting_outcome, get_decision_record, list_my_open_actions, list_my_promises, "
+        "`Authorization: Bearer mytheus_pat_...`, or add it as a Claude custom connector "
+        "(OAuth: discovery at `/.well-known/oauth-protected-resource`). Tools: "
+        "search_meetings, ask_meetings, get_meeting_outcome, get_decision_record, "
+        "list_my_open_actions, list_my_promises, "
         "create_action (read_write tokens). Resources: meeting summaries and decision records."
     ),
     openapi_extra=_OPENAPI_BODY,
