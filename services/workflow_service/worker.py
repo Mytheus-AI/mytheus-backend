@@ -16,10 +16,15 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from services.workflow_service.activities import LifecycleActivities
+from services.workflow_service.assumption_activities import AssumptionWatchActivities
 from services.workflow_service.followup_activities import FollowUpActivities
 from services.workflow_service.reminder_activities import ReminderActivities
 from services.workflow_service.scheduled_activities import ScheduledActivities
 from services.workflow_service.workflows.action_followup import ActionFollowUpWorkflow
+from services.workflow_service.workflows.assumption_watch import AssumptionWatchWorkflow
+from services.workflow_service.workflows.assumption_watch import (
+    ensure_schedule as ensure_assumption_watch,
+)
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
@@ -47,6 +52,8 @@ async def main() -> None:
     reminders = ReminderActivities.from_env()
     # Polish wave 3: the promise-drift and weekly-digest schedules' activities.
     scheduled = ScheduledActivities.from_env()
+    # Beyond, Layer 1: the assumption watch (decisions that know why).
+    watch = AssumptionWatchActivities.from_env()
     worker = Worker(
         client,
         task_queue=_TASK_QUEUE,
@@ -59,13 +66,22 @@ async def main() -> None:
             UsageRollupWorkflow,
             PromiseDriftWorkflow,
             WeeklyDigestWorkflow,
+            AssumptionWatchWorkflow,
         ],
-        activities=[*lifecycle.all(), *followup.all(), *reminders.all(), *scheduled.all()],
+        activities=[
+            *lifecycle.all(),
+            *followup.all(),
+            *reminders.all(),
+            *scheduled.all(),
+            *watch.all(),
+        ],
     )
     if await ensure_schedule(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule usage-rollup-nightly (02:00 UTC)")
     for schedule_id in await ensure_schedules(client, task_queue=_TASK_QUEUE):
         print(f"Created Temporal schedule {schedule_id}")
+    if await ensure_assumption_watch(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule assumption-watch (every 6 hours)")
     print(f"Worker started on task queue: {_TASK_QUEUE}")
     await worker.run()
 

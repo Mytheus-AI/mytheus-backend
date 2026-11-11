@@ -160,6 +160,21 @@ components:
       - exported_at
       title: DecisionExportSummary
       type: object
+    DomainDeals:
+      properties:
+        deals:
+          items:
+            $ref: '#/components/schemas/WatchDeal'
+          title: Deals
+          type: array
+        domain:
+          title: Domain
+          type: string
+      required:
+      - domain
+      - deals
+      title: DomainDeals
+      type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
         is human-readable and free to change. Values are added, never removed or repurposed. Emitted verbatim
@@ -260,6 +275,25 @@ components:
           title: Detail
           type: array
       title: HTTPValidationError
+      type: object
+    HubSpotSource:
+      properties:
+        connected:
+          title: Connected
+          type: boolean
+        deals:
+          items:
+            $ref: '#/components/schemas/WatchDeal'
+          title: Deals
+          type: array
+        domain_deals:
+          items:
+            $ref: '#/components/schemas/DomainDeals'
+          title: Domain Deals
+          type: array
+      required:
+      - connected
+      title: HubSpotSource
       type: object
     IntegrationItem:
       properties:
@@ -380,6 +414,28 @@ components:
       - issues
       title: IssueStatusResult
       type: object
+    JiraSource:
+      properties:
+        connected:
+          title: Connected
+          type: boolean
+        issues:
+          items:
+            $ref: '#/components/schemas/WatchIssue'
+          title: Issues
+          type: array
+      required:
+      - connected
+      title: JiraSource
+      type: object
+    LinearSource:
+      properties:
+        connected:
+          default: false
+          title: Connected
+          type: boolean
+      title: LinearSource
+      type: object
     MeetingRef:
       additionalProperties: false
       properties:
@@ -485,6 +541,32 @@ components:
       - team_id
       title: SlackToken
       type: object
+    SourcesRequest:
+      additionalProperties: false
+      properties:
+        deal_ids:
+          items:
+            maxLength: 40
+            type: string
+          maxItems: 200
+          title: Deal Ids
+          type: array
+        domains:
+          items:
+            maxLength: 200
+            type: string
+          maxItems: 50
+          title: Domains
+          type: array
+        jira_keys:
+          items:
+            maxLength: 40
+            type: string
+          maxItems: 200
+          title: Jira Keys
+          type: array
+      title: SourcesRequest
+      type: object
     ValidationError:
       properties:
         ctx:
@@ -510,6 +592,98 @@ components:
       - msg
       - type
       title: ValidationError
+      type: object
+    WatchDeal:
+      properties:
+        amount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Amount
+        close_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Close Date
+        closed_lost:
+          default: false
+          title: Closed Lost
+          type: boolean
+        closed_won:
+          default: false
+          title: Closed Won
+          type: boolean
+        id:
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        stage:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stage
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - id
+      title: WatchDeal
+      type: object
+    WatchIssue:
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        key:
+          title: Key
+          type: string
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        status_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Category
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - key
+      title: WatchIssue
+      type: object
+    WatchSources:
+      properties:
+        hubspot:
+          $ref: '#/components/schemas/HubSpotSource'
+        jira:
+          $ref: '#/components/schemas/JiraSource'
+        linear:
+          $ref: '#/components/schemas/LinearSource'
+      required:
+      - jira
+      - linear
+      - hubspot
+      title: WatchSources
       type: object
   securitySchemes:
     HTTPBearer:
@@ -984,6 +1158,52 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Slack Token
+      tags:
+      - integration-internal
+  /internal/watch/sources:
+    post:
+      operationId: sources
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourcesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchSources'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Sources
       tags:
       - integration-internal
   /oauth/{provider}:
