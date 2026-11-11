@@ -744,6 +744,21 @@ def test_proto_field_numbers_are_fixed():
         "goals": 7,
         "never_record_topics": 8,
         "topic_watches": 9,
+        "departments": 10,
+        "teams": 11,
+    }
+    assert numbers(identity_pb2.OrgDepartment) == {
+        "id": 1,
+        "name": 2,
+        "description": 3,
+        "parent_id": 4,
+    }
+    assert numbers(identity_pb2.OrgTeam) == {
+        "id": 1,
+        "name": 2,
+        "description": 3,
+        "department_id": 4,
+        "member_count": 5,
     }
     assert numbers(identity_pb2.GlossaryTerm) == {
         "term": 1,

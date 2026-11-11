@@ -203,11 +203,15 @@ class TeamRef(BaseModel):
     id: uuid.UUID
     name: str
     department_id: uuid.UUID | None
+    # People structure: what the team does. Defaulted so a context cached before the field
+    # existed (up to the 300 s TTL after a deploy) still validates.
+    description: str | None = None
 
 
 class DepartmentRef(BaseModel):
     id: uuid.UUID
     name: str
+    description: str | None = None
 
 
 class MeetingRef(BaseModel):

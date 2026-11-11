@@ -184,6 +184,10 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
             goals=[identity_pb2.Goal(**g) for g in ctx["goals"]],
             never_record_topics=ctx["never_record_topics"],
             topic_watches=[identity_pb2.TopicWatch(**w) for w in ctx["topic_watches"]],
+            # People structure. `.get`: an entry cached before these fields existed (up to the
+            # 5-minute TTL after a deploy) has none, which reads as "no structure yet".
+            departments=[identity_pb2.OrgDepartment(**d) for d in ctx.get("departments", [])],
+            teams=[identity_pb2.OrgTeam(**t) for t in ctx.get("teams", [])],
         )
 
     async def Authorize(self, request: Any, context: Any) -> Any:

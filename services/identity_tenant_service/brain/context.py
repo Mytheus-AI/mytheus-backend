@@ -41,6 +41,21 @@ _SELECT_WATCHES = text(
     "SELECT user_id, topic FROM topic_watches ORDER BY user_id, lower(topic), id"
 )
 
+# People structure: departments and teams with what they do, so every agent knows how the
+# company is organised (whose role a note is for, which team owns what a meeting is discussing).
+# Read from core-api's tables, the same direct read `context/service.py` already makes; never
+# written here. Member user ids are NOT carried: an agent gets a person's own team ids from
+# GetUserContext, and the org-wide picture needs only the head count.
+_SELECT_DEPARTMENTS = text(
+    "SELECT id, name, description, parent_id FROM departments "
+    "WHERE deleted_at IS NULL ORDER BY lower(name), id"
+)
+_SELECT_TEAMS = text(
+    "SELECT t.id, t.name, t.description, t.department_id, "
+    "(SELECT count(*) FROM team_members tm WHERE tm.team_id = t.id) AS member_count "
+    "FROM teams t WHERE t.deleted_at IS NULL ORDER BY lower(t.name), t.id"
+)
+
 
 def org_ctx_key(org_id: uuid.UUID) -> str:
     return redis_key(org_id, "org_ctx")
@@ -54,6 +69,9 @@ async def compute_org_context(session: AsyncSession, org_id: uuid.UUID) -> dict[
     goals = (await session.execute(_SELECT_GOALS)).mappings().all()
     settings = (await session.execute(_SELECT_NEVER_RECORD, o)).mappings().first()
     watches = (await session.execute(_SELECT_WATCHES)).mappings().all()
+    departments = (await session.execute(_SELECT_DEPARTMENTS)).mappings().all()
+    teams = (await session.execute(_SELECT_TEAMS)).mappings().all()
+    live_departments = {str(d["id"]) for d in departments}
     return {
         "description": profile["description"] if profile else "",
         "industry": profile["industry"] if profile else "",
@@ -76,6 +94,34 @@ async def compute_org_context(session: AsyncSession, org_id: uuid.UUID) -> dict[
         ],
         "never_record_topics": list(settings["never_record_topics"]) if settings else [],
         "topic_watches": [{"user_id": str(w["user_id"]), "topic": w["topic"]} for w in watches],
+        "departments": [
+            {
+                "id": str(d["id"]),
+                "name": d["name"],
+                "description": d["description"] or "",
+                # a parent that was deleted reads as top level, like the People page shows it
+                "parent_id": (
+                    str(d["parent_id"])
+                    if d["parent_id"] and str(d["parent_id"]) in live_departments
+                    else ""
+                ),
+            }
+            for d in departments
+        ],
+        "teams": [
+            {
+                "id": str(t["id"]),
+                "name": t["name"],
+                "description": t["description"] or "",
+                "department_id": (
+                    str(t["department_id"])
+                    if t["department_id"] and str(t["department_id"]) in live_departments
+                    else ""
+                ),
+                "member_count": int(t["member_count"] or 0),
+            }
+            for t in teams
+        ],
     }
 
 

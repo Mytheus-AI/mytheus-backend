@@ -431,11 +431,28 @@ class TranscriptPage(BaseModel):
     next_cursor: str | None = None
 
 
+# What a department or team does and is responsible for (People structure). Agents read it
+# through `GetOrgContext`, so it is capped: 1000 characters, also a CHECK in the migration.
+OrgDescription = Annotated[str, Field(max_length=1000)]
+
+
 class TeamCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str, Field(min_length=1, max_length=200)]
     department_id: uuid.UUID | None = None
+    description: OrgDescription | None = None
+
+
+class TeamUpdate(BaseModel):
+    """`PATCH /teams/{id}`. Only the fields sent change. `department_id: null` moves the team to
+    "No department"; `description: null` or "" clears it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    department_id: uuid.UUID | None = None
+    description: OrgDescription | None = None
 
 
 class Team(BaseModel):
@@ -443,6 +460,17 @@ class Team(BaseModel):
     name: str
     department_id: uuid.UUID | None
     created_at: datetime
+    description: str | None = None
+
+
+class TeamMemberMove(BaseModel):
+    """`POST /teams/{team_id}/members/{user_id}/move`: one transaction, out of this team and
+    into `to_team_id`. `role` omitted keeps the label the person had on the old team."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    to_team_id: uuid.UUID
+    role: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
 
 class TeamMemberUpsert(BaseModel):
@@ -466,6 +494,18 @@ class DepartmentCreate(BaseModel):
 
     name: Annotated[str, Field(min_length=1, max_length=200)]
     parent_id: uuid.UUID | None = None
+    description: OrgDescription | None = None
+
+
+class DepartmentUpdate(BaseModel):
+    """`PATCH /departments/{id}`. Only the fields sent change; `description: null` or "" clears
+    it, `parent_id: null` makes it top level."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    parent_id: uuid.UUID | None = None
+    description: OrgDescription | None = None
 
 
 class Department(BaseModel):
@@ -473,6 +513,7 @@ class Department(BaseModel):
     name: str
     parent_id: uuid.UUID | None
     created_at: datetime
+    description: str | None = None
 
 
 class ChatMessageCreate(BaseModel):

@@ -5375,6 +5375,11 @@ components:
           format: date-time
           title: Created At
           type: string
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id
@@ -5398,6 +5403,12 @@ components:
     DepartmentCreate:
       additionalProperties: false
       properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
         name:
           maxLength: 200
           minLength: 1
@@ -5412,6 +5423,34 @@ components:
       required:
       - name
       title: DepartmentCreate
+      type: object
+    DepartmentUpdate:
+      additionalProperties: false
+      description: '`PATCH /departments/{id}`. Only the fields sent change; `description: null` or ""
+        clears
+
+        it, `parent_id: null` makes it top level.'
+      properties:
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          anyOf:
+          - maxLength: 200
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+        parent_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Parent Id
+      title: DepartmentUpdate
       type: object
     DependsOn:
       properties:
@@ -13506,6 +13545,11 @@ components:
             type: string
           - type: 'null'
           title: Department Id
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id
@@ -13529,6 +13573,12 @@ components:
             type: string
           - type: 'null'
           title: Department Id
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
         name:
           maxLength: 200
           minLength: 1
@@ -13559,6 +13609,28 @@ components:
       - role
       title: TeamMember
       type: object
+    TeamMemberMove:
+      additionalProperties: false
+      description: '`POST /teams/{team_id}/members/{user_id}/move`: one transaction, out of this team
+        and
+
+        into `to_team_id`. `role` omitted keeps the label the person had on the old team.'
+      properties:
+        role:
+          anyOf:
+          - maxLength: 100
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Role
+        to_team_id:
+          format: uuid
+          title: To Team Id
+          type: string
+      required:
+      - to_team_id
+      title: TeamMemberMove
+      type: object
     TeamMemberUpsert:
       additionalProperties: false
       properties:
@@ -13584,6 +13656,34 @@ components:
       - id
       - name
       title: TeamOption
+      type: object
+    TeamUpdate:
+      additionalProperties: false
+      description: '`PATCH /teams/{id}`. Only the fields sent change. `department_id: null` moves the
+        team to
+
+        "No department"; `description: null` or "" clears it.'
+      properties:
+        department_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Department Id
+        description:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Description
+        name:
+          anyOf:
+          - maxLength: 200
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Name
+      title: TeamUpdate
       type: object
     TemplateAgendaItem:
       additionalProperties: false
@@ -18071,6 +18171,98 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Create Department
+      tags:
+      - org-hierarchy
+  /api/v1/departments/{department_id}:
+    delete:
+      description: 'Delete a department. Its teams are NEVER deleted: they move to "No department"
+
+        (`department_id = NULL`), people and all. Departments nested under it move up one level, to
+
+        its own parent. The row is soft-deleted (`deleted_at`), like every org row.'
+      operationId: delete_department
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          format: uuid
+          title: Department Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Department
+      tags:
+      - org-hierarchy
+    patch:
+      description: 'Rename, describe or re-parent a department. Only the fields sent change.
+
+
+        A parent must be a live department of this tenant and must not be the department itself or
+
+        one of its descendants (that would detach a loop of departments from every root).'
+      operationId: update_department
+      parameters:
+      - in: path
+        name: department_id
+        required: true
+        schema:
+          format: uuid
+          title: Department Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Department
       tags:
       - org-hierarchy
   /api/v1/digests:
@@ -24219,6 +24411,97 @@ paths:
       summary: Create Team
       tags:
       - org-hierarchy
+  /api/v1/teams/{team_id}:
+    delete:
+      description: 'Delete a team: the team is soft-deleted and its memberships are removed (the people
+        stay
+
+        in the workspace, on whatever other teams they are on). The UI confirms first and says how
+
+        many people are on it; the API itself is a plain DELETE so a script can do the same.'
+      operationId: delete_team
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete Team
+      tags:
+      - org-hierarchy
+    patch:
+      description: 'Rename, describe or move a team to another department (`department_id`, or null for
+        "No
+
+        department"). Only the fields sent change.'
+      operationId: update_team
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update Team
+      tags:
+      - org-hierarchy
   /api/v1/teams/{team_id}/members:
     get:
       description: 'The roster. Readable by any member: who is on a team is not privileged inside a tenant.'
@@ -24368,6 +24651,69 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Add Team Member
+      tags:
+      - org-hierarchy
+  /api/v1/teams/{team_id}/members/{user_id}/move:
+    post:
+      description: 'Move a person from this team to `to_team_id` in one transaction: never on both, never
+        on
+
+        neither. Their label (`role`) comes along unless the body sets a new one. Moving onto a team
+
+        they are already on just updates that membership and leaves this one.'
+      operationId: move_team_member
+      parameters:
+      - in: path
+        name: team_id
+        required: true
+        schema:
+          format: uuid
+          title: Team Id
+          type: string
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          format: uuid
+          title: User Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamMemberMove'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Move Team Member
       tags:
       - org-hierarchy
   /api/v1/time-machine/diff:
