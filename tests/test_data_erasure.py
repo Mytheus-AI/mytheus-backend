@@ -203,6 +203,10 @@ def test_person_erasure_removes_their_data_keeps_org_records_and_is_recorded(cli
         "clips": 0,
         "date_proposals": 0,
         "capture_preferences": 0,
+        "room_signals": 0,
+        "late_contributions": 0,
+        "last_word_nudges": 0,
+        "agreement_checks": 0,
     }
     assert out["anonymized"]["decisions"] == 1
     assert out["anonymized"]["actions_unassigned"] == 1

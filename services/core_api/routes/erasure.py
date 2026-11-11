@@ -138,9 +138,28 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
         "DELETE FROM promise_date_proposals WHERE proposer_id = :t OR requester_id = :t",
     ),
     ("capture_preferences", "DELETE FROM promise_capture_preferences WHERE user_id = :t"),
+    # "After the meeting" layer 1: what the room saw of them, their nudges, late points and
+    # private agreement answers.
+    ("room_signals", "DELETE FROM room_signals WHERE user_id = :t"),
+    ("late_contributions", "DELETE FROM late_contributions WHERE user_id = :t"),
+    ("last_word_nudges", "DELETE FROM last_word_nudges WHERE user_id = :t"),
+    ("agreement_checks", "DELETE FROM agreement_checks WHERE user_id = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
+    # "After the meeting" layer 1: their words in a saved open thread.
+    (
+        "resume_point_cut_offs",
+        "UPDATE resume_points SET cut_off_user_id = NULL, cut_off_quote = NULL, "
+        "cut_off_start_ms = NULL, cut_off_end_ms = NULL WHERE cut_off_user_id = :t",
+    ),
+    (
+        "resume_point_positions",
+        "UPDATE resume_points SET positions = COALESCE((SELECT jsonb_agg(p) FROM "
+        "jsonb_array_elements(positions) p WHERE p->>'user_id' IS DISTINCT FROM CAST(:t AS text)), "
+        "'[]'::jsonb) WHERE positions @> jsonb_build_array(jsonb_build_object('user_id', "
+        "CAST(:t AS text)))",
+    ),
     ("decisions", "UPDATE decisions SET confirmed_by = NULL WHERE confirmed_by = :t"),
     ("actions_confirmed", "UPDATE action_items SET confirmed_by = NULL WHERE confirmed_by = :t"),
     ("actions_unassigned", "UPDATE action_items SET assignee_id = NULL WHERE assignee_id = :t"),
@@ -205,6 +224,14 @@ _MEETING_DELETES: tuple[tuple[str, str], ...] = (
     ("agent_feedback", "DELETE FROM agent_feedback WHERE meeting_id = :t"),
     # Polish wave 3: the meeting's clips (and with them their share links).
     ("clips", "DELETE FROM meeting_clips WHERE meeting_id = :t"),
+    # "After the meeting" layer 1.
+    ("room_signals", "DELETE FROM room_signals WHERE meeting_id = :t"),
+    ("late_contributions", "DELETE FROM late_contributions WHERE meeting_id = :t"),
+    ("last_word_nudges", "DELETE FROM last_word_nudges WHERE meeting_id = :t"),
+    ("agreement_checks", "DELETE FROM agreement_checks WHERE meeting_id = :t"),
+    ("agreement_reads", "DELETE FROM decision_agreement_reads WHERE meeting_id = :t"),
+    ("resume_points", "DELETE FROM resume_points WHERE meeting_id = :t"),
+    ("room_signal_runs", "DELETE FROM room_signal_runs WHERE meeting_id = :t"),
     (
         "unconfirmed_decisions",
         "DELETE FROM decisions d WHERE d.meeting_id = :t AND d.status IN ('proposed', 'dismissed') "
