@@ -83,6 +83,9 @@ class PatPrincipal:
     rbac_tier: str
     token_hash: str
     expires_at: datetime
+    # `personal` (made in settings) or `oauth` (minted by the authorization server for an MCP
+    # client such as Claude; bound to the MCP resource, so the gateway admits it on `/mcp` only).
+    kind: str = "personal"
 
     def can_write(self) -> bool:
         return self.scope == "read_write"
@@ -161,12 +164,17 @@ def refused(reason: Literal["not_public", "scope"]) -> ProblemDetail:
     )
 
 
+# An OAuth access token (`kind = 'oauth'`) also dies with its client: a client an operator
+# revoked (`oauth_clients.revoked_at`) stops every token it holds on the next request.
 _LOOKUP = text(
-    "SELECT t.id, t.user_id, t.scope, t.expires_at, t.token_hash, u.clerk_user_id, g.tier "
+    "SELECT t.id, t.user_id, t.scope, t.expires_at, t.token_hash, t.kind, u.clerk_user_id, "
+    "g.tier "
     "FROM api_tokens t "
     "JOIN users u ON u.id = t.user_id AND u.deleted_at IS NULL "
     "LEFT JOIN rbac_grants g ON g.user_id = u.id AND g.org_id = u.org_id "
-    "WHERE t.token_hash = :h AND t.revoked_at IS NULL AND t.expires_at > now()"
+    "LEFT JOIN oauth_clients c ON c.client_id = t.oauth_client_id "
+    "WHERE t.token_hash = :h AND t.revoked_at IS NULL AND t.expires_at > now() "
+    "AND (t.oauth_client_id IS NULL OR c.revoked_at IS NULL)"
 )
 
 
@@ -196,6 +204,7 @@ async def resolve(session: AsyncSession, token: str) -> PatPrincipal | None:
         rbac_tier=str(row["tier"] or ""),
         token_hash=digest,
         expires_at=row["expires_at"],
+        kind=str(row["kind"] or "personal"),
     )
 
 

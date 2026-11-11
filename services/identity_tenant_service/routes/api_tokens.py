@@ -175,10 +175,15 @@ async def list_api_tokens(
         raise ProblemDetail(
             403, ErrorCode.FORBIDDEN_ROLE, "Listing everyone's tokens requires admin or above"
         )
-    sql = f"SELECT {_COLS} FROM api_tokens t JOIN users u ON u.id = t.user_id"
+    # Personal tokens only: OAuth access tokens (`kind = 'oauth'`) are listed per connection
+    # under Connected apps (`/api/v1/oauth/grants`), not here.
+    sql = (
+        f"SELECT {_COLS} FROM api_tokens t JOIN users u ON u.id = t.user_id "
+        "WHERE t.kind = 'personal'"
+    )
     params: dict[str, Any] = {}
     if owner == "me":
-        sql += " WHERE t.user_id = :u"
+        sql += " AND t.user_id = :u"
         params["u"] = str(user_id)
     sql += " ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC LIMIT 500"
     rows = (await session.execute(text(sql), params)).mappings().all()
@@ -207,8 +212,8 @@ async def create_api_token(
     active = (
         await session.execute(
             text(
-                "SELECT count(*) FROM api_tokens WHERE user_id = :u AND revoked_at IS NULL "
-                "AND expires_at > now()"
+                "SELECT count(*) FROM api_tokens WHERE user_id = :u AND kind = 'personal' "
+                "AND revoked_at IS NULL AND expires_at > now()"
             ),
             {"u": str(user_id)},
         )
@@ -282,7 +287,10 @@ async def revoke_api_token(
     row = (
         (
             await session.execute(
-                text("SELECT user_id, revoked_at FROM api_tokens WHERE id = :id FOR UPDATE"),
+                text(
+                    "SELECT user_id, revoked_at FROM api_tokens "
+                    "WHERE id = :id AND kind = 'personal' FOR UPDATE"
+                ),
                 {"id": str(token_id)},
             )
         )

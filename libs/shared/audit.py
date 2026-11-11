@@ -182,3 +182,15 @@ ACTION_RECORDING_CLIP_VIDEO_ISSUED = "recording.clip_video_issued"
 ACTION_RECORDING_ERASED = "recording.erased"
 ACTION_CLIP_CREATED = "clip.created"
 ACTION_CLIP_DELETED = "clip.deleted"
+# OAuth for the MCP server (Claude custom connectors; identity-tenant-service is the
+# authorization server). A person approving or denying an app on the consent page; the token
+# endpoint issuing (code redeemed), refreshing (rotation) and revoking (RFC 7009, settings, or a
+# family killed because a used refresh token or code came back). Client REGISTRATION has no
+# tenant, so it is recorded on the `oauth_clients` row itself (`registered_ip`, `created_at`)
+# and in the service log, not here: `audit_logs` is tenant-scoped.
+ACTION_OAUTH_AUTHORIZATION_GRANTED = "oauth.authorization_granted"
+ACTION_OAUTH_AUTHORIZATION_DENIED = "oauth.authorization_denied"
+ACTION_OAUTH_TOKEN_ISSUED = "oauth.token_issued"
+ACTION_OAUTH_TOKEN_REFRESHED = "oauth.token_refreshed"
+ACTION_OAUTH_TOKEN_REVOKED = "oauth.token_revoked"
+ACTION_OAUTH_GRANT_REVOKED = "oauth.grant_revoked"
