@@ -312,6 +312,8 @@ async def _handle_event(
         ],
         "organizer_email": organizer_email,
         "attachments": attachment_out,
+        # Promise ledger capacity: focus time and out-of-office are not meeting time.
+        "event_kind": str(event.get("eventType") or "default")[:40],
     }
     version = str(event.get("updated") or event.get("etag") or "0")
     await enqueue(

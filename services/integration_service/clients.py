@@ -314,9 +314,11 @@ class SlackOAuth(_Http):
     provider = config.SLACK
     # `channels:history` / `groups:history` (+ `channels:read` / `groups:read` for the channel's
     # name) let the app read messages in the channels it was invited to, for "Decisions that
-    # follow you"; `commands` is the "Check against decisions" message shortcut. A workspace
-    # installed before they were added keeps working; its decision checks stay off until it
-    # reconnects (`connectors/slack.py` `DECISION_CHECK_SCOPES`).
+    # follow you"; `commands` is the "Check against decisions" message shortcut. `im:history` /
+    # `mpim:history` (with the history scopes above) let the person's agent read the messages they
+    # post for the promise ledger (event subscriptions `message.channels`, `message.groups`,
+    # `message.im`, `message.mpim`). A workspace installed before these keeps working for briefs
+    # and summaries; its decision checks and promise capture start once it reconnects.
     scopes = (
         "chat:write",
         "users:read",
@@ -327,6 +329,8 @@ class SlackOAuth(_Http):
         "channels:read",
         "groups:read",
         "commands",
+        "im:history",
+        "mpim:history",
     )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
@@ -451,6 +455,30 @@ class SlackApi(_Http):
             json={"channel": channel, "text": text, "blocks": blocks, "unfurl_links": False},
         )
         return {"channel": str(body.get("channel") or channel), "ts": str(body.get("ts") or "")}
+
+    async def user_info(self, token: str, user_id: str) -> dict[str, str | None] | None:
+        """-> {email, name} of a workspace member, None when Slack does not know them. A bot,
+        or a member whose email the install may not read, has no email."""
+        try:
+            body = await self._web(
+                token, "user_info", "GET", "users.info", params={"user": user_id}
+            )
+        except ProviderError as exc:
+            if exc.reason in ("user_not_found", "user_not_visible"):
+                return None
+            raise
+        user = body.get("user") or {}
+        profile = user.get("profile") or {}
+        if user.get("is_bot") or user.get("deleted"):
+            return None
+        name = (
+            profile.get("display_name")
+            or profile.get("real_name")
+            or user.get("real_name")
+            or user.get("name")
+        )
+        email = profile.get("email")
+        return {"email": str(email) if email else None, "name": str(name) if name else None}
 
     async def permalink(self, token: str, *, channel: str, ts: str) -> str | None:
         try:

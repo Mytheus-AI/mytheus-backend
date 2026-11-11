@@ -33,6 +33,7 @@ from services.core_api.routes import (
     internal_meetings,
     internal_policy,
     internal_promise_drift,
+    internal_promises,
     internal_reach,
     internal_retrieval,
     me_memory,
@@ -42,6 +43,7 @@ from services.core_api.routes import (
     my_tasks,
     off_record,
     org_hierarchy,
+    promises,
     public_api,
     room_closeout,
     share_links,
@@ -112,6 +114,10 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond the meeting, Layer 2: one promise ledger (promises from every channel, the capacity
+# check, date proposals) and the internal capture door integration-service uses.
+app.include_router(promises.router)
+app.include_router(internal_promises.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

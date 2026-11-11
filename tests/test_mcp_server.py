@@ -34,7 +34,7 @@ from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
 from services.bff import ask as ask_mod
 from services.bff import mcp as mcp_mod
-from services.core_api.routes import action_create, commitments, my_tasks, public_api
+from services.core_api.routes import action_create, commitments, my_tasks, promises, public_api
 from tests.conftest import APP_URL
 from tests.test_api_tokens import mint
 from tests.test_chat_api import Tenant, _sql, seed_tenant
@@ -51,7 +51,13 @@ def apps(migrated_db, monkeypatch):
     db_mod.get_engine.cache_clear()
     db_mod.get_sessionmaker.cache_clear()
     core = create_app("core-api-mcp-test")
-    for r in (public_api.router, my_tasks.router, commitments.router, action_create.router):
+    for r in (
+        public_api.router,
+        my_tasks.router,
+        commitments.router,
+        action_create.router,
+        promises.router,
+    ):
         core.include_router(r)
     bff = create_app("bff-mcp-test")
     bff.include_router(mcp_mod.router)
@@ -109,7 +115,9 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
             "list_my_open_actions",
             "list_my_promises",
             "check_against_decisions",
+            "check_my_capacity",
             "create_action",
+            "add_promise",
         }
         found = await s.call_tool("search_meetings", {"query": "atlas"})
         assert not found.is_error
@@ -124,7 +132,11 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
         mine = await s.call_tool("list_my_open_actions", {})
         assert "Draft the Atlas FAQ" in _text(mine)
         promises = await s.call_tool("list_my_promises", {})
-        assert "I will call Acme" in _text(promises)
+        assert "I will call Acme" in _text(promises) and "[Pricing review]" in _text(promises)
+        week = await s.call_tool("check_my_capacity", {"timezone": "UTC"})
+        assert not week.is_error and len(week.structured_content["days"]) == 7
+        day = await s.call_tool("check_my_capacity", {"due_date": "2026-11-13"})
+        assert not day.is_error and "things due" in _text(day)
         theirs = await s.call_tool("get_meeting_outcome", {"meeting_id": str(foreign)})
         assert theirs.is_error and "not from a meeting you took part in" in _text(theirs)
 
@@ -270,3 +282,25 @@ async def test_protocol_edges(apps):
 
 def test_env_is_not_leaking_into_other_tests():
     assert os.environ.get(ask_mod.TOKENS_ENV) in (None, "")
+
+
+async def test_add_promise_needs_a_read_write_token_and_warns_about_a_full_day(apps):
+    me, _, _, _ = _seed()
+    for i in range(6):
+        _sql(
+            "INSERT INTO commitments (org_id, user_id, content, due_at, channel, "
+            "source_window_id) VALUES (%(o)s, %(u)s, %(c)s, '2030-01-04', 'manual', %(w)s)",
+            {"o": str(me.org_id), "u": str(me.user_id), "c": f"Busy {i}", "w": f"m{i}"},
+        )
+    async with session_for(apps, mint(me, scope="read")) as s:
+        refused = await s.call_tool("add_promise", {"content": "Send the deck"})
+        assert refused.is_error and "read-only" in _text(refused)
+    async with session_for(apps, mint(me, scope="read_write")) as s:
+        added = await s.call_tool(
+            "add_promise",
+            {"content": "Send the deck", "due_date": "2030-01-04", "recipient": "Acme"},
+        )
+        assert not added.is_error, _text(added)
+        assert "Added to your promises: Send the deck, due 2030-01-04" in _text(added)
+        assert "That's your seventh promise due" in _text(added)
+        assert added.structured_content["promise"]["recipient_name"] == "Acme"

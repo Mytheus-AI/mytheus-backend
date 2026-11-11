@@ -258,9 +258,11 @@ async def build_digest(
         (
             await session.execute(
                 text(
-                    "SELECT c.id, c.content, c.due_hint, c.meeting_id, m.title AS meeting_title "
+                    "SELECT c.id, c.content, c.due_hint, c.due_at AS due_date, "
+                    "c.meeting_id, m.title AS meeting_title "
                     "FROM commitments c LEFT JOIN meetings m ON m.id = c.meeting_id "
-                    "WHERE c.user_id = :u AND c.status = 'open' AND c.due_hint IS NOT NULL "
+                    "WHERE c.user_id = :u AND c.status = 'open' AND c.review_state = 'confirmed' "
+                    "AND (c.due_hint IS NOT NULL OR c.due_at IS NOT NULL) "
                     "AND c.created_at >= :since ORDER BY c.created_at DESC, c.id LIMIT 10"
                 ),
                 {"u": str(user_id), "since": start - timedelta(days=21)},

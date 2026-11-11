@@ -140,6 +140,21 @@ class CoreApiClient:
             {"acting_email": acting_email},
         )
 
+    async def promise_capture_check(
+        self, org_id: uuid.UUID, channel: str, author_email: str
+    ) -> dict[str, Any]:
+        """Promise ledger: may this author's agent look at their `channel` messages?"""
+        return await self._call(
+            "POST",
+            "/internal/promises/capture-check",
+            org_id,
+            {"channel": channel, "author_email": author_email},
+        )
+
+    async def promises_captured(self, org_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:
+        """Promise ledger: the promises the author's agent found in one message (pending)."""
+        return await self._call("POST", "/internal/promises/captured", org_id, body)
+
 
 _core: CoreApiClient | None = None
 

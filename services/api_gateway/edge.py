@@ -406,6 +406,8 @@ ROUTE_MAP: dict[str, str] = {
     # ADR-0039 Part B: meeting types, promises and status requests are core-api's too.
     "/api/v1/meeting-templates": "core-api",
     "/api/v1/commitments": "core-api",
+    # Promise ledger (Beyond the meeting, Layer 2): every channel, capacity, date proposals.
+    "/api/v1/promises": "core-api",
     # Polish wave 2: the caller's own memory across meetings (core-api's person_memory).
     "/api/v1/me/memory": "core-api",
     "/api/v1/status-requests": "core-api",

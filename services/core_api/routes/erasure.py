@@ -132,6 +132,12 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     ("agent_calibration", "DELETE FROM agent_calibration WHERE user_id = :t"),
     # Polish wave 3: the clips they made (their share links go with them, ON DELETE CASCADE).
     ("clips", "DELETE FROM meeting_clips WHERE created_by = :t"),
+    # Promise ledger: dates they asked to move or were asked about, and where their agent looks.
+    (
+        "date_proposals",
+        "DELETE FROM promise_date_proposals WHERE proposer_id = :t OR requester_id = :t",
+    ),
+    ("capture_preferences", "DELETE FROM promise_capture_preferences WHERE user_id = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
@@ -172,6 +178,17 @@ _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
     ),
     ("wrap_ups", "UPDATE meetings SET wrap_up_by = NULL WHERE wrap_up_by = :t"),
     ("closes", "UPDATE meetings SET closed_by = NULL WHERE closed_by = :t"),
+    # Promise ledger: other people's promises no longer name them as recipient or hand-off.
+    (
+        "promise_recipients",
+        "UPDATE commitments SET recipient_user_id = NULL WHERE recipient_user_id = :t",
+    ),
+    (
+        "promise_handoffs",
+        "UPDATE commitments SET created_by = CASE WHEN created_by = :t THEN NULL "
+        "ELSE created_by END, handed_off_to = CASE WHEN handed_off_to = :t THEN NULL "
+        "ELSE handed_off_to END WHERE created_by = :t OR handed_off_to = :t",
+    ),
 )
 
 # A never-confirmed decision is deleted only when no other decision points at it: `supersedes`

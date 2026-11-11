@@ -64,6 +64,7 @@ PUBLIC_API_PREFIXES: tuple[str, ...] = (
     "/api/v1/decisions",
     "/api/v1/actions",
     "/api/v1/commitments",
+    "/api/v1/promises",
     "/api/v1/search",
     "/api/v1/ask",
     # Decisions that follow you: challenges and reopen requests.

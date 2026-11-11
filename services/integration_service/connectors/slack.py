@@ -10,15 +10,36 @@ the summary travel as `title` + a Slack-mrkdwn `body` + an app `link`; notificat
 renders those into Block Kit (header, section, link button) when it posts.
 
 Inbound events: `app_uninstalled` and `tokens_revoked` disconnect (the connection becomes
-`disconnected` and its tokens are deleted); channel `message` events and the interactivity
-payloads drive "Decisions that follow you" (below); everything else is recorded and skipped.
+`disconnected` and its tokens are deleted); the interactivity payloads drive "Decisions that
+follow you" (below); everything else is recorded and skipped.
+
+A `message` event runs two independent passes, decision check first, then promise capture.
+Each has its own free pre-gate before any model call, and one failing never stops the other
+(`_message_passes`).
+
+1. Decisions that follow you (A1): channel messages only, never DMs (below).
+2. Promise ledger: a person's own message can carry a promise ("I'll send the deck by Friday").
+   In order, stopping at the first "no":
+   a. only a person's plain message (no subtype, no bot, has text) that says something like a
+      promise in the first person (`PROMISE_CUE`, a deterministic pre-gate: most messages never
+      reach a model);
+   b. the extractor is connected (`promise_client.get_extractor()`), else nothing leaves the
+      tenant;
+   c. the author is a live user of this workspace whose agent may look at their Slack messages
+      (core-api `capture-check`, by the email Slack holds for them; per-person opt-out);
+   d. the person's agent extracts their own promises (intelligence `promise_extract`), with the
+      people the message mentions as candidate recipients;
+   e. core-api stores them `pending` with the message's permalink and the exact quote; the
+      person confirms or dismisses each one in the ledger.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +49,9 @@ from libs.shared.outbox import enqueue
 from services.integration_service import config, store
 from services.integration_service.clients import Clients, ProviderError
 from services.integration_service.core_client import CoreApiClient, CoreApiError
+from services.integration_service.promise_client import get_extractor
+
+logger = logging.getLogger(__name__)
 
 PROVIDER = config.SLACK
 PRODUCER = "integration-service"
@@ -60,7 +84,7 @@ async def process(
     if event.get("type") == "message":
         if org_id is None or clients is None or core is None:
             return "skipped"
-        return await process_message(session, org_id, event, clients, core)
+        return await _message_passes(session, org_id, payload, clients, core)
     if event.get("type") not in ("app_uninstalled", "tokens_revoked"):
         return "skipped"
     conn = await store.get_connection(session, PROVIDER, for_update=True)
@@ -70,6 +94,147 @@ async def process(
     await store.delete_cursors(session, conn.id)
     await store.set_status(session, conn.id, "disconnected")
     return "processed"
+
+
+# --- Promise ledger: promise capture ----------------------------------------------------------
+
+# First-person future commitments, the cheap pre-gate before any model call. Wide on purpose
+# (the model decides); a message with none of these never leaves the tenant.
+PROMISE_CUE = re.compile(
+    r"\b(i\s*'?ll|i will|i'm going to|i am going to|i can|let me|will do|on it|i promise|"
+    r"i'?ll have|count on me|leave it with me|i'?m on|i'?ll get|we'?ll|i'?d be happy to|"
+    r"i commit|by (?:mon|tue|wed|thu|fri|sat|sun|tomorrow|today|eod|end of))",
+    re.IGNORECASE,
+)
+MAX_PROMISE_MENTIONS = 5
+_PROMISE_MENTION = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>")
+_PROMISE_LINK = re.compile(r"<(https?://[^|>]+)(?:\|([^>]+))?>")
+_PROMISE_SPECIAL = re.compile(r"<!(here|channel|everyone)[^>]*>")
+
+
+def is_promise_candidate(event: dict[str, Any]) -> bool:
+    """A person's own plain message that may carry a promise."""
+    if event.get("type") != "message" or event.get("subtype") or event.get("bot_id"):
+        return False
+    text = event.get("text")
+    if not isinstance(text, str) or not text.strip() or not event.get("user"):
+        return False
+    if not event.get("channel") or not event.get("ts"):
+        return False
+    return PROMISE_CUE.search(text) is not None
+
+
+def _promise_plain(text: str, names: dict[str, str]) -> str:
+    text = _PROMISE_MENTION.sub(lambda m: f"@{names.get(m.group(1), 'someone')}", text)
+    text = _PROMISE_LINK.sub(lambda m: m.group(2) or m.group(1), text)
+    text = _PROMISE_SPECIAL.sub(lambda m: f"@{m.group(1)}", text)
+    text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    return text[:MAX_MESSAGE_CHARS]
+
+
+def _sent_at(ts: Any) -> datetime:
+    try:
+        return datetime.fromtimestamp(float(ts), tz=UTC)
+    except (TypeError, ValueError):
+        return datetime.now(UTC)
+
+
+async def capture_promises(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    payload: dict[str, Any],
+    clients: Clients,
+    core: CoreApiClient,
+) -> str:
+    """Steps 1-5 of the module docstring for one `message` event."""
+    event = payload.get("event") or {}
+    if not is_promise_candidate(event):
+        return "skipped"
+    extractor = get_extractor()
+    if extractor is None:
+        return "skipped"  # not connected: no model call without the intelligence secret
+    conn = await store.get_connection(session, PROVIDER, active_only=True)
+    if conn is None:
+        return "skipped"
+    token = (await store.access_token(session, conn, clients.oauth[PROVIDER])).access_token
+    author = await clients.slack.user_info(token, str(event["user"]))
+    if not author or not author.get("email"):
+        return "skipped"
+    check = await core.promise_capture_check(org_id, "slack", str(author["email"]))
+    if not check.get("user_id") or not check.get("enabled"):
+        return "skipped"
+    names: dict[str, str] = {}
+    people: list[dict[str, str | None]] = []
+    for slack_id in list(dict.fromkeys(_PROMISE_MENTION.findall(str(event["text"]))))[
+        :MAX_PROMISE_MENTIONS
+    ]:
+        if slack_id == event["user"]:
+            continue
+        info = await clients.slack.user_info(token, slack_id)
+        if info and info.get("name"):
+            names[slack_id] = str(info["name"])
+            people.append({"label": str(info["name"]), "email": info.get("email")})
+    sent = _sent_at(event.get("ts"))
+    found = await extractor.extract(
+        org_id,
+        channel="slack",
+        text=_promise_plain(str(event["text"]), names),
+        author_name=author.get("name"),
+        occurred_at=sent.isoformat(),
+        reference_date=sent.date().isoformat(),
+        people=people,
+    )
+    if found.status != "ok" or not found.promises:
+        return "processed"
+    channel_id, ts = str(event["channel"]), str(event["ts"])
+    link = await clients.slack.permalink(token, channel=channel_id, ts=ts)
+    team = str(payload.get("team_id") or conn.external_account_id or "")
+    await core.promises_captured(
+        org_id,
+        {
+            "channel": "slack",
+            "author_email": str(author["email"]),
+            "source_ref": f"slack:{team}:{channel_id}:{ts}"[:300],
+            "source_link": link,
+            "occurred_at": sent.isoformat(),
+            "prompt_version": found.prompt,
+            "promises": found.promises[:20],
+        },
+    )
+    return "processed"
+
+
+async def _message_passes(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    payload: dict[str, Any],
+    clients: Clients,
+    core: CoreApiClient,
+) -> str:
+    """One `message` event, two independent passes: the decision check (A1) and promise capture.
+
+    Each runs whatever the other did. A pass that fails is logged; the inbox row is retried
+    (the first error re-raised) only when no pass did anything, because a retry re-runs both and
+    a pass that already acted (an ephemeral note posted, promises stored) must not act twice.
+    """
+    event = payload.get("event") or {}
+    outcomes: list[str] = []
+    errors: list[Exception] = []
+    passes: tuple[tuple[str, Callable[[], Awaitable[str]]], ...] = (
+        ("decision_check", lambda: process_message(session, org_id, event, clients, core)),
+        ("promise_capture", lambda: capture_promises(session, org_id, payload, clients, core)),
+    )
+    for name, run in passes:
+        try:
+            outcomes.append(await run())
+        except (ProviderError, CoreApiError, store.NotConnected) as exc:
+            logger.warning("slack message %s pass failed: %s", name, type(exc).__name__)
+            errors.append(exc)
+    if "processed" in outcomes:
+        return "processed"
+    if errors:
+        raise errors[0]
+    return "skipped"
 
 
 # --- Decisions that follow you (A1) -----------------------------------------------------------
