@@ -855,6 +855,11 @@ components:
             $ref: '#/components/schemas/DepartmentNode'
           title: Children
           type: array
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id
@@ -876,6 +881,11 @@ components:
       type: object
     DepartmentRef:
       properties:
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id
@@ -1572,6 +1582,11 @@ components:
       type: object
     TeamNode:
       properties:
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id
@@ -1601,6 +1616,11 @@ components:
             type: string
           - type: 'null'
           title: Department Id
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         id:
           format: uuid
           title: Id

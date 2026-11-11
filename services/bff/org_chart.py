@@ -62,10 +62,11 @@ ARM_TIMEOUT_SECONDS = 2.0
 ChartStatus = Literal["ok", "degraded", "empty"]
 
 _SELECT_DEPARTMENTS = text(
-    "SELECT id, name, parent_id FROM departments WHERE deleted_at IS NULL ORDER BY name"
+    "SELECT id, name, parent_id, description FROM departments "
+    "WHERE deleted_at IS NULL ORDER BY name"
 )
 _SELECT_TEAMS = text(
-    "SELECT id, name, department_id FROM teams WHERE deleted_at IS NULL ORDER BY name"
+    "SELECT id, name, department_id, description FROM teams WHERE deleted_at IS NULL ORDER BY name"
 )
 _SELECT_MEMBERS = text(
     "SELECT tm.team_id, u.id AS user_id, u.email, u.role, tm.role AS role_in_team "
@@ -91,6 +92,8 @@ class TeamNode(BaseModel):
     id: uuid.UUID
     name: str
     members: list[Member]
+    # What the team does (People structure); None when no admin has written one.
+    description: str | None = None
 
 
 class DepartmentNode(BaseModel):
@@ -98,6 +101,7 @@ class DepartmentNode(BaseModel):
     name: str
     teams: list[TeamNode]
     children: list[DepartmentNode]
+    description: str | None = None
 
 
 DepartmentNode.model_rebuild()
@@ -134,7 +138,12 @@ async def _build_tree(session: AsyncSession) -> _ChartData:
     teams_by_department: dict[str, list[TeamNode]] = defaultdict(list)
     unassigned_teams: list[TeamNode] = []
     for t in team_rows:
-        node = TeamNode(id=t["id"], name=t["name"], members=members_by_team.get(str(t["id"]), []))
+        node = TeamNode(
+            id=t["id"],
+            name=t["name"],
+            members=members_by_team.get(str(t["id"]), []),
+            description=t["description"],
+        )
         if t["department_id"] is None:
             unassigned_teams.append(node)
         else:
@@ -146,6 +155,7 @@ async def _build_tree(session: AsyncSession) -> _ChartData:
             name=d["name"],
             teams=teams_by_department.get(str(d["id"]), []),
             children=[],
+            description=d["description"],
         )
         for d in dept_rows
     }

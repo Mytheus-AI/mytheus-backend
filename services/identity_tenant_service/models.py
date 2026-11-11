@@ -153,6 +153,12 @@ class RbacGrant(Base):
 
 # --- P2 stubs (extended in Plan 1-2) ---
 
+_DESCRIPTION = (
+    "What it does and is responsible for (admin-written, at most 1000 characters). "
+    "Agents read it via GetOrgContext."
+)
+_DESCRIPTION_CHECK = "description IS NULL OR char_length(description) <= 1000"
+
 
 class Team(Base, TenantMixin, TimestampMixin):
     __tablename__ = "teams"
@@ -163,6 +169,9 @@ class Team(Base, TenantMixin, TimestampMixin):
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
     )
+    # People structure (migration c8d9e0f1a2b3): what the team does, read by agents.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True, comment=_DESCRIPTION)
+    __table_args__ = (CheckConstraint(_DESCRIPTION_CHECK, name="description_length"),)
 
 
 class TeamMember(Base, TenantMixin):
@@ -186,6 +195,9 @@ class Department(Base, TenantMixin, TimestampMixin):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, index=True
     )
+    # People structure (migration c8d9e0f1a2b3): what the department does, read by agents.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True, comment=_DESCRIPTION)
+    __table_args__ = (CheckConstraint(_DESCRIPTION_CHECK, name="description_length"),)
 
 
 class TenantSettings(Base, TimestampMixin):

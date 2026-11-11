@@ -384,7 +384,8 @@ def test_both_writes_are_audited_with_the_acting_admin(client, tenant_a):
 
     rows = _sql(
         "SELECT action, actor_id, target_type, metadata FROM audit_logs "
-        "WHERE target_id = %(t)s AND org_id = %(o)s ORDER BY occurred_at",
+        "WHERE target_id = %(t)s AND org_id = %(o)s AND action LIKE 'team.member_%%' "
+        "ORDER BY occurred_at",
         {"t": str(team_id), "o": str(tenant_a.org_id)},
     )
     actions = [r["action"] for r in rows]

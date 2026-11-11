@@ -84,6 +84,24 @@ message TopicWatch {
   string topic   = 2;
 }
 
+// People structure: a department and what it does. parent_id empty = top level.
+message OrgDepartment {
+  string id          = 1;
+  string name        = 2;
+  string description = 3;  // empty string = none (admin-written, at most 1000 characters)
+  string parent_id   = 4;
+}
+
+// People structure: a team, what it does and how many people are on it. No member ids: a
+// person's own teams come from UserContext.team_ids.
+message OrgTeam {
+  string id            = 1;
+  string name          = 2;
+  string description   = 3;  // empty string = none (admin-written, at most 1000 characters)
+  string department_id = 4;  // empty string = "No department"
+  int32  member_count  = 5;
+}
+
 message OrgContext {
   string description = 1;
   string industry    = 2;
@@ -94,4 +112,6 @@ message OrgContext {
   repeated Goal goals                = 7;  // active only, ordered by position
   repeated string never_record_topics = 8;
   repeated TopicWatch topic_watches  = 9;  // every watch in the org
+  repeated OrgDepartment departments = 10; // live departments, ordered by lower(name)
+  repeated OrgTeam teams             = 11; // live teams, ordered by lower(name)
 }

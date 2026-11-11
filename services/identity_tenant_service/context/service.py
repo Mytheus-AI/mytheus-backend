@@ -42,7 +42,7 @@ _SELECT_USER = text(
 )
 
 _SELECT_TEAMS = text(
-    "SELECT t.id, t.name, t.department_id FROM teams t "
+    "SELECT t.id, t.name, t.department_id, t.description FROM teams t "
     "JOIN team_members tm ON tm.team_id = t.id "
     "WHERE tm.user_id = :uid AND t.deleted_at IS NULL "
     "ORDER BY t.name"
@@ -54,7 +54,7 @@ _SELECT_TEAMS = text(
 # for a field the plan's own pseudocode treats as singular; there is no canon tiebreak rule for
 # the multi-department case.
 _SELECT_DEPARTMENT = text(
-    "SELECT DISTINCT d.id, d.name FROM departments d "
+    "SELECT DISTINCT d.id, d.name, d.description FROM departments d "
     "JOIN teams t ON t.department_id = d.id "
     "JOIN team_members tm ON tm.team_id = t.id "
     "WHERE tm.user_id = :uid AND d.deleted_at IS NULL "
@@ -164,11 +164,18 @@ async def _compute(
                 "id": str(t["id"]),
                 "name": t["name"],
                 "department_id": str(t["department_id"]) if t["department_id"] else None,
+                "description": t["description"],
             }
             for t in team_rows
         ],
         "department": (
-            {"id": str(dept_row["id"]), "name": dept_row["name"]} if dept_row is not None else None
+            {
+                "id": str(dept_row["id"]),
+                "name": dept_row["name"],
+                "description": dept_row["description"],
+            }
+            if dept_row is not None
+            else None
         ),
         "recent_meetings": [
             {

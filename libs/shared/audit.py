@@ -92,6 +92,15 @@ ACTION_MEETING_PARTICIPANTS_ADDED = "meeting.participants_added"
 # scope agents and worklog rollups, so who changed it is a compliance fact rather than a log line.
 ACTION_TEAM_MEMBER_ADDED = "team.member_added"
 ACTION_TEAM_MEMBER_REMOVED = "team.member_removed"
+# People structure: the org chart agents read (GetOrgContext) changing shape. An admin-only,
+# company-wide edit, so who made it is a compliance fact like a membership change.
+ACTION_TEAM_MEMBER_MOVED = "team.member_moved"
+ACTION_TEAM_CREATED = "team.created"
+ACTION_TEAM_UPDATED = "team.updated"
+ACTION_TEAM_DELETED = "team.deleted"
+ACTION_DEPARTMENT_CREATED = "department.created"
+ACTION_DEPARTMENT_UPDATED = "department.updated"
+ACTION_DEPARTMENT_DELETED = "department.deleted"
 # An RBAC tier change is a privilege change: `PUT/DELETE /rbac/grants/{user_id}`.
 ACTION_RBAC_GRANTED = "rbac.granted"
 ACTION_RBAC_REVOKED = "rbac.revoked"
