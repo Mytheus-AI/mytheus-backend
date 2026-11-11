@@ -430,6 +430,8 @@ ROUTE_MAP: dict[str, str] = {
     # Beyond, Layer 1: decisions that know why (owner edits) and settle threads.
     "/api/v1/assumptions": "core-api",
     "/api/v1/settlements": "core-api",
+    # Beyond the meeting: attendance choices, rules, interruptions and the evening digest.
+    "/api/v1/listening": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
     # The company brain (ADR-0039 Part A), identity's too.

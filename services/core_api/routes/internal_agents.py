@@ -67,7 +67,7 @@ from sqlalchemy import text
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
-from services.core_api import minutes, records
+from services.core_api import listening, minutes, records
 from services.core_api.brain import latest_statuses, may_share_source
 from services.core_api.routes.internal_meetings import authenticate_caller, service_token_scheme
 
@@ -394,6 +394,9 @@ async def meeting_agenda(
                     for o in shared.open_items
                 ]
                 carry.questions = [q.text for q in shared.unanswered_questions]
+        # In every meeting at once: a standing rule ("my agent listens to every recurring
+        # status meeting") made after the meeting was booked still sends the agent.
+        await listening.apply_rules_for_meeting(session, meeting_id)
         proxies = await session.execute(
             text(
                 "SELECT user_id, proxy_update, proxy_questions FROM meeting_participants "

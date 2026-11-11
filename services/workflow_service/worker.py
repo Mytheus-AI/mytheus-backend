@@ -26,6 +26,10 @@ from services.workflow_service.workflows.assumption_watch import (
     ensure_schedule as ensure_assumption_watch,
 )
 from services.workflow_service.workflows.dunning import DunningSagaWorkflow
+from services.workflow_service.workflows.listening import (
+    EveningListeningWorkflow,
+    ensure_listening_schedule,
+)
 from services.workflow_service.workflows.meeting_lifecycle import MeetingLifecycleWorkflow
 from services.workflow_service.workflows.meeting_reminders import MeetingRemindersWorkflow
 from services.workflow_service.workflows.only_mytheus import (
@@ -66,6 +70,7 @@ async def main() -> None:
             UsageRollupWorkflow,
             PromiseDriftWorkflow,
             WeeklyDigestWorkflow,
+            EveningListeningWorkflow,
             AssumptionWatchWorkflow,
         ],
         activities=[
@@ -82,6 +87,8 @@ async def main() -> None:
         print(f"Created Temporal schedule {schedule_id}")
     if await ensure_assumption_watch(client, task_queue=_TASK_QUEUE):
         print("Created Temporal schedule assumption-watch (every 6 hours)")
+    if await ensure_listening_schedule(client, task_queue=_TASK_QUEUE):
+        print("Created Temporal schedule listening-evening (hourly)")
     print(f"Worker started on task queue: {_TASK_QUEUE}")
     await worker.run()
 
