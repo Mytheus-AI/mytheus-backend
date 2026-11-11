@@ -324,6 +324,62 @@ components:
       - items
       title: IntegrationList
       type: object
+    IssueStatus:
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        issue_key:
+          title: Issue Key
+          type: string
+        issue_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Issue Url
+        open:
+          title: Open
+          type: boolean
+        source:
+          title: Source
+          type: string
+      required:
+      - action_id
+      - issue_key
+      - open
+      - source
+      title: IssueStatus
+      type: object
+    IssueStatusRequest:
+      additionalProperties: false
+      properties:
+        action_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 200
+          title: Action Ids
+          type: array
+      required:
+      - action_ids
+      title: IssueStatusRequest
+      type: object
+    IssueStatusResult:
+      properties:
+        connected:
+          title: Connected
+          type: boolean
+        issues:
+          items:
+            $ref: '#/components/schemas/IssueStatus'
+          title: Issues
+          type: array
+      required:
+      - connected
+      - issues
+      title: IssueStatusResult
+      type: object
     MeetingRef:
       additionalProperties: false
       properties:
@@ -764,6 +820,52 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Crm Meeting Note
+      tags:
+      - integration-internal
+  /internal/jira/issue-status:
+    post:
+      operationId: issue_status
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueStatusRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueStatusResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Issue Status
       tags:
       - integration-internal
   /internal/slack/meeting-summary:

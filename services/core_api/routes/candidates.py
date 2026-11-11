@@ -49,6 +49,7 @@ from services.core_api.routes.chat import (
     _not_a_participant,
     _require_participant,
 )
+from services.core_api.routes.decision_reversals import record_reversals
 from services.core_api.schemas import (
     ActionItem,
     ActionItemUpdate,
@@ -353,6 +354,12 @@ async def confirm_decision(
         },
         ip=ctx.ip,
     )
+    if supersedes is not None:
+        # Decision reversal (polish wave 3): ask the owners of the replaced decision's open
+        # actions to keep, re-scope or close them. Same transaction, idempotent per action.
+        await record_reversals(
+            session, org_id=ctx.org_id, old_decision_id=supersedes, new_decision_id=decision_id
+        )
     return Decision(**confirmed)
 
 

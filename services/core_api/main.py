@@ -17,12 +17,16 @@ from services.core_api.routes import (
     collaborations,
     commitments,
     decision_log,
+    decision_reversals,
+    delegated_answers,
+    digests,
     followups,
     internal_agents,
     internal_integrations,
     internal_lifecycle,
     internal_meetings,
     internal_policy,
+    internal_promise_drift,
     internal_reach,
     internal_retrieval,
     meeting_templates,
@@ -32,6 +36,7 @@ from services.core_api.routes import (
     public_api,
     share_links,
     speakers,
+    status_asks,
     status_requests,
     suggestions,
     transcript,
@@ -67,6 +72,13 @@ app.include_router(share_links.router)
 app.include_router(share_links.public_router)
 app.include_router(followups.router)
 app.include_router(internal_reach.router)
+# Polish wave 3, "Only Mytheus can do these": decision reversal, delegated answers, status asks
+# from the "Should this be a meeting?" hint, promise drift (workflow-service), weekly digest.
+app.include_router(decision_reversals.router)
+app.include_router(delegated_answers.router)
+app.include_router(status_asks.router)
+app.include_router(internal_promise_drift.router)
+app.include_router(digests.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

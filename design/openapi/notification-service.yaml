@@ -350,6 +350,46 @@ components:
       - status
       - code
       type: object
+    UserEmailSend:
+      additionalProperties: false
+      properties:
+        html:
+          anyOf:
+          - maxLength: 200000
+            type: string
+          - type: 'null'
+          title: Html
+        idempotency_key:
+          maxLength: 200
+          minLength: 1
+          title: Idempotency Key
+          type: string
+        kind:
+          const: weekly_digest
+          title: Kind
+          type: string
+        subject:
+          maxLength: 200
+          minLength: 1
+          title: Subject
+          type: string
+        text:
+          maxLength: 20000
+          minLength: 1
+          title: Text
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - kind
+      - user_id
+      - idempotency_key
+      - subject
+      - text
+      title: UserEmailSend
+      type: object
     ValidationError:
       properties:
         ctx:
@@ -462,6 +502,52 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Send Email
+      tags:
+      - notification-internal
+  /internal/email/user:
+    post:
+      operationId: send_user_email
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserEmailSend'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailSendResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Send User Email
       tags:
       - notification-internal
   /notifications:

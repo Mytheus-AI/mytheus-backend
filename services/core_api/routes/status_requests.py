@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.core_api.routes.status_answer_notify import notify_asker
 from services.core_api.schemas import (
     StatusAnswer,
     StatusRequest,
@@ -106,4 +107,6 @@ async def answer_status_request(
         .mappings()
         .one()
     )
+    # Polish wave 3: a status someone asked for instead of a meeting goes back to them.
+    await notify_asker(session, ctx.org_id, request_id, ctx.user_id, body.status_text)
     return StatusRequest(**dict(row))

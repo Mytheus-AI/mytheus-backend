@@ -9,7 +9,16 @@ because a write path through here would make `bff` a second writer for a store i
 """
 
 from libs.shared.app_factory import create_app
-from services.bff import ask, dashboard, lineage, mcp, meeting_screens, org_chart, people
+from services.bff import (
+    ask,
+    dashboard,
+    lineage,
+    mcp,
+    meeting_screens,
+    org_chart,
+    people,
+    precheck,
+)
 
 app = create_app("bff")
 app.include_router(dashboard.router)
@@ -19,3 +28,4 @@ app.include_router(lineage.router)
 app.include_router(meeting_screens.router)
 app.include_router(ask.router)  # POST /api/v1/ask (public API, Phase 4)
 app.include_router(mcp.router)  # POST /mcp (MCP server, Phase 4)
+app.include_router(precheck.router)  # POST /bff/meetings/precheck (polish wave 3)
