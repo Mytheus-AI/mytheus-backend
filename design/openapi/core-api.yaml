@@ -1879,6 +1879,56 @@ components:
       - meeting_actions
       title: DecisionRecord
       type: object
+    DecisionReversal:
+      properties:
+        action:
+          $ref: '#/components/schemas/ReversalAction'
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        new_decision:
+          $ref: '#/components/schemas/ReversalDecision'
+        old_decision:
+          $ref: '#/components/schemas/ReversalDecision'
+        resolved_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Resolved At
+        status:
+          enum:
+          - pending
+          - kept
+          - rescoped
+          - closed
+          title: Status
+          type: string
+      required:
+      - id
+      - status
+      - created_at
+      - old_decision
+      - new_decision
+      - action
+      title: DecisionReversal
+      type: object
+    DecisionReversalList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DecisionReversal'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DecisionReversalList
+      type: object
     DecisionUpdate:
       additionalProperties: false
       description: 'PATCH body: edit a proposed decision before confirming it. At least one field.'
@@ -1897,6 +1947,137 @@ components:
           - type: 'null'
           title: Rationale
       title: DecisionUpdate
+      type: object
+    DelegatedAnswerEntry:
+      properties:
+        answer:
+          title: Answer
+          type: string
+        asked_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Asked By
+        asked_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asked By Name
+        covered:
+          title: Covered
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        question:
+          title: Question
+          type: string
+        statement_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Statement Id
+        statement_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Statement Text
+      required:
+      - id
+      - question
+      - answer
+      - covered
+      - created_at
+      title: DelegatedAnswerEntry
+      type: object
+    DelegatedAnswerLog:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DelegatedAnswerEntry'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DelegatedAnswerLog
+      type: object
+    DelegatedAnswers:
+      properties:
+        attendance:
+          enum:
+          - live
+          - agent
+          title: Attendance
+          type: string
+        editable:
+          title: Editable
+          type: boolean
+        max_chars:
+          default: 300
+          title: Max Chars
+          type: integer
+        max_statements:
+          default: 10
+          title: Max Statements
+          type: integer
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        statements:
+          items:
+            $ref: '#/components/schemas/DelegatedStatement'
+          title: Statements
+          type: array
+      required:
+      - meeting_id
+      - attendance
+      - editable
+      - statements
+      title: DelegatedAnswers
+      type: object
+    DelegatedAnswersUpdate:
+      additionalProperties: false
+      properties:
+        statements:
+          items:
+            type: string
+          maxItems: 10
+          title: Statements
+          type: array
+      required:
+      - statements
+      title: DelegatedAnswersUpdate
+      type: object
+    DelegatedStatement:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        position:
+          title: Position
+          type: integer
+        text:
+          title: Text
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - text
+      - position
+      - updated_at
+      title: DelegatedStatement
       type: object
     Department:
       properties:
@@ -1996,6 +2177,31 @@ components:
       - content
       title: DigestDecision
       type: object
+    DigestLatest:
+      properties:
+        digest:
+          anyOf:
+          - $ref: '#/components/schemas/WeeklyDigest'
+          - type: 'null'
+        next_run_at:
+          format: date-time
+          title: Next Run At
+          type: string
+      required:
+      - next_run_at
+      title: DigestLatest
+      type: object
+    DigestList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DigestSummary'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DigestList
+      type: object
     DigestParticipant:
       properties:
         email:
@@ -2013,6 +2219,100 @@ components:
       - email
       - open_actions
       title: DigestParticipant
+      type: object
+    DigestPreferences:
+      additionalProperties: false
+      properties:
+        email_enabled:
+          default: false
+          title: Email Enabled
+          type: boolean
+        weekly_enabled:
+          default: true
+          title: Weekly Enabled
+          type: boolean
+      title: DigestPreferences
+      type: object
+    DigestSummary:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        item_count:
+          title: Item Count
+          type: integer
+        week_start:
+          format: date
+          title: Week Start
+          type: string
+      required:
+      - id
+      - week_start
+      - item_count
+      - created_at
+      title: DigestSummary
+      type: object
+    DriftNudgeRequest:
+      additionalProperties: false
+      properties:
+        as_of:
+          format: date
+          title: As Of
+          type: string
+        issues:
+          items:
+            $ref: '#/components/schemas/OpenIssue'
+          maxItems: 500
+          title: Issues
+          type: array
+      required:
+      - as_of
+      - issues
+      title: DriftNudgeRequest
+      type: object
+    DriftNudgeResult:
+      properties:
+        host:
+          title: Host
+          type: integer
+        owner:
+          title: Owner
+          type: integer
+      required:
+      - owner
+      - host
+      title: DriftNudgeResult
+      type: object
+    DueAction:
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        due_date:
+          format: date
+          title: Due Date
+          type: string
+      required:
+      - action_id
+      - due_date
+      title: DueAction
+      type: object
+    DueActions:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DueAction'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DueActions
       type: object
     ErasureApplied:
       properties:
@@ -2569,6 +2869,37 @@ components:
           type: array
       title: InternalCarryForward
       type: object
+    InternalDelegate:
+      properties:
+        name:
+          title: Name
+          type: string
+        statements:
+          items:
+            $ref: '#/components/schemas/InternalStatement'
+          title: Statements
+          type: array
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      - statements
+      title: InternalDelegate
+      type: object
+    InternalDelegates:
+      properties:
+        delegates:
+          items:
+            $ref: '#/components/schemas/InternalDelegate'
+          title: Delegates
+          type: array
+      required:
+      - delegates
+      title: InternalDelegates
+      type: object
     InternalProxy:
       description: 'ADR-0039 B5: a participant who sent their agent instead.'
       properties:
@@ -2591,6 +2922,20 @@ components:
       - proxy_update
       - proxy_questions
       title: InternalProxy
+      type: object
+    InternalStatement:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        text:
+          title: Text
+          type: string
+      required:
+      - id
+      - text
+      title: InternalStatement
       type: object
     LatestStatus:
       description: The assignee's most recent answer to a status request for an action (ADR-0039 B7).
@@ -4080,6 +4425,29 @@ components:
       - can_toggle
       title: OffRecordState
       type: object
+    OpenIssue:
+      additionalProperties: false
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        issue_key:
+          maxLength: 100
+          minLength: 1
+          title: Issue Key
+          type: string
+        issue_url:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Issue Url
+      required:
+      - action_id
+      - issue_key
+      title: OpenIssue
+      type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
 
@@ -4717,6 +5085,101 @@ components:
       - actions
       title: RetrievedRecords
       type: object
+    ReversalAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        status:
+          enum:
+          - proposed
+          - confirmed
+          - done
+          - dismissed
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: ReversalAction
+      type: object
+    ReversalDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - id
+      - content
+      - meeting_id
+      - decided_at
+      title: ReversalDecision
+      type: object
+    ReversalResolve:
+      additionalProperties: false
+      properties:
+        content:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Content
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        resolution:
+          enum:
+          - keep
+          - rescope
+          - close
+          title: Resolution
+          type: string
+      required:
+      - resolution
+      title: ReversalResolve
+      type: object
     RoomState:
       additionalProperties: false
       properties:
@@ -5258,6 +5721,38 @@ components:
       - status_text
       title: StatusAnswer
       type: object
+    StatusAskItem:
+      properties:
+        action_id:
+          format: uuid
+          title: Action Id
+          type: string
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        reason:
+          enum:
+          - requested
+          - already_pending
+          - no_owner
+          - not_open
+          - own_action
+          - not_found
+          title: Reason
+          type: string
+        request_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Request Id
+      required:
+      - action_id
+      - reason
+      title: StatusAskItem
+      type: object
     StatusRequest:
       description: A status asked of the caller about one of their actions before a follow-up meeting.
       properties:
@@ -5336,6 +5831,40 @@ components:
       required:
       - items
       title: StatusRequestList
+      type: object
+    StatusRequestsAsk:
+      additionalProperties: false
+      properties:
+        action_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 20
+          minItems: 1
+          title: Action Ids
+          type: array
+      required:
+      - action_ids
+      title: StatusRequestsAsk
+      type: object
+    StatusRequestsAsked:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/StatusAskItem'
+          title: Items
+          type: array
+        requested:
+          title: Requested
+          type: integer
+        skipped:
+          title: Skipped
+          type: integer
+      required:
+      - requested
+      - skipped
+      - items
+      title: StatusRequestsAsked
       type: object
     Suggestion:
       description: One `agent_suggestions` row, as its owner sees it. Never served to anyone else.
@@ -5762,6 +6291,265 @@ components:
       - msg
       - type
       title: ValidationError
+      type: object
+    WeeklyDigest:
+      properties:
+        actions_assigned:
+          items:
+            $ref: '#/components/schemas/WeeklyDigestAction'
+          title: Actions Assigned
+          type: array
+        actions_closed:
+          items:
+            $ref: '#/components/schemas/WeeklyDigestAction'
+          title: Actions Closed
+          type: array
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        decision_changes:
+          items:
+            $ref: '#/components/schemas/WeeklyDigestChange'
+          title: Decision Changes
+          type: array
+        decisions:
+          items:
+            $ref: '#/components/schemas/WeeklyDigestDecision'
+          title: Decisions
+          type: array
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        item_count:
+          default: 0
+          title: Item Count
+          type: integer
+        promises_due:
+          items:
+            $ref: '#/components/schemas/WeeklyDigestPromise'
+          title: Promises Due
+          type: array
+        topics:
+          items:
+            type: string
+          title: Topics
+          type: array
+        week_end:
+          format: date
+          title: Week End
+          type: string
+        week_start:
+          format: date
+          title: Week Start
+          type: string
+      required:
+      - week_start
+      - week_end
+      title: WeeklyDigest
+      type: object
+    WeeklyDigestAction:
+      properties:
+        changed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Changed At
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - content
+      - status
+      title: WeeklyDigestAction
+      type: object
+    WeeklyDigestChange:
+      properties:
+        changed_at:
+          format: date-time
+          title: Changed At
+          type: string
+        matched_topics:
+          items:
+            type: string
+          title: Matched Topics
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        new_content:
+          title: New Content
+          type: string
+        new_decision_id:
+          format: uuid
+          title: New Decision Id
+          type: string
+        old_content:
+          title: Old Content
+          type: string
+        old_decision_id:
+          format: uuid
+          title: Old Decision Id
+          type: string
+      required:
+      - old_decision_id
+      - old_content
+      - new_decision_id
+      - new_content
+      - meeting_id
+      - changed_at
+      title: WeeklyDigestChange
+      type: object
+    WeeklyDigestDecision:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        matched_topics:
+          items:
+            type: string
+          title: Matched Topics
+          type: array
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - id
+      - content
+      - meeting_id
+      - decided_at
+      title: WeeklyDigestDecision
+      type: object
+    WeeklyDigestPromise:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - action
+          - commitment
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - kind
+      - id
+      - content
+      title: WeeklyDigestPromise
+      type: object
+    WeeklyRun:
+      additionalProperties: false
+      properties:
+        week_start:
+          format: date
+          title: Week Start
+          type: string
+      required:
+      - week_start
+      title: WeeklyRun
+      type: object
+    WeeklyRunResult:
+      properties:
+        built:
+          title: Built
+          type: integer
+        emailed:
+          title: Emailed
+          type: integer
+        notified:
+          title: Notified
+          type: integer
+        skipped:
+          title: Skipped
+          type: integer
+        week_start:
+          format: date
+          title: Week Start
+          type: string
+      required:
+      - week_start
+      - built
+      - notified
+      - emailed
+      - skipped
+      title: WeeklyRunResult
       type: object
     Worklog:
       description: 'One `PersonalListenerAgent` note from `worklogs` (Plan 7-9 section 3.3).
@@ -6805,6 +7593,143 @@ paths:
       summary: Dismiss Context Fill
       tags:
       - collaborations
+  /api/v1/decision-reversals:
+    get:
+      description: The caller's own reversals, newest first (at most 200).
+      operationId: list_reversals
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: pending
+          enum:
+          - pending
+          - resolved
+          - all
+          title: Status
+          type: string
+      - in: query
+        name: action_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Action Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionReversalList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Reversals
+      tags:
+      - decision-reversals
+  /api/v1/decision-reversals/{reversal_id}:
+    get:
+      operationId: get_reversal
+      parameters:
+      - in: path
+        name: reversal_id
+        required: true
+        schema:
+          format: uuid
+          title: Reversal Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionReversal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Reversal
+      tags:
+      - decision-reversals
+  /api/v1/decision-reversals/{reversal_id}/resolve:
+    post:
+      description: Keep, re-scope or close the task. Idempotent per resolution.
+      operationId: resolve_reversal
+      parameters:
+      - in: path
+        name: reversal_id
+        required: true
+        schema:
+          format: uuid
+          title: Reversal Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReversalResolve'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionReversal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Resolve Reversal
+      tags:
+      - decision-reversals
   /api/v1/decisions:
     get:
       operationId: list_decisions
@@ -7181,6 +8106,191 @@ paths:
       summary: Create Department
       tags:
       - org-hierarchy
+  /api/v1/digests:
+    get:
+      operationId: list_digests
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 12
+          maximum: 52
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Digests
+      tags:
+      - digest
+  /api/v1/digests/latest:
+    get:
+      operationId: latest_digest
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestLatest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Latest Digest
+      tags:
+      - digest
+  /api/v1/digests/preferences:
+    get:
+      operationId: get_preferences
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestPreferences'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Preferences
+      tags:
+      - digest
+    put:
+      operationId: put_preferences
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DigestPreferences'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestPreferences'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Preferences
+      tags:
+      - digest
+  /api/v1/digests/preview:
+    get:
+      operationId: preview_digest
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyDigest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Preview Digest
+      tags:
+      - digest
+  /api/v1/digests/{digest_id}:
+    get:
+      operationId: get_digest
+      parameters:
+      - in: path
+        name: digest_id
+        required: true
+        schema:
+          format: uuid
+          title: Digest Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyDigest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Digest
+      tags:
+      - digest
   /api/v1/erasures:
     post:
       description: 'authz: admin. Erase core-api''s data for one person or one meeting (module docstring).'
@@ -8326,6 +9436,127 @@ paths:
       summary: List Context Fills
       tags:
       - collaborations
+  /api/v1/meetings/{meeting_id}/delegated-answers:
+    get:
+      operationId: get_delegated_answers
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegatedAnswers'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Delegated Answers
+      tags:
+      - delegated-answers
+    put:
+      operationId: put_delegated_answers
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegatedAnswersUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegatedAnswers'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Delegated Answers
+      tags:
+      - delegated-answers
+  /api/v1/meetings/{meeting_id}/delegated-answers/log:
+    get:
+      operationId: delegated_answer_log
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegatedAnswerLog'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delegated Answer Log
+      tags:
+      - delegated-answers
   /api/v1/meetings/{meeting_id}/follow-up:
     get:
       description: The meeting's follow-up settings, recap link and last result. Participants only.
@@ -9639,6 +10870,48 @@ paths:
       summary: List Status Requests
       tags:
       - status-requests
+    post:
+      operationId: ask_for_status
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusRequestsAsk'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusRequestsAsked'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask For Status
+      tags:
+      - status-requests
   /api/v1/status-requests/{request_id}/answer:
     post:
       operationId: answer_status_request
@@ -10416,6 +11689,53 @@ paths:
       summary: Decision Record
       tags:
       - core-internal
+  /internal/digests/weekly:
+    post:
+      operationId: weekly_run
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeeklyRun'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyRunResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Weekly Run
+      tags:
+      - digest
+      - core-internal
   /internal/meetings/{meeting_id}/agenda:
     get:
       operationId: meeting_agenda
@@ -10493,6 +11813,46 @@ paths:
       - MytheusServiceToken: []
       summary: Crm Digest
       tags:
+      - core-internal
+  /internal/meetings/{meeting_id}/delegated-answers:
+    get:
+      operationId: internal_delegated_answers
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalDelegates'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Internal Delegated Answers
+      tags:
+      - delegated-answers
       - core-internal
   /internal/meetings/{meeting_id}/follow-up/dispatch:
     post:
@@ -10962,6 +12322,91 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Person Memory
+      tags:
+      - core-internal
+  /internal/promise-drift/due:
+    get:
+      operationId: due_actions
+      parameters:
+      - in: query
+        name: as_of
+        required: true
+        schema:
+          format: date
+          title: As Of
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DueActions'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Due Actions
+      tags:
+      - core-internal
+  /internal/promise-drift/nudges:
+    post:
+      operationId: nudge
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriftNudgeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriftNudgeResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Nudge
       tags:
       - core-internal
   /internal/retrieval/records:

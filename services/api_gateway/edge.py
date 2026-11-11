@@ -339,6 +339,9 @@ ROUTE_MAP: dict[str, str] = {
     # Polish wave 2: the caller's own memory across meetings (core-api's person_memory).
     "/api/v1/me/memory": "core-api",
     "/api/v1/status-requests": "core-api",
+    # Polish wave 3: decision reversals and the weekly digest are core-api's.
+    "/api/v1/decision-reversals": "core-api",
+    "/api/v1/digests": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
     # The company brain (ADR-0039 Part A), identity's too.

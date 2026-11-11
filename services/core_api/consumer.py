@@ -78,6 +78,7 @@ from services.core_api import minutes as minutes_mod
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
+from services.core_api.delegation_log import log_delegated_answer
 from services.core_api.integration_events import (
     IntegrationEventPoison,
     handle_integration_event,
@@ -900,9 +901,13 @@ async def _persist_collaborations(
         raise PoisonMessage("agent-results payload_json is not JSON") from exc
     if not isinstance(payload, dict):
         raise PoisonMessage("agent-results context_fill result has no payload_json object")
+    # Polish wave 3: an absent person's agent answered from what they pre-approved.
+    logged = meeting_id != NIL_UUID and await log_delegated_answer(
+        session, org_id, meeting_id, window_id, payload
+    )
     entries = payload.get("collaborations")
     if not isinstance(entries, list):
-        return False
+        return logged
     fill = payload.get("fill") if isinstance(payload.get("fill"), dict) else None
     fill_id = _optional_uuid(fill.get("id")) if fill else None
     written = False
@@ -999,7 +1004,7 @@ async def _persist_collaborations(
                 "correlation_id": params["corr"],
             },
         )
-    return written
+    return written or logged
 
 
 def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:

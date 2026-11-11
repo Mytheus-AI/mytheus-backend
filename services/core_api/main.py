@@ -18,6 +18,9 @@ from services.core_api.routes import (
     collaborations,
     commitments,
     decision_log,
+    decision_reversals,
+    delegated_answers,
+    digests,
     erasure,
     followups,
     internal_agents,
@@ -26,6 +29,7 @@ from services.core_api.routes import (
     internal_lifecycle,
     internal_meetings,
     internal_policy,
+    internal_promise_drift,
     internal_reach,
     internal_retrieval,
     me_memory,
@@ -40,6 +44,7 @@ from services.core_api.routes import (
     share_links,
     speakers,
     stand_ins,
+    status_asks,
     status_requests,
     suggestions,
     transcript,
@@ -90,6 +95,13 @@ app.include_router(minutes.router)
 # Wave 3: the phone's in-person recording (`/api/v1/capture/*`).
 app.include_router(capture.router)
 app.include_router(off_record.router)
+# Polish wave 3, "Only Mytheus can do these": decision reversal, delegated answers, status asks
+# from the "Should this be a meeting?" hint, promise drift (workflow-service), weekly digest.
+app.include_router(decision_reversals.router)
+app.include_router(delegated_answers.router)
+app.include_router(status_asks.router)
+app.include_router(internal_promise_drift.router)
+app.include_router(digests.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in
