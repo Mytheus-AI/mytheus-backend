@@ -322,6 +322,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
         "asked you for an update",
     )
     assert len(src["waiting"]) == 1  # the same task is not listed twice
+    assert "Send the vendor comparison" not in [c["text"] for c in src["changed"]]
     assert src["promises"][0]["text"] == "Share the draft with legal"
     assert src["promises"][0]["at_ms"] == 90000
     questions = {q["text"]: q for q in src["questions"]}

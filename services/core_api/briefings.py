@@ -874,6 +874,9 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
             )
         )
     waiting = waiting[:MAX_SOURCE_ITEMS]
+    # A task someone is waiting on is said once, under "waiting", not again as "now yours".
+    waiting_ids = {w.id for w in waiting}
+    changed = [c for c in changed if c.id is None or c.id not in waiting_ids]
 
     # Your promises: open commitments, this meeting's first; the moment is the linked action's.
     promises = [
