@@ -457,6 +457,86 @@ components:
       - meeting_id
       title: MeetingRef
       type: object
+    MetricReading:
+      properties:
+        baseline_value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Baseline Value
+        connected:
+          title: Connected
+          type: boolean
+        error:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Error
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+        partial:
+          default: false
+          title: Partial
+          type: boolean
+        provider:
+          default: hubspot
+          title: Provider
+          type: string
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+        window_end:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Window End
+        window_start:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Window Start
+      required:
+      - connected
+      title: MetricReading
+      type: object
+    MetricRequest:
+      additionalProperties: false
+      properties:
+        end:
+          format: date
+          title: End
+          type: string
+        metric_key:
+          enum:
+          - hubspot.deals_won
+          - hubspot.revenue_won
+          - hubspot.new_contacts
+          - hubspot.new_companies
+          title: Metric Key
+          type: string
+        start:
+          format: date
+          title: Start
+          type: string
+      required:
+      - metric_key
+      - start
+      - end
+      title: MetricRequest
+      type: object
     OAuthCompletion:
       additionalProperties: false
       properties:
@@ -1004,6 +1084,52 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Crm Meeting Note
+      tags:
+      - integration-internal
+  /internal/crm/metric:
+    post:
+      operationId: metric
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetricRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricReading'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Metric
       tags:
       - integration-internal
   /internal/jira/issue-status:

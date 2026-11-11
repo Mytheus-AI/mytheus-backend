@@ -23,6 +23,7 @@ import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import httpx
 import httpx2
@@ -34,7 +35,14 @@ from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
 from services.bff import ask as ask_mod
 from services.bff import mcp as mcp_mod
-from services.core_api.routes import action_create, commitments, my_tasks, promises, public_api
+from services.core_api.routes import (
+    action_create,
+    commitments,
+    my_tasks,
+    promises,
+    public_api,
+    time_machine,
+)
 from tests.conftest import APP_URL
 from tests.test_api_tokens import mint
 from tests.test_chat_api import Tenant, _sql, seed_tenant
@@ -57,6 +65,7 @@ def apps(migrated_db, monkeypatch):
         commitments.router,
         action_create.router,
         promises.router,
+        time_machine.router,
     ):
         core.include_router(r)
     bff = create_app("bff-mcp-test")
@@ -112,6 +121,7 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
             "ask_meetings",
             "get_meeting_outcome",
             "get_decision_record",
+            "company_as_of",
             "list_my_open_actions",
             "list_my_promises",
             "check_against_decisions",
@@ -131,6 +141,9 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
         assert record.structured_content["decision_id"] == str(d)
         mine = await s.call_tool("list_my_open_actions", {})
         assert "Draft the Atlas FAQ" in _text(mine)
+        today = datetime.now(UTC).date().isoformat()
+        then = await s.call_tool("company_as_of", {"date": today, "topic": "atlas"})
+        assert not then.is_error and "Adopt the Atlas pricing" in _text(then)
         promises = await s.call_tool("list_my_promises", {})
         assert "I will call Acme" in _text(promises) and "[Pricing review]" in _text(promises)
         week = await s.call_tool("check_my_capacity", {"timezone": "UTC"})

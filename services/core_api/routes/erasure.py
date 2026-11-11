@@ -211,6 +211,13 @@ _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
         "ELSE created_by END, handed_off_to = CASE WHEN handed_off_to = :t THEN NULL "
         "ELSE handed_off_to END WHERE created_by = :t OR handed_off_to = :t",
     ),
+    # Decisions as bets: a kept bet no longer names its owner or quotes the person.
+    ("bet_owners", "UPDATE decision_bets SET owner_user_id = NULL WHERE owner_user_id = :t"),
+    (
+        "bet_quotes",
+        "UPDATE decision_bets SET quote = NULL, quote_speaker_id = NULL "
+        "WHERE quote_speaker_id = :t",
+    ),
 )
 
 # A never-confirmed decision is deleted only when no other decision points at it: `supersedes`

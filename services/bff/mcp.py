@@ -22,10 +22,12 @@ on the caller's behalf). So a tool can never see or do more than the same token 
 REST, and bff stays a non-writer: `create_action` is core-api's `POST /api/v1/actions`.
 
 Tools: `search_meetings`, `ask_meetings`, `get_meeting_outcome` (decisions, actions, agenda:
-the minutes), `get_decision_record`, `list_my_open_actions`, `list_my_promises` (the promise
-ledger, every channel), `check_my_capacity` (the capacity check before a deadline is accepted),
-`check_against_decisions` (a draft checked against the confirmed decisions of the caller's
-meetings: core-api's `POST /api/v1/decisions/check`, read-only),
+the minutes), `get_decision_record`, `company_as_of` (the time machine: what was decided,
+believed and promised on a date, optionally for one topic), `list_my_open_actions`,
+`list_my_promises` (the promise ledger, every channel), `check_my_capacity` (the capacity
+check before a deadline is accepted), `check_against_decisions` (a draft checked against the
+confirmed decisions of the caller's meetings: core-api's `POST /api/v1/decisions/check`,
+read-only),
 `create_action` (a confirmed task for the caller, the caller's own explicit request; needs a
 `read_write` token) and `add_promise` (a manual promise in the caller's ledger; `read_write`).
 Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
@@ -152,6 +154,26 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"decision_id": _UUID},
             "required": ["decision_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "company_as_of",
+        "title": "See the company as of a date",
+        "description": (
+            "The company's decision graph as it stood at the end of a date: decisions in force "
+            "with why and the words that decided them, what had been replaced by then, open "
+            'promises with owners, and goals. Optionally only one topic ("pricing"). Limited '
+            "to meetings you took part in."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "format": "date"},
+                "topic": {"type": "string", "maxLength": 120},
+            },
+            "required": ["date"],
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
@@ -486,6 +508,61 @@ def check_markdown(body: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def as_of_markdown(s: dict[str, Any]) -> str:
+    """The time machine's snapshot as Markdown, for `company_as_of`."""
+    head = f"# The company as of {s['as_of']}" + (
+        f" (topic: {s['topic']})" if s.get("topic") else ""
+    )
+    c = s.get("counts") or {}
+    lines = [
+        head,
+        "",
+        f"{c.get('in_force', 0)} decisions in force, {c.get('replaced', 0)} replaced by then, "
+        f"{c.get('promises_open', 0)} open promises ({c.get('promises_overdue', 0)} overdue), "
+        f"{c.get('goals_active', 0)} active goals. Only meetings you were in are included.",
+        "",
+        "## Decided and in force",
+    ]
+    for d in (s.get("decisions") or [])[:40]:
+        line = f"- {d['content']} ({d['meeting']['title']}, {str(d['decided_at'])[:10]})"
+        if d.get("rationale"):
+            line += f". Why: {d['rationale']}"
+        if d.get("quote"):
+            who = f" {d['quote_speaker_name']}:" if d.get("quote_speaker_name") else ""
+            line += f'. Said:{who} "{d['quote']}"'
+        if d.get("bet"):
+            line += f". Expected: {d['bet']['statement']}"
+        lines.append(line + f" `{d['id']}`")
+    if not s.get("decisions"):
+        lines.append("- None")
+    if s.get("replaced"):
+        lines += ["", "## Replaced by then"]
+        for r in s["replaced"][:20]:
+            by = r["replaced_by"]
+            what = (
+                by.get("content")
+                if by.get("visible")
+                else "a decision from a meeting you were not in"
+            )
+            lines.append(f"- {r['content']}: replaced on {str(r['replaced_at'])[:10]} by {what}")
+    lines += ["", "## Open promises"]
+    for p in (s.get("promises") or [])[:30]:
+        due = f", due {p['due']}" if p.get("due") else ""
+        late = " (overdue)" if p.get("overdue") else ""
+        lines.append(f"- {p['content']} ({p.get('owner_name') or 'Unassigned'}{due}){late}")
+    if not s.get("promises"):
+        lines.append("- None")
+    if s.get("goals"):
+        lines += ["", "## Goals"]
+        lines += [
+            f"- {g['title']}"
+            + (f" ({g['period']})" if g.get("period") else "")
+            + f": {g['status']}"
+            for g in s["goals"]
+        ]
+    return "\n".join(lines)
+
+
 def _search_markdown(body: dict[str, Any]) -> str:
     items = body.get("items", [])
     if not items:
@@ -547,6 +624,15 @@ async def call_tool(
         decision = _uuid_arg(args, "decision_id")
         body = await core.call("GET", f"/api/v1/decisions/{decision}/record")
         return record_markdown(body), body
+    if name == "company_as_of":
+        day = str(args.get("date") or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise ToolError("`date` must be a date like 2026-06-30.")
+        params = {"as_of": day}
+        if args.get("topic"):
+            params["topic"] = str(args["topic"])[:120]
+        body = await core.call("GET", "/api/v1/time-machine/snapshot", params=params)
+        return as_of_markdown(body), body
     if name == "list_my_open_actions":
         body = await core.call("GET", "/api/v1/actions/mine", params={"status": "confirmed"})
         items = body.get("items", [])
