@@ -26,13 +26,19 @@ What a PERSON erasure does (rows matched on their `users.id`):
   `action_items.confirmed_by` and `assignee_id` (the task stays, unassigned),
   `meetings.created_by`, `meeting_agenda_items.owner_user_id`, `meeting_templates.created_by` and
   `meeting_followups.updated_by` become NULL;
-- revokes the share links they created.
+- revokes the share links they created, and deletes the clips they made (meeting recordings are
+  kept, like the transcript's words: they are the meeting's record).
 
 What a MEETING erasure does: deletes the meeting's notes, promises, agent questions, chat,
-speaker map, status requests, agenda, follow-up settings (guest addresses included), and the
-decisions and actions that were never confirmed (`proposed`/`dismissed`); revokes its share
-links; and soft-deletes the meeting (`deleted_at`), which hides it and its transcript from every
-read. Confirmed and superseded decisions and confirmed or done actions are org records and stay.
+speaker map, status requests, agenda, follow-up settings (guest addresses included), clips, and
+the decisions and actions that were never confirmed (`proposed`/`dismissed`); revokes its share
+links; soft-deletes the meeting (`deleted_at`), which hides it and its transcript from every
+read; and asks meeting-service (which owns the `mytheus-recordings` bucket) to delete every
+recording object under the meeting's `{org_id}/{meeting_id}/` prefix, rendered clips included,
+and its `meeting_recordings` rows (`recording` in the answer: `erased`, `not_connected` when
+recording storage is not connected, or `failed` when meeting-service could not be reached, in
+which case running the erasure again finishes it). Confirmed and superseded decisions and
+confirmed or done actions are org records and stay.
 A meeting that is live is refused (409): end it first.
 
 Idempotent by construction: every statement is a delete or a set-to-NULL keyed on the target, so
@@ -54,6 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_DATA_ERASURE_APPLIED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from services.core_api import recording_client
 
 router = APIRouter(prefix="/api/v1", tags=["erasure"])
 
@@ -77,6 +84,18 @@ class ErasureRequest(BaseModel):
     )
 
 
+class RecordingErasure(BaseModel):
+    """What happened to the meeting's recording objects and clips' videos in the bucket."""
+
+    status: Literal["erased", "not_connected", "failed"] = Field(
+        description="`erased`: meeting-service deleted every object under the meeting's prefix "
+        "and its recording rows. `not_connected`: recording storage is not connected on this "
+        "server, so there are no objects to delete. `failed`: meeting-service could not be "
+        "reached; run the erasure again (it is idempotent) to finish this leg."
+    )
+    objects_deleted: int = 0
+
+
 class ErasureApplied(BaseModel):
     kind: ErasureKind
     target_id: uuid.UUID
@@ -84,6 +103,11 @@ class ErasureApplied(BaseModel):
     erased: dict[str, int] = Field(description="Rows deleted, by kind of data.")
     anonymized: dict[str, int] = Field(description="Records kept with the person removed.")
     revoked_share_links: int
+    recording: RecordingErasure | None = Field(
+        default=None,
+        description="A meeting erasure's recording leg (meeting-service owns the bucket); null "
+        "for a person erasure, which keeps meeting recordings as it keeps transcript words.",
+    )
 
 
 def _matches(typed: str, label: str) -> bool:
@@ -106,6 +130,8 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     ("agent_memory", "DELETE FROM person_memory WHERE user_id = :t"),
     ("agent_feedback", "DELETE FROM agent_feedback WHERE user_id = :t"),
     ("agent_calibration", "DELETE FROM agent_calibration WHERE user_id = :t"),
+    # Polish wave 3: the clips they made (their share links go with them, ON DELETE CASCADE).
+    ("clips", "DELETE FROM meeting_clips WHERE created_by = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
@@ -160,6 +186,8 @@ _MEETING_DELETES: tuple[tuple[str, str], ...] = (
     ("agenda_items", "DELETE FROM meeting_agenda_items WHERE meeting_id = :t"),
     ("follow_ups", "DELETE FROM meeting_followups WHERE meeting_id = :t"),
     ("agent_feedback", "DELETE FROM agent_feedback WHERE meeting_id = :t"),
+    # Polish wave 3: the meeting's clips (and with them their share links).
+    ("clips", "DELETE FROM meeting_clips WHERE meeting_id = :t"),
     (
         "unconfirmed_decisions",
         "DELETE FROM decisions d WHERE d.meeting_id = :t AND d.status IN ('proposed', 'dismissed') "
@@ -255,6 +283,11 @@ async def _erase_meeting(
         "WHERE id = :t AND deleted_at IS NULL",
         params,
     )
+    # The recording objects live in meeting-service's bucket: ask it to delete them.
+    rec_status, rec_objects = await recording_client.erase(ctx.org_id, target)
+    if rec_status == "erased":
+        # Counted with the rest, so the console's per-request counts show it too.
+        erased["recording_objects"] = rec_objects
     return ErasureApplied(
         kind="meeting",
         target_id=target,
@@ -262,6 +295,7 @@ async def _erase_meeting(
         erased=erased,
         anonymized={"meeting_hidden": hidden},
         revoked_share_links=revoked,
+        recording=RecordingErasure(status=rec_status, objects_deleted=rec_objects),
     )
 
 
@@ -295,6 +329,7 @@ async def apply_erasure(
             "erased": result.erased,
             "anonymized": result.anonymized,
             "revoked_share_links": result.revoked_share_links,
+            "recording": result.recording.model_dump() if result.recording else None,
         },
         ip=ctx.ip,
     )

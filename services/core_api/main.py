@@ -15,6 +15,7 @@ from services.core_api.routes import (
     candidates,
     capture,
     chat,
+    clips,
     collaborations,
     commitments,
     decision_log,
@@ -95,6 +96,9 @@ app.include_router(minutes.router)
 # Wave 3: the phone's in-person recording (`/api/v1/capture/*`).
 app.include_router(capture.router)
 app.include_router(off_record.router)
+# Polish wave 3, Recording playback: clips of a meeting and their share links.
+app.include_router(clips.router)
+app.include_router(clips.public_router)
 # Polish wave 3, "Only Mytheus can do these": decision reversal, delegated answers, status asks
 # from the "Should this be a meeting?" hint, promise drift (workflow-service), weekly digest.
 app.include_router(decision_reversals.router)

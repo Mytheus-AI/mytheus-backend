@@ -1192,6 +1192,328 @@ components:
       - content
       title: ChatMessageCreate
       type: object
+    Clip:
+      properties:
+        can_delete:
+          description: Whether the caller may delete this clip.
+          title: Can Delete
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          format: uuid
+          title: Created By
+          type: string
+        created_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By Name
+        duration_ms:
+          title: Duration Ms
+          type: integer
+        end_ms:
+          title: End Ms
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        share_links:
+          description: The clip's public links, newest first.
+          items:
+            $ref: '#/components/schemas/ClipShareLink'
+          title: Share Links
+          type: array
+        start_ms:
+          title: Start Ms
+          type: integer
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - meeting_id
+      - title
+      - start_ms
+      - end_ms
+      - duration_ms
+      - created_by
+      - created_at
+      - can_delete
+      title: Clip
+      type: object
+    ClipCreate:
+      additionalProperties: false
+      properties:
+        end_ms:
+          description: End on the meeting's clock; at most 10 minutes on.
+          exclusiveMinimum: 0.0
+          title: End Ms
+          type: integer
+        start_ms:
+          description: Start on the meeting's clock (the transcript's).
+          minimum: 0.0
+          title: Start Ms
+          type: integer
+        title:
+          description: What the clip shows.
+          maxLength: 200
+          minLength: 1
+          title: Title
+          type: string
+      required:
+      - title
+      - start_ms
+      - end_ms
+      title: ClipCreate
+      type: object
+    ClipLine:
+      properties:
+        end_offset_ms:
+          title: End Offset Ms
+          type: integer
+        offset_ms:
+          description: When the line starts, from the clip's start.
+          title: Offset Ms
+          type: integer
+        speaker_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: By name; null when unknown.
+          title: Speaker Name
+        text:
+          title: Text
+          type: string
+      required:
+      - offset_ms
+      - end_offset_ms
+      - text
+      title: ClipLine
+      type: object
+    ClipList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Clip'
+          title: Items
+          type: array
+        max_duration_ms:
+          default: 600000
+          description: The longest clip allowed.
+          title: Max Duration Ms
+          type: integer
+      required:
+      - items
+      title: ClipList
+      type: object
+    ClipShare:
+      description: What a public clip page renders.
+      properties:
+        clip_id:
+          format: uuid
+          title: Clip Id
+          type: string
+        duration_ms:
+          title: Duration Ms
+          type: integer
+        end_ms:
+          title: End Ms
+          type: integer
+        lines:
+          items:
+            $ref: '#/components/schemas/ClipLine'
+          title: Lines
+          type: array
+        meeting_start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Meeting Start
+        meeting_title:
+          title: Meeting Title
+          type: string
+        start_ms:
+          title: Start Ms
+          type: integer
+        title:
+          title: Title
+          type: string
+        video:
+          $ref: '#/components/schemas/ClipVideoView'
+      required:
+      - clip_id
+      - title
+      - meeting_title
+      - start_ms
+      - end_ms
+      - duration_ms
+      - lines
+      - video
+      title: ClipShare
+      type: object
+    ClipShareCreate:
+      additionalProperties: false
+      properties:
+        confirm_confidential:
+          default: false
+          description: The host confirms publishing a clip of a confidential meeting. Required (409 `confidential_confirmation_required`)
+            for a confidential meeting.
+          title: Confirm Confidential
+          type: boolean
+        expires_in_days:
+          default: 30
+          description: How long the link works, 1 to 365 days. Default 30.
+          maximum: 365.0
+          minimum: 1.0
+          title: Expires In Days
+          type: integer
+        include_video:
+          default: false
+          description: 'Also show the clip''s video on the public page (the clip alone, never the rest
+            of the recording). Off: the page shows the clip''s transcript lines only.'
+          title: Include Video
+          type: boolean
+      title: ClipShareCreate
+      type: object
+    ClipShareLink:
+      description: 'A public link to one clip (`share_links` kind `meeting_clip`). Revoked like any share
+
+        link, with `DELETE /api/v1/share-links/{id}`.'
+      properties:
+        can_revoke:
+          title: Can Revoke
+          type: boolean
+        clip_id:
+          format: uuid
+          title: Clip Id
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          format: uuid
+          title: Created By
+          type: string
+        created_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By Name
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        include_video:
+          description: Whether the page shows the clip's video.
+          title: Include Video
+          type: boolean
+        last_viewed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Viewed At
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        state:
+          enum:
+          - active
+          - expired
+          - revoked
+          title: State
+          type: string
+        token:
+          title: Token
+          type: string
+        url:
+          description: 'The public page to send: `{APP_BASE_URL}/s/{token}`.'
+          title: Url
+          type: string
+        view_count:
+          title: View Count
+          type: integer
+      required:
+      - id
+      - clip_id
+      - meeting_id
+      - url
+      - token
+      - include_video
+      - created_by
+      - created_at
+      - expires_at
+      - state
+      - view_count
+      - can_revoke
+      title: ClipShareLink
+      type: object
+    ClipVideoView:
+      description: 'The clip''s video on its public page. `not_included`: the sharer shared the words
+        only.
+
+        `rendering`: being cut from the recording, ask again shortly. `unavailable`: there is no
+
+        recording to cut it from, or recording is not connected on this server (`reason`).'
+      properties:
+        expires_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Expires At
+        media_type:
+          anyOf:
+          - enum:
+            - video/mp4
+            - audio/ogg
+            type: string
+          - type: 'null'
+          title: Media Type
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        status:
+          enum:
+          - ready
+          - rendering
+          - unavailable
+          - not_included
+          title: Status
+          type: string
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Short-lived presigned GET of the clip alone, when ready.
+          title: Url
+      required:
+      - status
+      title: ClipVideoView
+      type: object
     Collaboration:
       properties:
         created_at:
@@ -2338,6 +2660,12 @@ components:
           description: 'What the confirmation matched: an email or a meeting title.'
           title: Label
           type: string
+        recording:
+          anyOf:
+          - $ref: '#/components/schemas/RecordingErasure'
+          - type: 'null'
+          description: A meeting erasure's recording leg (meeting-service owns the bucket); null for a
+            person erasure, which keeps meeting recordings as it keeps transcript words.
         revoked_share_links:
           title: Revoked Share Links
           type: integer
@@ -4724,6 +5052,34 @@ components:
       - status
       - code
       type: object
+    PublicClipShare:
+      description: What a public clip page renders.
+      properties:
+        clip:
+          $ref: '#/components/schemas/ClipShare'
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        shared_at:
+          format: date-time
+          title: Shared At
+          type: string
+        shared_by_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Shared By Name
+        view_count:
+          title: View Count
+          type: integer
+      required:
+      - shared_at
+      - expires_at
+      - view_count
+      - clip
+      title: PublicClipShare
+      type: object
     PublicShare:
       description: What a share page renders. Exactly one of `recap` / `decision` is set, per `kind`.
       properties:
@@ -4923,6 +5279,28 @@ components:
       - status
       - decided_at
       title: RecordDecision
+      type: object
+    RecordingErasure:
+      description: What happened to the meeting's recording objects and clips' videos in the bucket.
+      properties:
+        objects_deleted:
+          default: 0
+          title: Objects Deleted
+          type: integer
+        status:
+          description: '`erased`: meeting-service deleted every object under the meeting''s prefix and
+            its recording rows. `not_connected`: recording storage is not connected on this server, so
+            there are no objects to delete. `failed`: meeting-service could not be reached; run the erasure
+            again (it is idempotent) to finish this leg.'
+          enum:
+          - erased
+          - not_connected
+          - failed
+          title: Status
+          type: string
+      required:
+      - status
+      title: RecordingErasure
       type: object
     RecordsRequest:
       additionalProperties: false
@@ -7455,6 +7833,108 @@ paths:
       summary: Post Chat
       tags:
       - chat
+  /api/v1/clips/{clip_id}:
+    delete:
+      description: The clip's creator, the meeting's host, or a workspace admin. Its share links stop
+        working at once. Another person's clip you may not delete is a 404.
+      operationId: delete_clip
+      parameters:
+      - in: path
+        name: clip_id
+        required: true
+        schema:
+          format: uuid
+          title: Clip Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete a clip
+      tags:
+      - clips
+  /api/v1/clips/{clip_id}/share-links:
+    post:
+      description: 'A public page for one clip: its transcript lines, and its video when `include_video`.'
+      operationId: share_clip
+      parameters:
+      - in: path
+        name: clip_id
+        required: true
+        schema:
+          format: uuid
+          title: Clip Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/ClipShareCreate'
+              - type: 'null'
+              title: Body
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipShareLink'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant, or a confidential meeting you do not host.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: A confidential meeting's clip needs `confirm_confidential`.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Share links are not configured on this server.
+      summary: Share a clip
+      tags:
+      - clips
   /api/v1/commitments:
     get:
       description: The caller's own commitments, newest first (at most 200).
@@ -9345,6 +9825,110 @@ paths:
       summary: List Chat
       tags:
       - chat
+  /api/v1/meetings/{meeting_id}/clips:
+    get:
+      operationId: list_clips
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant of this meeting.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List a meeting's clips
+      tags:
+      - clips
+    post:
+      description: 'A participant names a span of the meeting (at most 10 minutes). A span that crosses
+        an
+
+        off-the-record stretch is refused: nothing from it was kept, so nothing can be clipped.'
+      operationId: create_clip
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Clip'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant of this meeting.
+        '409':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The span crosses a stretch that was off the record.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Make a clip of a meeting
+      tags:
+      - clips
   /api/v1/meetings/{meeting_id}/collaborations:
     get:
       description: The meeting's A2A collaboration log, newest first. Participants and admins only.
@@ -10699,6 +11283,53 @@ paths:
       summary: Start Wrap Up
       tags:
       - meetings
+  /api/v1/public/clips/{token}:
+    get:
+      description: 'No authentication: the signed token in the path is the credential. The clip''s transcript
+        lines always; its video (a short-lived presigned URL of the clip alone) only when the share includes
+        it. 404 for a token that does not verify, a link that is not a clip, or a clip that is gone; 410
+        with `reason` `expired` or `revoked`. Each read increments the link''s view count.'
+      operationId: read_clip_share
+      parameters:
+      - in: path
+        name: token
+        required: true
+        schema:
+          maxLength: 200
+          minLength: 10
+          title: Token
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicClipShare'
+          description: Successful Response
+        '404':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unknown or invalid link.
+        '410':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: The link expired or was revoked (`reason`).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security: []
+      summary: Read a shared clip
+      tags:
+      - public-shares
   /api/v1/public/shares/{token}:
     get:
       description: 'No authentication: the signed token in the path is the credential. 404 for a token

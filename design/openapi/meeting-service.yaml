@@ -6,6 +6,68 @@
 # regeneration and blocks the build until then.
 components:
   schemas:
+    ClipVideo:
+      description: 'Internal: the video for one clip, for a public clip share. Only ever the clip''s own
+
+        rendered object (cut from the recording), never the whole recording.'
+      properties:
+        expires_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Expires At
+        media_type:
+          anyOf:
+          - enum:
+            - video/mp4
+            - audio/ogg
+            type: string
+          - type: 'null'
+          title: Media Type
+        reason:
+          anyOf:
+          - enum:
+            - not_connected
+            - no_recording
+            - not_in_recording
+            - renderer_not_installed
+            - render_failed
+            type: string
+          - type: 'null'
+          title: Reason
+        status:
+          enum:
+          - ready
+          - rendering
+          - unavailable
+          title: Status
+          type: string
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - status
+      title: ClipVideo
+      type: object
+    ClipVideoRequest:
+      additionalProperties: false
+      properties:
+        end_ms:
+          exclusiveMinimum: 0.0
+          title: End Ms
+          type: integer
+        start_ms:
+          minimum: 0.0
+          title: Start Ms
+          type: integer
+      required:
+      - start_ms
+      - end_ms
+      title: ClipVideoRequest
+      type: object
     ConsentAck:
       additionalProperties: false
       description: 'The participant read the consent notice and agreed to join with it in force.
@@ -172,6 +234,170 @@ components:
       - title
       - status
       - code
+      type: object
+    RecordingControlResult:
+      description: 'Internal: what pausing or resuming the recording for off the record did.'
+      properties:
+        changed:
+          title: Changed
+          type: boolean
+        detail:
+          title: Detail
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+      required:
+      - meeting_id
+      - changed
+      - detail
+      title: RecordingControlResult
+      type: object
+    RecordingErased:
+      description: 'Internal: a meeting''s recording erased (data erasure, core-api''s caller).'
+      properties:
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        objects_deleted:
+          title: Objects Deleted
+          type: integer
+        segments_deleted:
+          title: Segments Deleted
+          type: integer
+        status:
+          description: '`not_connected`: no bucket credentials on this server, so only the recording rows
+            were removed (there can be no objects LiveKit wrote with them).'
+          enum:
+          - erased
+          - not_connected
+          title: Status
+          type: string
+      required:
+      - meeting_id
+      - status
+      - objects_deleted
+      - segments_deleted
+      title: RecordingErased
+      type: object
+    RecordingSegment:
+      description: 'One continuous stretch of the recording (one LiveKit egress). A meeting taken off
+        the
+
+        record has one segment per stretch that was recorded, with the gaps between them.'
+      properties:
+        duration_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Known once the segment is ready.
+          title: Duration Ms
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        id:
+          format: uuid
+          title: Id
+          type: string
+        media_type:
+          enum:
+          - video/mp4
+          - audio/ogg
+          title: Media Type
+          type: string
+        offset_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Where the segment starts on the meeting's clock (the transcript's time origin).
+            Null when the room clock is unknown.
+          title: Offset Ms
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        status:
+          enum:
+          - recording
+          - processing
+          - ready
+          - failed
+          title: Status
+          type: string
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: A short-lived presigned GET for a ready segment; never stored, never public. Ask
+            again for a fresh one when it expires.
+          title: Url
+      required:
+      - id
+      - status
+      - media_type
+      - started_at
+      title: RecordingSegment
+      type: object
+    RecordingState:
+      description: "`GET /api/meetings/{meeting_id}/recording`: whether this meeting has a recording a\n\
+        participant can play, and the playable segments.\n\n- `not_enabled`: recording is off on this\
+        \ server (`reason` `storage_not_configured` when it\n  is on but the bucket credentials are missing);\n\
+        - `none`: nothing was recorded (`reason` `consent_missing` when the consent gate refused\n  because\
+        \ someone had not agreed, `not_started` before the call, `not_recorded` otherwise);\n- `recording`:\
+        \ the call is being recorded now;\n- `processing`: the call ended and LiveKit is finishing the\
+        \ upload;\n- `ready`: at least one segment can be played (`segments[].url`);\n- `failed`: every\
+        \ segment failed to record or upload."
+      properties:
+        duration_ms:
+          default: 0
+          description: Total length of the ready segments.
+          title: Duration Ms
+          type: integer
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        reason:
+          anyOf:
+          - enum:
+            - storage_not_configured
+            - consent_missing
+            - not_recorded
+            - not_started
+            type: string
+          - type: 'null'
+          title: Reason
+        segments:
+          items:
+            $ref: '#/components/schemas/RecordingSegment'
+          title: Segments
+          type: array
+        status:
+          enum:
+          - not_enabled
+          - recording
+          - processing
+          - ready
+          - failed
+          - none
+          title: Status
+          type: string
+        url_expires_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: When the presigned segment URLs stop working.
+          title: Url Expires At
+      required:
+      - meeting_id
+      - status
+      title: RecordingState
       type: object
     RoomClosed:
       properties:
@@ -398,6 +624,59 @@ paths:
       summary: Get Consent Receipt
       tags:
       - meetings
+  /api/meetings/{meeting_id}/recording:
+    get:
+      description: 'Participants only, deny-by-default: the recording''s status and, when ready, a
+
+        short-lived presigned URL per segment (never a public URL). Each answer with URLs is
+
+        audited (`recording.playback_issued`). Off-the-record stretches are not in the recording:
+
+        they are the gaps between segments.'
+      operationId: get_recording
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingState'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '403':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a participant of this meeting.
+        '404':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No such meeting in this workspace.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: A meeting's recording, for playback
+      tags:
+      - recordings
   /api/meetings/{meeting_id}/session:
     get:
       description: 'The caller''s standing in this meeting''s call: whether consent is required and already
@@ -513,6 +792,222 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/meetings/{meeting_id}/clips/{clip_id}/video:
+    post:
+      description: 'The video of one shared clip (core-api checked the share and the clip). Only the clip''s
+
+        own object is ever presigned; it is cut on first request (`rendering`) and served after.'
+      operationId: clip_video
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - in: path
+        name: clip_id
+        required: true
+        schema:
+          format: uuid
+          title: Clip Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipVideoRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipVideo'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Clip Video
+      tags:
+      - meeting-internal
+  /internal/meetings/{meeting_id}/recording/erase:
+    post:
+      description: 'A meeting''s data erasure (core-api `POST /api/v1/erasures`): delete every object
+        under
+
+        the meeting''s `{org_id}/{meeting_id}/` prefix (segments and rendered clips) and its
+
+        recording rows. Works on a meeting core-api has already soft-deleted. Idempotent.'
+      operationId: erase_recording
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingErased'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Erase Recording
+      tags:
+      - meeting-internal
+  /internal/meetings/{meeting_id}/recording/pause:
+    post:
+      description: 'Off the record began: stop the running egress so nothing from the stretch is kept.
+
+        Idempotent (nothing running is `changed: false`).'
+      operationId: pause_recording
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingControlResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Pause Recording
+      tags:
+      - meeting-internal
+  /internal/meetings/{meeting_id}/recording/resume:
+    post:
+      description: 'Back on the record: start a new segment when the room is live, recording is on, the
+
+        consent gate allows it and nothing is already recording. Idempotent.'
+      operationId: resume_recording
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingControlResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Resume Recording
+      tags:
+      - meeting-internal
   /internal/meetings/{meeting_id}/room/close:
     post:
       operationId: close_room

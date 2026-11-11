@@ -188,7 +188,7 @@ def test_signed_egress_ended_persists_recording_ref_and_emits_one_outbox_row(cli
     assert row["recording_ref"] == f"{org_id}/{meeting_id}/EG_abc123"
     assert row["egress_id"] == "EG_abc123"
 
-    dedupe_key = f"{room}:egress_ended:-"
+    dedupe_key = f"{room}:egress_ended:EG_abc123"
     rows = outbox_rows(dedupe_key)
     assert len(rows) == 1
     payload = rows[0]["payload"]
@@ -268,7 +268,7 @@ def test_redelivered_egress_ended_is_a_no_op(client):
     assert first.status_code == 200
     assert second.status_code == 200
 
-    dedupe_key = f"{room}:egress_ended:-"
+    dedupe_key = f"{room}:egress_ended:EG_dup"
     assert len(outbox_rows(dedupe_key)) == 1, "redelivery must not create a second outbox row"
 
     rows = _sql(
@@ -294,7 +294,7 @@ def test_invalid_signature_is_rejected_and_writes_nothing(client):
 
     row = meeting_room_row(org_id, meeting_id)
     assert row["recording_ref"] is None
-    assert len(outbox_rows(f"{room}:egress_ended:-")) == 0
+    assert len(outbox_rows(f"{room}:egress_ended:EG_x")) == 0
 
 
 # --- acceptance check 4: unresolvable org_id fails closed, writes nothing ----------------------
@@ -363,7 +363,7 @@ def test_room_metadata_naming_an_unknown_org_fails_closed(client):
     assert resp.status_code == 400, resp.text
     row = meeting_room_row(org_id, meeting_id)
     assert row["recording_ref"] is None
-    assert outbox_rows(f"{room}:egress_ended:-") == []
+    assert outbox_rows(f"{room}:egress_ended:EG_x") == []
 
 
 def test_room_metadata_naming_a_soft_deleted_org_fails_closed(client):

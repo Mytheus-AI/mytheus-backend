@@ -76,7 +76,7 @@ class ShareLinkCreate(BaseModel):
 
 class ShareLink(BaseModel):
     id: uuid.UUID
-    kind: share_tokens.ShareKind
+    kind: share_tokens.RecordShareKind
     url: str = Field(description="The public page to send: `{APP_BASE_URL}/s/{token}`.")
     token: str = Field(description="The signed token in the URL; the public read takes it.")
     meeting_id: uuid.UUID
@@ -99,7 +99,7 @@ class ShareLinkList(BaseModel):
 class PublicShare(BaseModel):
     """What a share page renders. Exactly one of `recap` / `decision` is set, per `kind`."""
 
-    kind: share_tokens.ShareKind
+    kind: share_tokens.RecordShareKind
     shared_by_name: str | None = None
     shared_at: datetime
     expires_at: datetime
@@ -108,7 +108,7 @@ class PublicShare(BaseModel):
     decision: records.DecisionRecord | None = None
 
 
-def _state(link: ShareLinkRow) -> LinkState:
+def link_state(link: ShareLinkRow) -> LinkState:
     if link.revoked_at is not None:
         return "revoked"
     return "active" if link.active else "expired"
@@ -144,7 +144,7 @@ def _out(
         created_at=link.created_at,
         expires_at=link.expires_at,
         revoked_at=link.revoked_at,
-        state=_state(link),
+        state=link_state(link),
         view_count=link.view_count,
         last_viewed_at=link.last_viewed_at,
         can_revoke=can_revoke,
@@ -201,12 +201,38 @@ async def _create(
     session: AsyncSession,
     ctx: RequestContext,
     *,
-    kind: share_tokens.ShareKind,
+    kind: Literal["meeting_recap", "decision_record"],
     meeting_id: uuid.UUID,
     decision_id: uuid.UUID | None,
     ttl_days: int,
     confirm_confidential: bool = True,
 ) -> ShareLink:
+    link, name = await insert_link(
+        session,
+        ctx,
+        kind=kind,
+        meeting_id=meeting_id,
+        decision_id=decision_id,
+        ttl_days=ttl_days,
+        confirm_confidential=confirm_confidential,
+    )
+    return _out(link, ctx.org_id, name=name, can_revoke=True)
+
+
+async def insert_link(
+    session: AsyncSession,
+    ctx: RequestContext,
+    *,
+    kind: share_tokens.ShareKind,
+    meeting_id: uuid.UUID,
+    decision_id: uuid.UUID | None,
+    ttl_days: int,
+    confirm_confidential: bool = True,
+    clip_id: uuid.UUID | None = None,
+    include_video: bool = False,
+) -> tuple[ShareLinkRow, str | None]:
+    """Check the caller may share, insert the link and audit it. Returns the row and the
+    creator's display name. Shared by recap, decision and clip (`routes/clips.py`) links."""
     if not share_tokens.configured():
         raise ProblemDetail(
             503,
@@ -219,7 +245,8 @@ async def _create(
         raise ProblemDetail(
             409,
             ErrorCode.VERSION_CONFLICT,
-            "This meeting is confidential: confirm that you want to publish its recap",
+            "This meeting is confidential: confirm that you want to publish "
+            + ("this clip" if kind == "meeting_clip" else "its recap"),
             extra={"reason": "confidential_confirmation_required"},
         )
     link = await share_tokens.create_link(
@@ -230,6 +257,8 @@ async def _create(
         decision_id=decision_id,
         created_by=user_id,
         ttl_days=ttl_days,
+        clip_id=clip_id,
+        include_video=include_video,
     )
     await audit(
         session,
@@ -242,12 +271,14 @@ async def _create(
             "kind": kind,
             "meeting_id": str(meeting_id),
             "decision_id": str(decision_id) if decision_id else None,
+            "clip_id": str(clip_id) if clip_id else None,
+            "include_video": include_video,
             "expires_at": link.expires_at.isoformat(),
         },
         ip=ctx.ip,
     )
     names = await _names(session, {user_id})
-    return _out(link, ctx.org_id, name=names.get(user_id), can_revoke=True)
+    return link, names.get(user_id)
 
 
 async def _list(
@@ -335,7 +366,14 @@ async def list_meeting_links(
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> ShareLinkList:
-    return await _list(session, ctx, meeting_id, "meeting_id = :m", {"m": str(meeting_id)})
+    # Clip links are listed with their clip (`GET /api/v1/meetings/{id}/clips`).
+    return await _list(
+        session,
+        ctx,
+        meeting_id,
+        "meeting_id = :m AND kind <> 'meeting_clip'",
+        {"m": str(meeting_id)},
+    )
 
 
 @router.post(
@@ -423,6 +461,49 @@ async def revoke_link(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+async def open_public_link(
+    session: AsyncSession, org_id: uuid.UUID, link_id: uuid.UUID
+) -> ShareLinkRow:
+    """A verified token's link under its tenant's RLS, locked for the view count: 404 when the
+    tenant or the link is gone, 410 when it expired or was revoked."""
+    from libs.shared.org_resolver import resolve_org_by_id
+
+    if await resolve_org_by_id(session, org_id) is None:
+        raise not_found()
+    await set_rls(session, org_id)
+    row = (
+        (
+            await session.execute(
+                text(f"SELECT {share_tokens.LINK_COLS} FROM share_links WHERE id = :id FOR UPDATE"),
+                {"id": str(link_id)},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise not_found()
+    link = share_tokens.row_from(row)
+    if link.revoked_at is not None:
+        raise _gone("revoked")
+    if not link.active:
+        raise _gone("expired")
+    return link
+
+
+async def count_view(session: AsyncSession, link_id: uuid.UUID) -> int:
+    views = (
+        await session.execute(
+            text(
+                "UPDATE share_links SET view_count = view_count + 1, last_viewed_at = now() "
+                "WHERE id = :id RETURNING view_count"
+            ),
+            {"id": str(link_id)},
+        )
+    ).scalar_one()
+    return int(views)
+
+
 def _gone(reason: Literal["expired", "revoked"]) -> ProblemDetail:
     return ProblemDetail(
         410,
@@ -458,31 +539,15 @@ async def read_share(
         raise not_found()
     org_id, link_id = parsed
     async with get_sessionmaker()() as session, session.begin():
-        from libs.shared.org_resolver import resolve_org_by_id
-
-        if await resolve_org_by_id(session, org_id) is None:
-            raise not_found()
-        await set_rls(session, org_id)
-        row = (
-            (
-                await session.execute(
-                    text(
-                        f"SELECT {share_tokens.LINK_COLS} FROM share_links WHERE id = :id "
-                        "FOR UPDATE"
-                    ),
-                    {"id": str(link_id)},
-                )
+        link = await open_public_link(session, org_id, link_id)
+        if link.kind == "meeting_clip":
+            # A clip page has its own read (`GET /api/v1/public/clips/{token}`).
+            raise ProblemDetail(
+                404,
+                ErrorCode.NOT_FOUND,
+                "This link shares a clip",
+                extra={"reason": "clip_share"},
             )
-            .mappings()
-            .first()
-        )
-        if row is None:
-            raise not_found()
-        link = share_tokens.row_from(row)
-        if link.revoked_at is not None:
-            raise _gone("revoked")
-        if not link.active:
-            raise _gone("expired")
         recap: records.MeetingRecap | None = None
         decision: records.DecisionRecord | None = None
         if link.kind == "meeting_recap":
@@ -493,15 +558,7 @@ async def read_share(
             )
         if recap is None and decision is None:
             raise not_found()  # the creator can no longer see it, or it is gone
-        views = (
-            await session.execute(
-                text(
-                    "UPDATE share_links SET view_count = view_count + 1, last_viewed_at = now() "
-                    "WHERE id = :id RETURNING view_count"
-                ),
-                {"id": str(link_id)},
-            )
-        ).scalar_one()
+        views = await count_view(session, link_id)
         names = await _names(session, {link.created_by})
     return PublicShare(
         kind=link.kind,  # type: ignore[arg-type]

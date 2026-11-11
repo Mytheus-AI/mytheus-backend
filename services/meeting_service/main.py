@@ -11,6 +11,8 @@ from typing import Any
 from libs.shared.app_factory import create_app
 from services.meeting_service.audio_tap_worker import audio_tap_mode
 from services.meeting_service.internal import router as internal_router
+from services.meeting_service.recordings import internal_router as recording_internal_router
+from services.meeting_service.recordings import router as recording_router
 from services.meeting_service.routes import router as token_router
 from services.meeting_service.webhook import router as webhook_router
 
@@ -22,6 +24,10 @@ app.include_router(token_router)  # POST /api/meetings/:id/token
 app.include_router(webhook_router)  # POST /livekit/webhook
 # POST /internal/meetings/{id}/room/open|close (workflow-service only, never routed publicly)
 app.include_router(internal_router)
+# GET /api/meetings/{id}/recording (participants: playback status + presigned segment URLs)
+app.include_router(recording_router)
+# POST /internal/meetings/{id}/recording/pause|resume|erase, .../clips/{clip_id}/video (core-api)
+app.include_router(recording_internal_router)
 
 # The `meeting-events` consumer (services/meeting_service/consumer.py) runs as its own worker
 # process (`python -m services.meeting_service.consumer`), not inside this FastAPI app - same

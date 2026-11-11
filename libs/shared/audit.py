@@ -173,3 +173,12 @@ ACTION_CAPTURE_STARTED = "capture.started"
 # Polish wave 3, Off the record: a meeting paused every agent and the transcript for a stretch.
 ACTION_MEETING_OFF_RECORD_STARTED = "meeting.off_record_started"
 ACTION_MEETING_OFF_RECORD_ENDED = "meeting.off_record_ended"
+# Polish wave 3, Recording playback: meeting-service minting a short-lived playback URL for a
+# participant (who, which meeting, how many segments, for how long), a clip's video issued to a
+# public clip share, and a meeting's recording objects deleted by a data erasure; core-api
+# recording who made or removed a clip.
+ACTION_RECORDING_PLAYBACK_ISSUED = "recording.playback_issued"
+ACTION_RECORDING_CLIP_VIDEO_ISSUED = "recording.clip_video_issued"
+ACTION_RECORDING_ERASED = "recording.erased"
+ACTION_CLIP_CREATED = "clip.created"
+ACTION_CLIP_DELETED = "clip.deleted"

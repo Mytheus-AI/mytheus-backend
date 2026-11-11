@@ -30,8 +30,10 @@ RUN /app/.venv/bin/python -m grpc_tools.protoc -I proto \
 
 
 FROM python:3.12-slim AS runtime
+# ffmpeg: meeting-service cuts a shared clip's own video out of a meeting recording
+# (`ffmpeg -c copy`, no re-encode), so a public clip link never exposes the whole recording.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini \
+    && apt-get install -y --no-install-recommends tini ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 -m appuser
 WORKDIR /app

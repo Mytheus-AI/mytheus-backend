@@ -43,7 +43,10 @@ MAX_TTL_DAYS = 365
 # The web app page that renders a share; it calls `GET /api/v1/public/shares/{token}`.
 SHARE_PATH = "/s/"
 
-ShareKind = Literal["meeting_recap", "decision_record"]
+# What a `ShareLink`/`PublicShare` publishes (frozen: clients switch on it). A clip link is its
+# own wire resource (`routes/clips.py`), so `meeting_clip` exists only in the table.
+RecordShareKind = Literal["meeting_recap", "decision_record"]
+ShareKind = Literal["meeting_recap", "decision_record", "meeting_clip"]
 
 
 def _signing_key() -> bytes | None:
@@ -117,6 +120,10 @@ class ShareLinkRow:
     revoked_at: datetime | None
     view_count: int
     last_viewed_at: datetime | None
+    # Polish wave 3, clip shares: the clip a `meeting_clip` link shows, and whether the sharer
+    # chose to include the video (otherwise the page shows the transcript lines only).
+    clip_id: uuid.UUID | None = None
+    include_video: bool = False
 
     @property
     def active(self) -> bool:
@@ -125,7 +132,7 @@ class ShareLinkRow:
 
 LINK_COLS = (
     "id, kind, meeting_id, decision_id, created_by, created_at, expires_at, revoked_at, "
-    "view_count, last_viewed_at"
+    "view_count, last_viewed_at, clip_id, include_video"
 )
 
 
@@ -142,6 +149,8 @@ async def create_link(
     decision_id: uuid.UUID | None,
     created_by: uuid.UUID,
     ttl_days: int = DEFAULT_TTL_DAYS,
+    clip_id: uuid.UUID | None = None,
+    include_video: bool = False,
 ) -> ShareLinkRow:
     """Insert one link. The CALLER has already checked the creator may share the record
     (`records.build_recap` / `records.build_decision_record` returned something)."""
@@ -153,7 +162,8 @@ async def create_link(
             await session.execute(
                 text(
                     "INSERT INTO share_links (org_id, kind, meeting_id, decision_id, created_by, "
-                    f"expires_at) VALUES (:o, :k, :m, :d, :u, :e) RETURNING {LINK_COLS}"
+                    "expires_at, clip_id, include_video) VALUES (:o, :k, :m, :d, :u, :e, :c, :v) "
+                    f"RETURNING {LINK_COLS}"
                 ),
                 {
                     "o": str(org_id),
@@ -162,6 +172,8 @@ async def create_link(
                     "d": str(decision_id) if decision_id else None,
                     "u": str(created_by),
                     "e": expires,
+                    "c": str(clip_id) if clip_id else None,
+                    "v": include_video,
                 },
             )
         )

@@ -91,6 +91,7 @@ from services.meeting_service.audio_tap_worker import (
     record_tap_wanted,
 )
 from services.meeting_service.meeting_status import report_room_state
+from services.meeting_service.recordings import apply_egress_info
 from services.meeting_service.room_lifecycle import (
     TAPS,
     RoomStarted,
@@ -115,7 +116,9 @@ DEDUPE_TOPIC = "livekit"
 # so LiveKit stops retrying it, but nothing is read from the body and nothing is written.
 _ROOM_EVENT_TYPE = {"participant_joined": "joined", "participant_left": "left"}
 _ROOM_LIFECYCLE_EVENTS = {"room_started", "room_finished"}
-_HANDLED_EVENTS = {*_ROOM_EVENT_TYPE, "egress_ended", *_ROOM_LIFECYCLE_EVENTS}
+# Recording playback (polish wave 3): every egress webhook updates its `meeting_recordings` row.
+_EGRESS_EVENTS = {"egress_started", "egress_updated", "egress_ended"}
+_HANDLED_EVENTS = {*_ROOM_EVENT_TYPE, *_EGRESS_EVENTS, *_ROOM_LIFECYCLE_EVENTS}
 
 
 def _invalid_signature() -> ProblemDetail:
@@ -137,7 +140,45 @@ def _org_unresolvable(reason: str) -> ProblemDetail:
 def _room_name(evt: object) -> str | None:
     room = getattr(evt, "room", None)
     name = getattr(room, "name", None) if room is not None else None
+    if not name:
+        # LiveKit's egress webhooks carry the room only inside `egress_info`.
+        egress_info = getattr(evt, "egress_info", None)
+        name = getattr(egress_info, "room_name", None) if egress_info is not None else None
     return str(name) if name else None
+
+
+def _egress_paths(egress_info: object) -> list[str]:
+    """Every object path an egress names: the uploaded files, then the requested outputs."""
+    paths: list[str] = []
+    for result in list(getattr(egress_info, "file_results", None) or []):
+        if getattr(result, "filename", None):
+            paths.append(str(result.filename))
+    legacy = getattr(egress_info, "file", None)
+    if legacy is not None and getattr(legacy, "filename", None):
+        paths.append(str(legacy.filename))
+    composite = getattr(egress_info, "room_composite", None)
+    for output in list(getattr(composite, "file_outputs", None) or []):
+        if getattr(output, "filepath", None):
+            paths.append(str(output.filepath))
+    return paths
+
+
+def _egress_org_candidate(evt: object) -> str | None:
+    """The tenant of an egress webhook that carries no room metadata (LiveKit sends egress
+    events with `egress_info` only): the first segment of the object path this service asked
+    LiveKit to write (`{org_id}/{meeting_id}/...`, `storage.egress_filepath`). The event's
+    signature is already verified; the org is then validated like room metadata, and every
+    write that follows is scoped to it and to a room that exists in it."""
+    if str(getattr(evt, "event", "") or "") not in _EGRESS_EVENTS:
+        return None
+    egress_info = getattr(evt, "egress_info", None)
+    if egress_info is None:
+        return None
+    for path in _egress_paths(egress_info):
+        head = path.lstrip("/").split("/", 1)[0]
+        if head:
+            return head
+    return None
 
 
 def _participant_sid(evt: object) -> str | None:
@@ -178,15 +219,17 @@ async def _resolve_org_id(session: AsyncSession, evt: object) -> uuid.UUID:
     """
     room = getattr(evt, "room", None)
     metadata = getattr(room, "metadata", None) if room is not None else None
+    raw_org_id: object = None
     if not metadata:
-        raise _org_unresolvable("room metadata is absent")
-
-    try:
-        parsed = json.loads(metadata)
-    except (TypeError, ValueError) as exc:
-        raise _org_unresolvable("room metadata is not valid JSON") from exc
-
-    raw_org_id = parsed.get("org_id") if isinstance(parsed, dict) else None
+        raw_org_id = _egress_org_candidate(evt)
+        if not raw_org_id:
+            raise _org_unresolvable("room metadata is absent")
+    else:
+        try:
+            parsed = json.loads(metadata)
+        except (TypeError, ValueError) as exc:
+            raise _org_unresolvable("room metadata is not valid JSON") from exc
+        raw_org_id = parsed.get("org_id") if isinstance(parsed, dict) else None
     if not raw_org_id:
         raise _org_unresolvable("room metadata carries no org_id field")
 
@@ -259,6 +302,17 @@ async def _apply_egress_ended(
         {"ref": ref, "egress_id": str(egress_id), "org": str(org_id), "meeting": str(meeting_id)},
     )
 
+    # The playable segment: `ready` only with the real uploaded object under this meeting's
+    # prefix (the key-convention fallback above names no object LiveKit wrote).
+    await apply_egress_info(
+        session,
+        org_id=org_id,
+        meeting_id=uuid.UUID(str(meeting_id)),
+        egress_info=egress_info,
+        ended=True,
+        object_key=ref if uploaded and ref == uploaded else None,
+    )
+
     await enqueue(
         session,
         EventEnvelope(
@@ -273,6 +327,35 @@ async def _apply_egress_ended(
             producer="meeting-service",
             idempotency_key=dedupe_key,
         ),
+    )
+
+
+async def _apply_egress_progress(
+    session: AsyncSession, org_id: uuid.UUID, room: str, evt: object
+) -> None:
+    """`egress_started` / `egress_updated`: the segment is recording (or finishing)."""
+    egress_info = getattr(evt, "egress_info", None)
+    if egress_info is None or not getattr(egress_info, "egress_id", None):
+        return
+    meeting_id = (
+        await session.execute(
+            text(
+                "SELECT meeting_id FROM meeting_rooms WHERE org_id = :org AND livekit_room = :room"
+            ),
+            {"org": str(org_id), "room": room},
+        )
+    ).scalar()
+    if meeting_id is None:
+        logger.warning(
+            "livekit webhook: egress event for unknown room (org=%s room=%s)", org_id, room
+        )
+        return
+    await apply_egress_info(
+        session,
+        org_id=org_id,
+        meeting_id=uuid.UUID(str(meeting_id)),
+        egress_info=egress_info,
+        ended=False,
     )
 
 
@@ -481,6 +564,14 @@ async def livekit_webhook(
     participant_sid = _participant_sid(evt) or "-"
     if event_type in _ROOM_LIFECYCLE_EVENTS:
         dedupe_key = f"{room}:{event_type}:{_room_sid(evt) or '-'}"
+    elif event_type in _EGRESS_EVENTS:
+        # One room can have several egresses (one per recorded stretch around "off the
+        # record"), and an egress sends several updates: key on the egress and its status.
+        info = getattr(evt, "egress_info", None)
+        egress_key = str(getattr(info, "egress_id", None) or "-") if info is not None else "-"
+        if event_type == "egress_updated":
+            egress_key = f"{egress_key}:{getattr(info, 'status', '-')}"
+        dedupe_key = f"{room}:{event_type}:{egress_key}"
     else:
         dedupe_key = f"{room}:{event_type}:{participant_sid}"
     lifecycle: RoomStarted | _RoomFinished | None = None
@@ -512,6 +603,8 @@ async def livekit_webhook(
 
         if event_type == "egress_ended":
             await _apply_egress_ended(session, org_id, room, evt, dedupe_key)
+        elif event_type in _EGRESS_EVENTS:
+            await _apply_egress_progress(session, org_id, room, evt)
         elif event_type in _ROOM_LIFECYCLE_EVENTS:
             lifecycle = await _load_room_lifecycle(session, org_id, room, event_type)
         else:
@@ -608,6 +701,8 @@ async def livekit_webhook(
             room=lifecycle.room,
             egress_id=lifecycle.egress_id,
             run_tap=in_process,
+            session_factory=sessionmaker,
+            meeting_id=lifecycle.meeting_id,
         )
 
     return Response(status_code=status.HTTP_200_OK)
