@@ -822,6 +822,172 @@ components:
       - in_meeting
       title: AgreementSummary
       type: object
+    Assumption:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        history:
+          items:
+            $ref: '#/components/schemas/Evidence'
+          title: History
+          type: array
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          enum:
+          - price
+          - date
+          - metric
+          - dependency
+          - person
+          - other
+          title: Kind
+          type: string
+        last_checked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Checked At
+        open_break:
+          anyOf:
+          - $ref: '#/components/schemas/Evidence'
+          - type: 'null'
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        reconfirm_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reconfirm Note
+        reconfirmed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Reconfirmed At
+        source:
+          enum:
+          - agent
+          - owner
+          title: Source
+          type: string
+        stated_by:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        statement:
+          title: Statement
+          type: string
+        status:
+          enum:
+          - watching
+          - broken
+          title: Status
+          type: string
+        watch:
+          $ref: '#/components/schemas/Watch'
+      required:
+      - id
+      - decision_id
+      - kind
+      - statement
+      - source
+      - status
+      - watch
+      - created_at
+      title: Assumption
+      type: object
+    AssumptionCreate:
+      additionalProperties: false
+      properties:
+        kind:
+          enum:
+          - price
+          - date
+          - metric
+          - dependency
+          - person
+          - other
+          title: Kind
+          type: string
+        quote:
+          anyOf:
+          - maxLength: 600
+            type: string
+          - type: 'null'
+          title: Quote
+        stated_by_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Stated By User Id
+        statement:
+          maxLength: 300
+          minLength: 1
+          title: Statement
+          type: string
+        watch:
+          anyOf:
+          - $ref: '#/components/schemas/WatchInput'
+          - type: 'null'
+      required:
+      - kind
+      - statement
+      title: AssumptionCreate
+      type: object
+    AssumptionUpdate:
+      additionalProperties: false
+      properties:
+        kind:
+          anyOf:
+          - enum:
+            - price
+            - date
+            - metric
+            - dependency
+            - person
+            - other
+            type: string
+          - type: 'null'
+          title: Kind
+        quote:
+          anyOf:
+          - maxLength: 600
+            type: string
+          - type: 'null'
+          title: Quote
+        stated_by_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Stated By User Id
+        statement:
+          anyOf:
+          - maxLength: 300
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Statement
+        watch:
+          anyOf:
+          - $ref: '#/components/schemas/WatchInput'
+          - type: 'null'
+      title: AssumptionUpdate
+      type: object
     AttendanceUpdate:
       additionalProperties: false
       description: '`PUT /meetings/{id}/attendance` (ADR-0039 B5): the caller''s own attendance. A PUT,
@@ -878,6 +1044,83 @@ components:
       - mime
       - duration_ms
       title: AudioIn
+      type: object
+    BlastRadius:
+      properties:
+        content:
+          title: Content
+          type: string
+        counts:
+          $ref: '#/components/schemas/Counts'
+        crm:
+          $ref: '#/components/schemas/Crm'
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        rings:
+          items:
+            $ref: '#/components/schemas/Ring'
+          title: Rings
+          type: array
+        state:
+          enum:
+          - pending
+          - ready
+          title: State
+          type: string
+        summary:
+          title: Summary
+          type: string
+      required:
+      - decision_id
+      - meeting_id
+      - content
+      - state
+      - summary
+      - counts
+      - rings
+      - crm
+      title: BlastRadius
+      type: object
+    BookRequest:
+      additionalProperties: false
+      properties:
+        start:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Start
+      title: BookRequest
+      type: object
+    Booked:
+      properties:
+        end:
+          format: date-time
+          title: End
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        start:
+          format: date-time
+          title: Start
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - meeting_id
+      - start
+      - end
+      - title
+      title: Booked
       type: object
     BriefMe:
       additionalProperties: false
@@ -1353,7 +1596,7 @@ components:
           type: string
         meeting:
           anyOf:
-          - $ref: '#/components/schemas/SourceMeeting'
+          - $ref: '#/components/schemas/services__core_api__briefings__SourceMeeting'
           - type: 'null'
         minutes:
           anyOf:
@@ -1439,6 +1682,41 @@ components:
       - samples
       - dismiss_rate
       title: CalibrationDetail
+      type: object
+    CandidateAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        customer:
+          title: Customer
+          type: boolean
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+      required:
+      - id
+      - content
+      - customer
+      title: CandidateAction
       type: object
     CandidateList:
       description: '`GET /meetings/:id/candidates`: the proposed, surfaced candidates, oldest first. With
@@ -3019,6 +3297,27 @@ components:
       - items
       title: ContextFillList
       type: object
+    Counts:
+      properties:
+        actions:
+          title: Actions
+          type: integer
+        customers:
+          title: Customers
+          type: integer
+        decisions:
+          title: Decisions
+          type: integer
+        goals:
+          title: Goals
+          type: integer
+      required:
+      - actions
+      - goals
+      - decisions
+      - customers
+      title: Counts
+      type: object
     CreatedStatusRequest:
       properties:
         action_content:
@@ -3057,6 +3356,19 @@ components:
       required:
       - requests
       title: CreatedStatusRequests
+      type: object
+    Crm:
+      properties:
+        hubspot:
+          enum:
+          - connected
+          - not_connected
+          - unknown
+          title: Hubspot
+          type: string
+      required:
+      - hubspot
+      title: Crm
       type: object
     CrmAction:
       properties:
@@ -3296,6 +3608,65 @@ components:
       - items
       title: DateProposalList
       type: object
+    Deal:
+      properties:
+        amount:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Amount
+        close_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Close Date
+        closed_lost:
+          default: false
+          title: Closed Lost
+          type: boolean
+        closed_won:
+          default: false
+          title: Closed Won
+          type: boolean
+        id:
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        stage:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stage
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - id
+      title: Deal
+      type: object
+    DealDomains:
+      properties:
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        domains:
+          items:
+            type: string
+          title: Domains
+          type: array
+      required:
+      - decision_id
+      - domains
+      title: DealDomains
+      type: object
     Decision:
       description: One `decisions` row. `proposed` until a participant confirms or dismisses it.
       properties:
@@ -3435,7 +3806,7 @@ components:
       properties:
         author:
           anyOf:
-          - $ref: '#/components/schemas/Person'
+          - $ref: '#/components/schemas/services__core_api__decision_check__Person'
           - type: 'null'
         confidence:
           title: Confidence
@@ -3538,7 +3909,7 @@ components:
           type: integer
         owner:
           anyOf:
-          - $ref: '#/components/schemas/Person'
+          - $ref: '#/components/schemas/services__core_api__decision_check__Person'
           - type: 'null'
         places:
           description: Distinct places among open and reopened challenges.
@@ -3650,7 +4021,7 @@ components:
           title: Meeting Title
         owner:
           anyOf:
-          - $ref: '#/components/schemas/Person'
+          - $ref: '#/components/schemas/services__core_api__decision_check__Person'
           - type: 'null'
         quote:
           description: The part of the checked text that conflicts, verbatim.
@@ -3835,6 +4206,13 @@ components:
           format: uuid
           title: Id
           type: string
+        kind:
+          default: superseded
+          enum:
+          - superseded
+          - reopened
+          title: Kind
+          type: string
         new_decision:
           $ref: '#/components/schemas/ReversalDecision'
         old_decision:
@@ -3891,6 +4269,53 @@ components:
           - type: 'null'
           title: Rationale
       title: DecisionUpdate
+      type: object
+    DecisionWhy:
+      properties:
+        assumptions:
+          items:
+            $ref: '#/components/schemas/Assumption'
+          title: Assumptions
+          type: array
+        can_edit:
+          title: Can Edit
+          type: boolean
+        content:
+          title: Content
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        reopened:
+          anyOf:
+          - $ref: '#/components/schemas/Reopened'
+          - type: 'null'
+        sources:
+          $ref: '#/components/schemas/WatchSources'
+        state:
+          enum:
+          - pending
+          - ready
+          title: State
+          type: string
+      required:
+      - decision_id
+      - meeting_id
+      - content
+      - can_edit
+      - state
+      - assumptions
+      - sources
+      title: DecisionWhy
       type: object
     DelegatedAnswerEntry:
       properties:
@@ -4222,6 +4647,20 @@ components:
       - quote
       title: DismissCheck
       type: object
+    DomainDeals:
+      properties:
+        deals:
+          items:
+            $ref: '#/components/schemas/Deal'
+          title: Deals
+          type: array
+        domain:
+          title: Domain
+          type: string
+      required:
+      - domain
+      title: DomainDeals
+      type: object
     DriftNudgeRequest:
       additionalProperties: false
       properties:
@@ -4381,6 +4820,102 @@ components:
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
+    Evidence:
+      properties:
+        confidence:
+          title: Confidence
+          type: number
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        rationale:
+          title: Rationale
+          type: string
+        redacted:
+          title: Redacted
+          type: boolean
+        resolution_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Resolution Note
+        resolved_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Resolved At
+        resolved_by:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        revisit_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Revisit Meeting Id
+        source:
+          enum:
+          - meeting
+          - decision
+          - jira
+          - linear
+          - hubspot
+          title: Source
+          type: string
+        source_decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Source Decision Id
+        source_meeting:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__routes__decision_why__SourceMeeting'
+          - type: 'null'
+        source_ref:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Ref
+        source_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Url
+        speaker:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        status:
+          enum:
+          - open
+          - reconfirmed
+          - reopened
+          - revisit_booked
+          title: Status
+          type: string
+      required:
+      - id
+      - source
+      - redacted
+      - rationale
+      - confidence
+      - status
+      - created_at
+      title: Evidence
+      type: object
     ExternalStatus:
       additionalProperties: false
       properties:
@@ -4968,6 +5503,53 @@ components:
       - id
       - text
       title: InternalStatement
+      type: object
+    Issue:
+      properties:
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        key:
+          title: Key
+          type: string
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        status_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status Category
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      required:
+      - key
+      title: Issue
+      type: object
+    KeepBoth:
+      additionalProperties: false
+      properties:
+        note:
+          maxLength: 500
+          minLength: 1
+          title: Note
+          type: string
+      required:
+      - note
+      title: KeepBoth
       type: object
     LastWordList:
       properties:
@@ -5566,6 +6148,45 @@ components:
       - created_at
       - updated_at
       title: Meeting
+      type: object
+    MeetingBlast:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MeetingBlastItem'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MeetingBlast
+      type: object
+    MeetingBlastItem:
+      properties:
+        content:
+          title: Content
+          type: string
+        counts:
+          $ref: '#/components/schemas/Counts'
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        state:
+          enum:
+          - pending
+          - ready
+          title: State
+          type: string
+        summary:
+          title: Summary
+          type: string
+      required:
+      - decision_id
+      - content
+      - state
+      - summary
+      - counts
+      title: MeetingBlastItem
       type: object
     MeetingBriefing:
       properties:
@@ -6515,6 +7136,45 @@ components:
       - pinned
       title: MemoryTopic
       type: object
+    Message:
+      properties:
+        author:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        body:
+          title: Body
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        mine:
+          title: Mine
+          type: boolean
+      required:
+      - id
+      - mine
+      - body
+      - created_at
+      title: Message
+      type: object
+    MessageIn:
+      additionalProperties: false
+      properties:
+        body:
+          maxLength: 1000
+          minLength: 1
+          title: Body
+          type: string
+      required:
+      - body
+      title: MessageIn
+      type: object
     MinutesDecision:
       properties:
         decision_id:
@@ -6754,6 +7414,18 @@ components:
       - items
       title: MyTaskList
       type: object
+    Note:
+      additionalProperties: false
+      properties:
+        note:
+          maxLength: 500
+          minLength: 1
+          title: Note
+          type: string
+      required:
+      - note
+      title: Note
+      type: object
     NoteFeedback:
       properties:
         recorded_at:
@@ -6894,6 +7566,54 @@ components:
       - can_toggle
       title: OffRecordState
       type: object
+    OpenAssumption:
+      properties:
+        decision_content:
+          title: Decision Content
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          title: Kind
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        statement:
+          title: Statement
+          type: string
+      required:
+      - id
+      - decision_id
+      - decision_content
+      - kind
+      - statement
+      - meeting_id
+      title: OpenAssumption
+      type: object
+    OpenAssumptions:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/OpenAssumption'
+          title: Items
+          type: array
+      required:
+      - items
+      title: OpenAssumptions
+      type: object
     OpenIssue:
       additionalProperties: false
       properties:
@@ -6916,6 +7636,17 @@ components:
       - action_id
       - issue_key
       title: OpenIssue
+      type: object
+    OptionalNote:
+      additionalProperties: false
+      properties:
+        note:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Note
+      title: OptionalNote
       type: object
     Participant:
       description: 'A participant as a meeting response shows it. ADR-0039 B5: `attendance` and
@@ -7018,21 +7749,6 @@ components:
       required:
       - user_ids
       title: ParticipantsAdd
-      type: object
-    Person:
-      properties:
-        id:
-          format: uuid
-          title: Id
-          type: string
-        name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Name
-      required:
-      - id
-      title: Person
       type: object
     PersonMemory:
       properties:
@@ -7385,6 +8101,25 @@ components:
       - promise
       - capacity
       title: PromiseWithCapacity
+      type: object
+    Proposal:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        by_me:
+          title: By Me
+          type: boolean
+        winner_decision_id:
+          format: uuid
+          title: Winner Decision Id
+          type: string
+      required:
+      - winner_decision_id
+      - by_me
+      - at
+      title: Proposal
       type: object
     ProposalBrief:
       properties:
@@ -7923,7 +8658,7 @@ components:
           title: Outcome
         owner:
           anyOf:
-          - $ref: '#/components/schemas/Person'
+          - $ref: '#/components/schemas/services__core_api__decision_check__Person'
           - type: 'null'
         place_label:
           anyOf:
@@ -7941,7 +8676,7 @@ components:
           - type: 'null'
           title: Reason
         requested_by:
-          $ref: '#/components/schemas/Person'
+          $ref: '#/components/schemas/services__core_api__decision_check__Person'
         resolved_at:
           anyOf:
           - format: date-time
@@ -8004,6 +8739,56 @@ components:
       required:
       - items
       title: ReopenRequestList
+      type: object
+    Reopened:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        by:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+      required:
+      - at
+      title: Reopened
+      type: object
+    Resolution:
+      properties:
+        at:
+          format: date-time
+          title: At
+          type: string
+        by:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+        winner_decision_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Winner Decision Id
+      required:
+      - at
+      title: Resolution
       type: object
     ResultAccepted:
       properties:
@@ -8426,6 +9211,112 @@ components:
       - resolution
       title: ReversalResolve
       type: object
+    Ring:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/RippleItem'
+          title: Items
+          type: array
+        label:
+          title: Label
+          type: string
+        ring:
+          enum:
+          - 1
+          - 2
+          - 3
+          title: Ring
+          type: integer
+      required:
+      - ring
+      - label
+      - items
+      title: Ring
+      type: object
+    RippleItem:
+      properties:
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        effect:
+          enum:
+          - changes
+          - blocks
+          - unblocks
+          - advances
+          - risks
+          - contradicts
+          - commits
+          title: Effect
+          type: string
+        href:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Href
+        id:
+          title: Id
+          type: string
+        kind:
+          enum:
+          - action
+          - goal
+          - decision
+          - customer_action
+          - deal
+          title: Kind
+          type: string
+        label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Label
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        redacted:
+          default: false
+          title: Redacted
+          type: boolean
+        ring:
+          enum:
+          - 1
+          - 2
+          - 3
+          title: Ring
+          type: integer
+        settlement_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Settlement Id
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        team:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team
+        why:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Why
+      required:
+      - id
+      - kind
+      - ring
+      - effect
+      title: RippleItem
+      type: object
     RoomSignalsSource:
       properties:
         agenda:
@@ -8684,6 +9575,129 @@ components:
       - name
       - description
       title: ServerVoiceOption
+      type: object
+    SettleSide:
+      properties:
+        content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Content
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        mine:
+          title: Mine
+          type: boolean
+        owner:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_speaker:
+          anyOf:
+          - $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          - type: 'null'
+        shared:
+          title: Shared
+          type: boolean
+        team:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Team
+        visible:
+          title: Visible
+          type: boolean
+      required:
+      - decision_id
+      - meeting_id
+      - decided_at
+      - visible
+      - shared
+      - mine
+      title: SettleSide
+      type: object
+    Settlement:
+      properties:
+        confidence:
+          title: Confidence
+          type: number
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          title: Messages
+          type: array
+        mine:
+          $ref: '#/components/schemas/SettleSide'
+        proposal:
+          anyOf:
+          - $ref: '#/components/schemas/Proposal'
+          - type: 'null'
+        rationale:
+          title: Rationale
+          type: string
+        resolution:
+          anyOf:
+          - $ref: '#/components/schemas/Resolution'
+          - type: 'null'
+        status:
+          enum:
+          - open
+          - kept_both
+          - superseded
+          - meeting_booked
+          title: Status
+          type: string
+        theirs:
+          $ref: '#/components/schemas/SettleSide'
+      required:
+      - id
+      - status
+      - created_at
+      - confidence
+      - rationale
+      - mine
+      - theirs
+      - messages
+      title: Settlement
+      type: object
+    SettlementList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Settlement'
+          title: Items
+          type: array
+      required:
+      - items
+      title: SettlementList
       type: object
     ShareLink:
       properties:
@@ -9055,6 +10069,31 @@ components:
       - actions
       title: SlackDigest
       type: object
+    SlotProposal:
+      properties:
+        end:
+          format: date-time
+          title: End
+          type: string
+        people:
+          items:
+            $ref: '#/components/schemas/services__core_api__decision_why__Person'
+          title: People
+          type: array
+        start:
+          format: date-time
+          title: Start
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - start
+      - end
+      - people
+      - title
+      title: SlotProposal
+      type: object
     SourceAction:
       properties:
         assignee_id:
@@ -9207,26 +10246,6 @@ components:
       - text
       title: SourceItem
       type: object
-    SourceMeeting:
-      properties:
-        ended_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Ended At
-        id:
-          format: uuid
-          title: Id
-          type: string
-        title:
-          title: Title
-          type: string
-      required:
-      - id
-      - title
-      title: SourceMeeting
-      type: object
     SourceMinutes:
       properties:
         decisions:
@@ -9307,6 +10326,31 @@ components:
       - end_ms
       - text
       title: SourceTurn
+      type: object
+    Sources:
+      properties:
+        hubspot:
+          default: not_connected
+          enum:
+          - connected
+          - not_connected
+          title: Hubspot
+          type: string
+        jira:
+          default: not_connected
+          enum:
+          - connected
+          - not_connected
+          title: Jira
+          type: string
+        linear:
+          default: not_connected
+          enum:
+          - connected
+          - not_connected
+          title: Linear
+          type: string
+      title: Sources
       type: object
     SpeakerAssign:
       additionalProperties: false
@@ -9750,6 +10794,17 @@ components:
       - saved
       title: SuggestionList
       type: object
+    Supersede:
+      additionalProperties: false
+      properties:
+        winner_decision_id:
+          format: uuid
+          title: Winner Decision Id
+          type: string
+      required:
+      - winner_decision_id
+      title: Supersede
+      type: object
     Task:
       description: One of your action items, with or without a meeting behind it.
       properties:
@@ -10014,6 +11069,250 @@ components:
       - type
       title: ValidationError
       type: object
+    Watch:
+      properties:
+        comparator:
+          anyOf:
+          - enum:
+            - lt
+            - lte
+            - gt
+            - gte
+            - eq
+            type: string
+          - type: 'null'
+          title: Comparator
+        date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Date
+        deal_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deal Id
+        jira_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Jira Key
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+      title: Watch
+      type: object
+    WatchApplied:
+      properties:
+        broken:
+          title: Broken
+          type: integer
+        checked:
+          title: Checked
+          type: integer
+        deals_linked:
+          title: Deals Linked
+          type: integer
+      required:
+      - checked
+      - broken
+      - deals_linked
+      title: WatchApplied
+      type: object
+    WatchInput:
+      additionalProperties: false
+      properties:
+        comparator:
+          anyOf:
+          - enum:
+            - lt
+            - lte
+            - gt
+            - gte
+            - eq
+            type: string
+          - type: 'null'
+          title: Comparator
+        date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Date
+        deal_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deal Id
+        jira_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Jira Key
+        unit:
+          anyOf:
+          - maxLength: 20
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Unit
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+      title: WatchInput
+      type: object
+    WatchItem:
+      properties:
+        assumption_id:
+          format: uuid
+          title: Assumption Id
+          type: string
+        comparator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Comparator
+        deal_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deal Id
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        jira_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Jira Key
+        kind:
+          title: Kind
+          type: string
+        statement:
+          title: Statement
+          type: string
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Unit
+        value:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Value
+        watch_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Watch Date
+      required:
+      - assumption_id
+      - decision_id
+      - kind
+      - statement
+      title: WatchItem
+      type: object
+    WatchList:
+      properties:
+        deal_domains:
+          items:
+            $ref: '#/components/schemas/DealDomains'
+          title: Deal Domains
+          type: array
+        items:
+          items:
+            $ref: '#/components/schemas/WatchItem'
+          title: Items
+          type: array
+      required:
+      - items
+      - deal_domains
+      title: WatchList
+      type: object
+    WatchResults:
+      additionalProperties: false
+      properties:
+        as_of:
+          format: date
+          title: As Of
+          type: string
+        deals:
+          items:
+            $ref: '#/components/schemas/Deal'
+          maxItems: 500
+          title: Deals
+          type: array
+        domain_deals:
+          items:
+            $ref: '#/components/schemas/DomainDeals'
+          maxItems: 500
+          title: Domain Deals
+          type: array
+        issues:
+          items:
+            $ref: '#/components/schemas/Issue'
+          maxItems: 500
+          title: Issues
+          type: array
+        sources:
+          $ref: '#/components/schemas/Sources'
+      required:
+      - as_of
+      - sources
+      title: WatchResults
+      type: object
+    WatchSources:
+      properties:
+        checked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Checked At
+        hubspot:
+          default: unknown
+          enum:
+          - connected
+          - not_connected
+          - unknown
+          title: Hubspot
+          type: string
+        jira:
+          default: unknown
+          enum:
+          - connected
+          - not_connected
+          - unknown
+          title: Jira
+          type: string
+        linear:
+          default: unknown
+          enum:
+          - connected
+          - not_connected
+          - unknown
+          title: Linear
+          type: string
+        transcripts:
+          const: connected
+          default: connected
+          title: Transcripts
+          type: string
+      title: WatchSources
+      type: object
     WeeklyDigest:
       properties:
         actions_assigned:
@@ -10272,6 +11571,137 @@ components:
       - emailed
       - skipped
       title: WeeklyRunResult
+      type: object
+    WhyDecision:
+      properties:
+        confidential:
+          title: Confidential
+          type: boolean
+        confirmed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Confirmed By
+        content:
+          title: Content
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quote
+        quote_speaker_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Quote Speaker Id
+        quote_start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Quote Start Ms
+        rationale:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rationale
+        status:
+          title: Status
+          type: string
+      required:
+      - id
+      - meeting_id
+      - content
+      - confidential
+      - status
+      title: WhyDecision
+      type: object
+    WhyParticipant:
+      properties:
+        name:
+          title: Name
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      title: WhyParticipant
+      type: object
+    WhySource:
+      properties:
+        already_read:
+          title: Already Read
+          type: boolean
+        candidate_actions:
+          items:
+            $ref: '#/components/schemas/CandidateAction'
+          title: Candidate Actions
+          type: array
+        decision:
+          $ref: '#/components/schemas/WhyDecision'
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        participants:
+          items:
+            $ref: '#/components/schemas/WhyParticipant'
+          title: Participants
+          type: array
+        speakers:
+          additionalProperties:
+            format: uuid
+            type: string
+          title: Speakers
+          type: object
+        turns:
+          items:
+            $ref: '#/components/schemas/WhyTurn'
+          title: Turns
+          type: array
+      required:
+      - decision
+      - participants
+      - speakers
+      - turns
+      - candidate_actions
+      - already_read
+      title: WhySource
+      type: object
+    WhyTurn:
+      properties:
+        end_ms:
+          title: End Ms
+          type: integer
+        speaker_id:
+          title: Speaker Id
+          type: string
+        start_ms:
+          title: Start Ms
+          type: integer
+        text:
+          title: Text
+          type: string
+      required:
+      - speaker_id
+      - start_ms
+      - end_ms
+      - text
+      title: WhyTurn
       type: object
     Worklog:
       description: 'One `PersonalListenerAgent` note from `worklogs` (Plan 7-9 section 3.3).
@@ -10567,6 +11997,75 @@ components:
       - moved_decisions
       - moved_actions
       title: WrapUpClosed
+      type: object
+    services__core_api__briefings__SourceMeeting:
+      properties:
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      title: SourceMeeting
+      type: object
+    services__core_api__decision_check__Person:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+      required:
+      - id
+      title: Person
+      type: object
+    services__core_api__decision_why__Person:
+      properties:
+        name:
+          title: Name
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - name
+      title: Person
+      type: object
+    services__core_api__routes__decision_why__SourceMeeting:
+      properties:
+        date:
+          format: date-time
+          title: Date
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+      required:
+      - id
+      - date
+      title: SourceMeeting
       type: object
   securitySchemes:
     HTTPBearer:
@@ -11019,6 +12518,280 @@ paths:
       summary: Say where you really stand on a decision
       tags:
       - room-signals
+  /api/v1/assumptions/{assumption_id}:
+    delete:
+      operationId: remove_assumption
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Remove Assumption
+      tags:
+      - decision-why
+    patch:
+      operationId: edit_assumption
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssumptionUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assumption'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Edit Assumption
+      tags:
+      - decision-why
+  /api/v1/assumptions/{assumption_id}/book-revisit:
+    post:
+      operationId: book_revisit
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/BookRequest'
+              - type: 'null'
+              title: Body
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booked'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Book Revisit
+      tags:
+      - decision-why
+  /api/v1/assumptions/{assumption_id}/reconfirm:
+    post:
+      operationId: reconfirm
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Note'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assumption'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Reconfirm
+      tags:
+      - decision-why
+  /api/v1/assumptions/{assumption_id}/reopen-decision:
+    post:
+      description: 'Reopen the decision this reason belongs to. Idempotent: a reopened decision stays
+
+        reopened and its task owners are asked once (`decision_reversals` is unique per task).'
+      operationId: reopen_decision
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/OptionalNote'
+              - type: 'null'
+              title: Body
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionWhy'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Reopen Decision
+      tags:
+      - decision-why
+  /api/v1/assumptions/{assumption_id}/revisit-slot:
+    get:
+      operationId: revisit_slot
+      parameters:
+      - in: path
+        name: assumption_id
+        required: true
+        schema:
+          format: uuid
+          title: Assumption Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotProposal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Revisit Slot
+      tags:
+      - decision-why
   /api/v1/briefings:
     get:
       operationId: list_briefings
@@ -12381,6 +14154,92 @@ paths:
       summary: How strongly a decision was agreed
       tags:
       - room-signals
+  /api/v1/decisions/{decision_id}/assumptions:
+    post:
+      operationId: add_assumption
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssumptionCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assumption'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Add Assumption
+      tags:
+      - decision-why
+  /api/v1/decisions/{decision_id}/blast-radius:
+    get:
+      operationId: decision_blast_radius
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlastRadius'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decision Blast Radius
+      tags:
+      - blast-radius
   /api/v1/decisions/{decision_id}/challenges:
     get:
       operationId: decision_challenges
@@ -12757,6 +14616,42 @@ paths:
       summary: Share a decision record
       tags:
       - share-links
+  /api/v1/decisions/{decision_id}/why:
+    get:
+      operationId: get_why
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionWhy'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Why
+      tags:
+      - decision-why
   /api/v1/departments:
     get:
       operationId: list_departments
@@ -14046,6 +15941,42 @@ paths:
       summary: Set Attendance
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/blast-radius:
+    get:
+      operationId: meeting_blast_radius
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingBlast'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Blast Radius
+      tags:
+      - blast-radius
   /api/v1/meetings/{meeting_id}/briefing:
     get:
       operationId: meeting_briefing
@@ -16989,6 +18920,451 @@ paths:
       summary: Search your meetings, decisions and actions
       tags:
       - public-api
+  /api/v1/settlements:
+    get:
+      operationId: list_settlements
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: open
+          enum:
+          - open
+          - all
+          title: Status
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Settlements
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}:
+    get:
+      operationId: get_settlement
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Settlement
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/accept:
+    post:
+      operationId: accept
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Accept
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/book:
+    post:
+      operationId: book
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/BookRequest'
+              - type: 'null'
+              title: Body
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booked'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Book
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/decline:
+    post:
+      operationId: decline
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decline
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/keep-both:
+    post:
+      operationId: keep_both
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeepBoth'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Keep Both
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/meeting-slot:
+    get:
+      operationId: meeting_slot
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotProposal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Slot
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/messages:
+    post:
+      operationId: post_message
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageIn'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Post Message
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/share:
+    post:
+      operationId: share_wording
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Share Wording
+      tags:
+      - settlements
+  /api/v1/settlements/{settlement_id}/supersede:
+    post:
+      operationId: supersede
+      parameters:
+      - in: path
+        name: settlement_id
+        required: true
+        schema:
+          format: uuid
+          title: Settlement Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Supersede'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Supersede
+      tags:
+      - settlements
   /api/v1/share-links/{link_id}:
     delete:
       description: The link's creator, the meeting's host, or a workspace admin. Idempotent.
@@ -17835,6 +20211,128 @@ paths:
       summary: Agent Policy
       tags:
       - core-internal
+  /internal/assumptions/open:
+    get:
+      operationId: open_assumptions
+      parameters:
+      - in: query
+        name: exclude_meeting_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Exclude Meeting Id
+      - in: query
+        name: exclude_decision_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Exclude Decision Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAssumptions'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Open Assumptions
+      tags:
+      - core-internal
+  /internal/assumptions/watch:
+    get:
+      operationId: watch_list
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Watch List
+      tags:
+      - core-internal
+  /internal/assumptions/watch-results:
+    post:
+      operationId: watch_results
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchResults'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchApplied'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Watch Results
+      tags:
+      - core-internal
   /internal/briefings/{briefing_id}/claim:
     post:
       operationId: claim_briefing
@@ -18135,6 +20633,45 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Decision Record
+      tags:
+      - core-internal
+  /internal/decisions/{decision_id}/why-source:
+    get:
+      operationId: why_source
+      parameters:
+      - in: path
+        name: decision_id
+        required: true
+        schema:
+          format: uuid
+          title: Decision Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhySource'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Why Source
       tags:
       - core-internal
   /internal/digests/weekly:

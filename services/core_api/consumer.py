@@ -75,6 +75,7 @@ from libs.shared.metrics import (
 )
 from libs.shared.tenancy import set_rls
 from services.core_api import briefings as briefings_mod
+from services.core_api import decision_why
 from services.core_api import minutes as minutes_mod
 from services.core_api import room_signals as room_signals_mod
 from services.core_api.capacity import warn_on_landing
@@ -162,6 +163,12 @@ AFTER_COMMIT: list[Callable[[], Awaitable[Any]]] = []
 MAX_COMMITMENTS_PER_RECORD = 5
 MAX_COMMITMENT_CHARS = 500
 MAX_DUE_HINT_CHARS = 100
+
+# Beyond, Layer 1: ProactiveAgent alerts core-api keeps (`services/core_api/decision_why.py`):
+# `decision_why` (a decision's reasons and ripple), `assumption_broken` (the watcher) and the
+# existing `conflict` (a clash, which may open a settle thread). Every other alert type is
+# notification-service's alone and is claimed and ignored here, as before.
+_ALERT = ("ProactiveAgent", "alert")
 
 # Phase 8 Part A contract section 2: the two candidate kinds that get a `proposed` row.
 _CANDIDATE_TABLES = {
@@ -305,6 +312,8 @@ async def _apply_agent_result(
     if claimed is None:
         return False
     agent, kind = str(value.get("agent")), str(value.get("kind"))
+    if (agent, kind) == _ALERT:
+        return await decision_why.apply_alert(session, org_id, value)
     candidate_table = _CANDIDATE_TABLES.get((agent, kind))
     is_suggestion = (agent, kind) == _SUGGESTION
     is_context_fill = (agent, kind) == _CONTEXT_FILL

@@ -735,6 +735,29 @@ class JiraApi(_Http):
         body: dict[str, Any] = response.json()
         return body
 
+    async def issue_for_watch(self, token: str, cloud_id: str, key: str) -> dict[str, Any] | None:
+        """Status, status category, summary and due date of one issue (the assumption watch), or
+        None when Jira no longer has it."""
+        response = await self.request(
+            self.provider,
+            "get_issue_watch",
+            "GET",
+            f"{JIRA_API}/{cloud_id}/rest/api/3/issue/{key}",
+            headers=self._auth(token),
+            params={"fields": "status,summary,duedate"},
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ProviderError(
+                self.provider,
+                "get_issue_watch",
+                f"http_{response.status_code}",
+                response.status_code,
+            )
+        body: dict[str, Any] = response.json()
+        return body
+
     async def account_id_for_email(self, token: str, cloud_id: str, email: str) -> str | None:
         body = await self._call(
             token, cloud_id, "user_search", "GET", "/user/search", params={"query": email}
@@ -766,6 +789,9 @@ class HubSpotOAuth(_Http):
         "crm.objects.companies.write",
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
+        # Beyond, Layer 1: the assumption watch reads deal amount, stage and close date, and the
+        # blast radius lists customers' open deals. Read only.
+        "crm.objects.deals.read",
     )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
@@ -928,6 +954,53 @@ class HubSpotApi(_Http):
                 self.provider, "update_note", f"http_{response.status_code}", response.status_code
             )
         return True
+
+    DEAL_PROPS = (
+        "dealname",
+        "amount",
+        "closedate",
+        "dealstage",
+        "hs_is_closed_won",
+        "hs_is_closed",
+    )
+
+    async def deals_by_id(self, token: str, ids: list[str]) -> list[dict[str, Any]]:
+        """Deals by id (batch read), with the properties the assumption watch compares."""
+        if not ids:
+            return []
+        body = await self.json(
+            self.provider,
+            "read_deals",
+            "POST",
+            f"{HUBSPOT_API}/crm/v3/objects/deals/batch/read",
+            headers=self._auth(token),
+            json={"properties": list(self.DEAL_PROPS), "inputs": [{"id": i} for i in ids]},
+        )
+        return [r for r in body.get("results") or [] if isinstance(r, dict) and r.get("id")]
+
+    async def deal_ids_for_companies(
+        self, token: str, company_ids: list[str]
+    ) -> dict[str, list[str]]:
+        """company id -> its associated deal ids (v4 batch associations)."""
+        if not company_ids:
+            return {}
+        body = await self.json(
+            self.provider,
+            "company_deals",
+            "POST",
+            f"{HUBSPOT_API}/crm/v4/associations/companies/deals/batch/read",
+            headers=self._auth(token),
+            json={"inputs": [{"id": c} for c in company_ids]},
+        )
+        out: dict[str, list[str]] = {}
+        for r in body.get("results") or []:
+            if not isinstance(r, dict):
+                continue
+            src = str((r.get("from") or {}).get("id") or "")
+            ids = [str(t.get("toObjectId")) for t in r.get("to") or [] if t.get("toObjectId")]
+            if src:
+                out[src] = ids
+        return out
 
     async def associate_note(self, token: str, note_id: str, to_object: str, to_id: str) -> None:
         """v4 default association (idempotent): note -> company | contact."""
