@@ -12,7 +12,7 @@ Both tables already carry `org_id`, RLS ENABLE + FORCE and the `tenant_isolation
 0003), and their grants; adding a column changes none of that.
 
 Revision ID: c8d9e0f1a2b3
-Revises: e4f5a6b7c8d9
+Revises: 9c8d7e6f5a4b (users.display_name; itself off e4f5a6b7c8d9)
 Create Date: 2026-11-11
 """
 
@@ -23,7 +23,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "c8d9e0f1a2b3"
-down_revision: Union[str, None] = "e4f5a6b7c8d9"
+down_revision: Union[str, None] = "9c8d7e6f5a4b"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
