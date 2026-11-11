@@ -117,6 +117,46 @@ class NotificationClient:
         result: dict[str, Any] = response.json()
         return result
 
+    async def send_user_email(
+        self,
+        org_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID,
+        kind: str,
+        idempotency_key: str,
+        subject: str,
+        text: str,
+        html: str,
+    ) -> dict[str, Any]:
+        """`POST /internal/email/user`: one email to one user who opted into it (the weekly
+        digest, polish wave 3). Same errors as `send_email`."""
+        if not self._secret:
+            raise NotConfigured(None, f"{TOKENS_ENV} has no {SERVICE_NAME} entry")
+        headers = {
+            "X-Mytheus-Service": SERVICE_NAME,
+            "X-Mytheus-Service-Token": self._secret,
+            "X-Mytheus-Org": str(org_id),
+        }
+        body = {
+            "kind": kind,
+            "user_id": str(user_id),
+            "idempotency_key": idempotency_key,
+            "subject": subject,
+            "text": text,
+            "html": html,
+        }
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+                response = await client.post(
+                    f"{self._base}/internal/email/user", headers=headers, json=body
+                )
+        except httpx.HTTPError as exc:
+            raise NotificationServiceError(None, type(exc).__name__) from None
+        if response.status_code >= 300:
+            raise NotificationServiceError(response.status_code, f"HTTP {response.status_code}")
+        result: dict[str, Any] = response.json()
+        return result
+
 
 _client: NotificationClient | None = None
 

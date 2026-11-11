@@ -339,6 +339,9 @@ ROUTE_MAP: dict[str, str] = {
     # Polish wave 2: the caller's own memory across meetings (core-api's person_memory).
     "/api/v1/me/memory": "core-api",
     "/api/v1/status-requests": "core-api",
+    # Polish wave 3: decision reversals and the weekly digest are core-api's.
+    "/api/v1/decision-reversals": "core-api",
+    "/api/v1/digests": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
     # The company brain (ADR-0039 Part A), identity's too.
@@ -385,6 +388,9 @@ ROUTE_MAP: dict[str, str] = {
     # rag-service verifies Clerk sessions only, so an API token reaches it through here).
     "/api/v1/search": "core-api",
     "/api/v1/ask": "bff",
+    # Wave 3: the phone's in-person recording (a capture token for transcription-service's
+    # `/capture/audio`, minted with the caller's own Clerk session).
+    "/api/v1/capture": "core-api",
     # The MCP server (Streamable HTTP, JSON-RPC over POST). A route group in bff: it is a
     # client-shaped aggregation over the same public API, like bff's screens.
     "/mcp": "bff",

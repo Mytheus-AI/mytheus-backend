@@ -64,6 +64,13 @@ components:
             type: string
           - type: 'null'
           title: Decision Id
+        document_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The company-brain document a `document` passage came from.
+          title: Document Id
         kind:
           description: transcript | document | decision | action
           title: Kind
@@ -94,6 +101,12 @@ components:
           - type: string
           - type: 'null'
           title: Speaker
+        start_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Where a `transcript` passage starts, in ms from the meeting's start.
+          title: Start Ms
         text:
           title: Text
           type: string
@@ -558,6 +571,11 @@ components:
           - type: string
           - type: 'null'
           title: Livekit Room
+        recorded_in_person:
+          default: false
+          description: 'Held in a room and recorded on a phone: no call or room to join (wave 3).'
+          title: Recorded In Person
+          type: boolean
         scheduled_end:
           anyOf:
           - format: date-time
@@ -750,6 +768,45 @@ components:
       - due_date
       - created_at
       title: DashboardTask
+      type: object
+    DecidedHint:
+      properties:
+        content:
+          title: Content
+          type: string
+        decided_at:
+          format: date-time
+          title: Decided At
+          type: string
+        decision_id:
+          format: uuid
+          title: Decision Id
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        score:
+          title: Score
+          type: number
+        superseded_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Superseded By
+      required:
+      - decision_id
+      - meeting_id
+      - content
+      - decided_at
+      - score
+      title: DecidedHint
       type: object
     DecisionLineage:
       properties:
@@ -1062,6 +1119,32 @@ components:
       - trend
       title: MeetingHealth
       type: object
+    MeetingPrecheck:
+      properties:
+        already_decided:
+          items:
+            $ref: '#/components/schemas/DecidedHint'
+          title: Already Decided
+          type: array
+        recent_meetings:
+          items:
+            $ref: '#/components/schemas/RecentMeeting'
+          title: Recent Meetings
+          type: array
+        retrieval:
+          default: keyword
+          enum:
+          - semantic
+          - keyword
+          title: Retrieval
+          type: string
+        status_updates:
+          items:
+            $ref: '#/components/schemas/StatusHint'
+          title: Status Updates
+          type: array
+      title: MeetingPrecheck
+      type: object
     MeetingRef:
       description: 'A recent meeting as it appears inside `UserContext.recent_meetings` - same
 
@@ -1262,6 +1345,29 @@ components:
       - topics
       title: PersonProfile
       type: object
+    PrecheckRequest:
+      additionalProperties: false
+      properties:
+        agenda:
+          items:
+            type: string
+          maxItems: 30
+          title: Agenda
+          type: array
+        participant_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 100
+          title: Participant Ids
+          type: array
+        title:
+          default: ''
+          maxLength: 300
+          title: Title
+          type: string
+      title: PrecheckRequest
+      type: object
     PreviousMeeting:
       properties:
         id:
@@ -1311,6 +1417,25 @@ components:
       - status
       - code
       type: object
+    RecentMeeting:
+      properties:
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        title:
+          title: Title
+          type: string
+        when:
+          format: date-time
+          title: When
+          type: string
+      required:
+      - meeting_id
+      - title
+      - when
+      title: RecentMeeting
+      type: object
     RecentMeetingsArm:
       properties:
         items:
@@ -1329,6 +1454,53 @@ components:
       - status
       - items
       title: RecentMeetingsArm
+      type: object
+    StatusAction:
+      properties:
+        content:
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        id:
+          format: uuid
+          title: Id
+          type: string
+        owner_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner Name
+        owner_user_id:
+          format: uuid
+          title: Owner User Id
+          type: string
+      required:
+      - id
+      - content
+      - owner_user_id
+      title: StatusAction
+      type: object
+    StatusHint:
+      properties:
+        action:
+          anyOf:
+          - $ref: '#/components/schemas/StatusAction'
+          - type: 'null'
+        agenda_index:
+          title: Agenda Index
+          type: integer
+        text:
+          title: Text
+          type: string
+      required:
+      - agenda_index
+      - text
+      title: StatusHint
       type: object
     TalkShare:
       properties:
@@ -1591,6 +1763,49 @@ paths:
       summary: Dashboard
       tags:
       - bff
+  /bff/meetings/precheck:
+    post:
+      operationId: precheck
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrecheckRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingPrecheck'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Precheck
+      tags:
+      - meeting-precheck
   /bff/meetings/{meeting_id}/brief:
     get:
       description: 'Before a meeting: the caller''s agenda items, their open actions from the previous

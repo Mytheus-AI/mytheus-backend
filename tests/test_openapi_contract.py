@@ -235,6 +235,7 @@ def test_the_meetings_arm_item_type_is_fully_specified() -> None:
         "scheduled_start",
         "scheduled_end",
         "livekit_room",
+        "recorded_in_person",
     }
     # The status union, not a bare string. A client switches on these four values.
     assert target["properties"]["status"]["enum"] == ["scheduled", "live", "ended", "cancelled"]

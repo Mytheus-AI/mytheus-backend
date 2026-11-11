@@ -218,7 +218,10 @@ components:
       title: DlqCount
       type: object
     Erasure:
-      description: One completed erasure, as recorded in `audit_logs` (`data_erasure.completed`).
+      description: 'One erasure, as recorded in `audit_logs` (`data_erasure.completed` is the request;
+        each
+
+        store''s finish is a `data_erasure.store_completed` row).'
       properties:
         anonymized:
           additionalProperties:
@@ -246,6 +249,14 @@ components:
           - type: 'null'
           description: The person's email or the meeting's title; null when no longer readable.
           title: Label
+        progress:
+          default: completed
+          description: 'The erasure across every store: `completed` once each of `stores` has run.'
+          enum:
+          - in_progress
+          - completed
+          title: Progress
+          type: string
         requested_at:
           format: date-time
           title: Requested At
@@ -267,8 +278,16 @@ components:
         status:
           const: completed
           default: completed
+          description: core-api applied the request (always `completed`; see `progress`).
           title: Status
           type: string
+        stores:
+          description: 'Per-store progress: `core_api` (finished with the request), then `transcript_chunks`,
+            `vectors`, `search_index` and `knowledge_graph`.'
+          items:
+            $ref: '#/components/schemas/ErasureStore'
+          title: Stores
+          type: array
         target_id:
           format: uuid
           title: Target Id
@@ -318,6 +337,45 @@ components:
       required:
       - items
       title: ErasureList
+      type: object
+    ErasureStore:
+      description: 'One store''s share of an erasure. `core_api` finishes inside the request; the other
+        four
+
+        report back on `admin-events` `erasure_completed` (one `data_erasure.store_completed` audit
+
+        row each), so they are `pending` until their service has run.'
+      properties:
+        completed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Completed At
+        counts:
+          additionalProperties:
+            type: integer
+          title: Counts
+          type: object
+        status:
+          enum:
+          - pending
+          - completed
+          title: Status
+          type: string
+        store:
+          enum:
+          - core_api
+          - transcript_chunks
+          - vectors
+          - search_index
+          - knowledge_graph
+          title: Store
+          type: string
+      required:
+      - store
+      - status
+      title: ErasureStore
       type: object
     ErrorCode:
       description: The frozen program-wide error enum. Clients branch on this and never on `detail`, which
@@ -1317,10 +1375,10 @@ paths:
       - admin-tenant
   /admin/tenant/erasures:
     get:
-      description: 'authz: admin. Completed erasures, newest first. A person''s label is their email read
-        now
+      description: 'authz: admin. Erasures, newest first, each with its per-store progress. A person''s
+        label
 
-        from `users` (RLS-scoped); null when they are gone.'
+        is their email read now from `users` (RLS-scoped); null when they are gone.'
       operationId: list_erasures
       responses:
         '200':

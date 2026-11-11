@@ -12,7 +12,7 @@ logs are redacted at the logger (`redaction.py`).
 """
 
 from libs.shared.app_factory import create_app
-from services.integration_service import internal, reach, routes, webhooks
+from services.integration_service import internal, jira_status, reach, routes, webhooks
 from services.integration_service.redaction import install_redaction
 
 install_redaction()
@@ -21,5 +21,6 @@ app = create_app("integration-service")
 app.include_router(routes.router)
 app.include_router(webhooks.router)
 app.include_router(internal.router)
+app.include_router(jira_status.router)
 app.include_router(reach.internal_router)
 app.include_router(reach.router)

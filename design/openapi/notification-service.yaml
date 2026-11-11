@@ -368,6 +368,113 @@ components:
       - status
       - code
       type: object
+    PushDevice:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_seen_at:
+          format: date-time
+          title: Last Seen At
+          type: string
+        platform:
+          enum:
+          - ios
+          - android
+          title: Platform
+          type: string
+        push_configured:
+          description: False when this server sends no pushes (`PUSH_PROVIDER` unset).
+          title: Push Configured
+          type: boolean
+      required:
+      - id
+      - platform
+      - created_at
+      - last_seen_at
+      - push_configured
+      title: PushDevice
+      type: object
+    PushDeviceList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/PushDevice'
+          title: Items
+          type: array
+        push_configured:
+          title: Push Configured
+          type: boolean
+      required:
+      - items
+      - push_configured
+      title: PushDeviceList
+      type: object
+    PushDeviceRegister:
+      additionalProperties: false
+      properties:
+        platform:
+          enum:
+          - ios
+          - android
+          title: Platform
+          type: string
+        token:
+          description: An Expo push token.
+          maxLength: 255
+          minLength: 1
+          title: Token
+          type: string
+      required:
+      - token
+      - platform
+      title: PushDeviceRegister
+      type: object
+    UserEmailSend:
+      additionalProperties: false
+      properties:
+        html:
+          anyOf:
+          - maxLength: 200000
+            type: string
+          - type: 'null'
+          title: Html
+        idempotency_key:
+          maxLength: 200
+          minLength: 1
+          title: Idempotency Key
+          type: string
+        kind:
+          const: weekly_digest
+          title: Kind
+          type: string
+        subject:
+          maxLength: 200
+          minLength: 1
+          title: Subject
+          type: string
+        text:
+          maxLength: 20000
+          minLength: 1
+          title: Text
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - kind
+      - user_id
+      - idempotency_key
+      - subject
+      - text
+      title: UserEmailSend
+      type: object
     ValidationError:
       properties:
         ctx:
@@ -509,6 +616,52 @@ paths:
       summary: Email Status
       tags:
       - notification-internal
+  /internal/email/user:
+    post:
+      operationId: send_user_email
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserEmailSend'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailSendResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Send User Email
+      tags:
+      - notification-internal
   /notifications:
     get:
       description: The caller's notifications. Dismissed ones only when asked for by `status`.
@@ -642,6 +795,106 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Put Preferences
+      tags:
+      - notifications
+  /notifications/push-devices:
+    get:
+      description: 'authz: member. The caller''s registered phones (never the tokens themselves).'
+      operationId: list_push_devices
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushDeviceList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Push Devices
+      tags:
+      - notifications
+    post:
+      description: 'authz: member. Register this phone''s Expo push token for the caller (idempotent).'
+      operationId: register_push_device
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushDeviceRegister'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushDevice'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Register Push Device
+      tags:
+      - notifications
+  /notifications/push-devices/{device_id}:
+    delete:
+      description: 'authz: member. Remove one of the caller''s phones. 404 when it is not theirs.'
+      operationId: unregister_push_device
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          format: uuid
+          title: Device Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Unregister Push Device
       tags:
       - notifications
   /notifications/{notification_id}:

@@ -44,6 +44,7 @@ from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from services.core_api import minutes
 from services.core_api.brain import latest_statuses, may_see_source
+from services.core_api.routes.off_record import close_open_segment
 from services.core_api.schemas import (
     MAX_AGENDA_ITEMS,
     MAX_EXTENDED_MINUTES,
@@ -781,6 +782,9 @@ async def update_meeting(
     if fields.get("status") in _CLOSED:
         # ADR-0039 B7: a status request nobody answered before the meeting is over expires.
         await expire_status_requests(session, meeting_id)
+        # Polish wave 3: a meeting that ends while off the record closes that segment and
+        # clears the flag (the meeting ending closed it, so `ended_by` stays null).
+        await close_open_segment(session, ctx.org_id, meeting_id, None)
 
     await enqueue(
         session,

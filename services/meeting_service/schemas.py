@@ -10,6 +10,7 @@ from the path and everything else from the tenant context.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -63,3 +64,32 @@ class RoomSession(BaseModel):
     recording: bool
     started_at: datetime | None
     ended: bool
+
+
+class ConsentClause(BaseModel):
+    key: str = Field(description="Stable clause id, e.g. `transcript`, `audio_video`.")
+    title: str
+    body: str
+
+
+class ConsentReceipt(BaseModel):
+    """`GET /api/meetings/{meeting_id}/consent-receipt`: the caller's own record of what they
+    agreed to for this meeting (polish wave 3, Off the record). Only ever the caller's own row."""
+
+    meeting_id: UUID
+    meeting_title: str
+    consent_required: bool = Field(
+        description="Whether this workspace requires agreement before joining."
+    )
+    consented: bool
+    consented_at: datetime | None = Field(default=None, description="When you agreed.")
+    consent_version: str | None = Field(
+        default=None, description="The version of the notice you agreed to."
+    )
+    current_version: str = Field(description="The notice's version today.")
+    recording: bool = Field(description="Whether audio and video are recorded.")
+    clauses: list[ConsentClause] | None = Field(
+        default=None,
+        description="What the notice you agreed to said, clause by clause; null when the stored "
+        "version is not one this server knows.",
+    )

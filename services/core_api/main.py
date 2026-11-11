@@ -13,10 +13,14 @@ from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     action_create,
     candidates,
+    capture,
     chat,
     collaborations,
     commitments,
     decision_log,
+    decision_reversals,
+    delegated_answers,
+    digests,
     erasure,
     followups,
     internal_agents,
@@ -25,6 +29,7 @@ from services.core_api.routes import (
     internal_lifecycle,
     internal_meetings,
     internal_policy,
+    internal_promise_drift,
     internal_reach,
     internal_retrieval,
     me_memory,
@@ -32,12 +37,14 @@ from services.core_api.routes import (
     meetings,
     minutes,
     my_tasks,
+    off_record,
     org_hierarchy,
     public_api,
     room_closeout,
     share_links,
     speakers,
     stand_ins,
+    status_asks,
     status_requests,
     suggestions,
     transcript,
@@ -85,6 +92,16 @@ app.include_router(erasure.router)  # admin-only; reached through admin-ops-serv
 # Minutes for everyone: GET /api/v1/meetings/{id}/minutes (the internal minutes source the
 # agent runtime reads is in internal_agents).
 app.include_router(minutes.router)
+# Wave 3: the phone's in-person recording (`/api/v1/capture/*`).
+app.include_router(capture.router)
+app.include_router(off_record.router)
+# Polish wave 3, "Only Mytheus can do these": decision reversal, delegated answers, status asks
+# from the "Should this be a meeting?" hint, promise drift (workflow-service), weekly digest.
+app.include_router(decision_reversals.router)
+app.include_router(delegated_answers.router)
+app.include_router(status_asks.router)
+app.include_router(internal_promise_drift.router)
+app.include_router(digests.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

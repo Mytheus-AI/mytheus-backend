@@ -78,6 +78,7 @@ from libs.shared.authz import RequestContext, not_found, tenant_context
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
+from services.meeting_service.consent_notices import CURRENT_VERSION, clauses_for
 from services.meeting_service.rooms import (
     ensure_meeting_room,
     mark_room_started,
@@ -86,7 +87,13 @@ from services.meeting_service.rooms import (
     meeting_is_visible,
     sync_livekit_metadata,
 )
-from services.meeting_service.schemas import RoomSession, TokenRequest, TokenResponse
+from services.meeting_service.schemas import (
+    ConsentClause,
+    ConsentReceipt,
+    RoomSession,
+    TokenRequest,
+    TokenResponse,
+)
 from services.meeting_service.storage import RecordingConfig
 from services.meeting_service.transport import MeetingTransport, select_transport
 
@@ -229,6 +236,54 @@ async def get_room_session(
         recording=RecordingConfig.from_env().enabled,
         started_at=started_at,
         ended=ended,
+    )
+
+
+@router.get(
+    "/api/meetings/{meeting_id}/consent-receipt",
+    status_code=status.HTTP_200_OK,
+    response_model=ConsentReceipt,
+)
+async def get_consent_receipt(
+    meeting_id: uuid.UUID,
+    ctx: Annotated[RequestContext, Depends(tenant_context)],
+) -> ConsentReceipt:
+    """Your own consent receipt for this meeting (polish wave 3, Off the record): whether you
+    agreed, when, to which version of the notice, and what that version said, clause by clause.
+    Read from the room ("What is recorded") and from the meeting page. Only ever the caller's
+    own participant row: there is no way to name another person. Same existence-then-
+    participation order and codes as the token mint."""
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session, session.begin():
+        await session.execute(_BIND_STATEMENT_TIMEOUT)
+        await set_rls(session, ctx.org_id)
+        await _fetch_meeting_or_404(session, meeting_id)
+        if ctx.user_id is None:
+            raise _not_a_participant()
+        participant = await _fetch_participant(session, meeting_id, ctx.user_id)
+        if participant is None:
+            raise _not_a_participant()
+        title = (
+            await session.execute(
+                text("SELECT title FROM meetings WHERE id = :m"), {"m": str(meeting_id)}
+            )
+        ).scalar()
+    recording = RecordingConfig.from_env().enabled
+    clauses = clauses_for(participant["consent_version"], recording)
+    return ConsentReceipt(
+        meeting_id=meeting_id,
+        meeting_title=(title or "").strip() or "Untitled meeting",
+        consent_required=bool(participant["consent_required"]),
+        consented=participant["consented_at"] is not None,
+        consented_at=participant["consented_at"],
+        consent_version=participant["consent_version"],
+        current_version=CURRENT_VERSION,
+        recording=recording,
+        clauses=(
+            [ConsentClause(key=c.key, title=c.title, body=c.body) for c in clauses]
+            if clauses is not None
+            else None
+        ),
     )
 
 
