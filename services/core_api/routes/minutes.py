@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, not_found, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
-from services.core_api import minutes, records
+from services.core_api import minutes, records, room_signals
 
 router = APIRouter(prefix="/api/v1", tags=["minutes"])
 
@@ -48,4 +48,5 @@ async def get_minutes(
         state=minutes.view_state(access.status, shared),
         mine=mine,
         shared=shared,
+        late_contributions=await room_signals.late_contributions(session, meeting_id, ctx.user_id),
     )

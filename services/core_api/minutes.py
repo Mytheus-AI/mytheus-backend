@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.core_api.room_signals import LateContribution
+
 MinutesScope = Literal["personal", "shared"]
 MinutesStatus = Literal["ready", "empty", "unavailable"]
 MinutesReason = Literal["no_transcript", "budget", "model_error"]
@@ -103,6 +105,8 @@ class MeetingMinutesView(BaseModel):
     state: MinutesState
     mine: MeetingMinutes | None = None
     shared: MeetingMinutes | None = None
+    # "After the meeting" layer 1: the points people added after the meeting, oldest first.
+    late_contributions: list[LateContribution] = Field(default_factory=list)
 
 
 # --- validation -------------------------------------------------------------------------------

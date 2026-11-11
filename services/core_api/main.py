@@ -33,6 +33,7 @@ from services.core_api.routes import (
     internal_promise_drift,
     internal_reach,
     internal_retrieval,
+    internal_room_signals,
     me_memory,
     meeting_templates,
     meetings,
@@ -42,6 +43,7 @@ from services.core_api.routes import (
     org_hierarchy,
     public_api,
     room_closeout,
+    room_signals,
     share_links,
     speakers,
     stand_ins,
@@ -106,6 +108,9 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# "After the meeting" layer 1: the last word, the agreement check, pick up where we stopped.
+app.include_router(room_signals.router)
+app.include_router(internal_room_signals.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

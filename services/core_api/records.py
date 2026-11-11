@@ -35,7 +35,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +95,14 @@ class RecapMinutes(BaseModel):
     updated_at: datetime
 
 
+class RecapLateContribution(BaseModel):
+    """A point someone added after the meeting, as a stranger may read it: text only."""
+
+    author_name: str
+    body: str
+    created_at: datetime
+
+
 class MeetingRecap(BaseModel):
     """A meeting's confirmed outcome, as its viewer may see it."""
 
@@ -110,6 +118,8 @@ class MeetingRecap(BaseModel):
     decisions: list[RecordDecision]
     actions: list[RecordAction]
     minutes: RecapMinutes | None = None
+    # "After the meeting" layer 1: the written late points, oldest first.
+    late_contributions: list[RecapLateContribution] = Field(default_factory=list)
 
 
 class LineageStep(BaseModel):
@@ -344,7 +354,14 @@ async def build_recap(
         ],
         actions=await _actions(session, meeting_id),
         minutes=await recap_minutes(session, meeting_id),
+        late_contributions=await _recap_late(session, meeting_id),
     )
+
+
+async def _recap_late(session: AsyncSession, meeting_id: uuid.UUID) -> list[RecapLateContribution]:
+    from services.core_api.room_signals import recap_late_contributions
+
+    return await recap_late_contributions(session, meeting_id)
 
 
 async def recap_minutes(session: AsyncSession, meeting_id: uuid.UUID) -> RecapMinutes | None:

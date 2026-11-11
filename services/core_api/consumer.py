@@ -75,6 +75,7 @@ from libs.shared.metrics import (
 )
 from libs.shared.tenancy import set_rls
 from services.core_api import minutes as minutes_mod
+from services.core_api import room_signals as room_signals_mod
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
@@ -144,6 +145,10 @@ MAX_AGENDA_UPDATES = 20
 # waiting for them (`meeting_followups.awaiting_minutes_since`), the follow-up is sent once the
 # transaction has committed (`AFTER_COMMIT`, drained by `run_consumer`).
 _MINUTES = ("MeetingAgent", "minutes")
+# "After the meeting" layer 1: one MeetingAgent `room_signals` record per meeting end (nil user):
+# last-word nudges, agreement reads and checks, the resume point
+# (`services/core_api/room_signals.py`).
+_ROOM_SIGNALS = ("MeetingAgent", "room_signals")
 
 # Work to run after the current message's transaction commits (never inside it: it calls other
 # services). `run_consumer` drains it after the commit and clears it on a rollback.
@@ -302,12 +307,14 @@ async def _apply_agent_result(
     is_context_fill = (agent, kind) == _CONTEXT_FILL
     is_meeting_update = (agent, kind) == _MEETING_UPDATE
     is_minutes = (agent, kind) == _MINUTES
+    is_room_signals = (agent, kind) == _ROOM_SIGNALS
     if (
         candidate_table is None
         and not is_suggestion
         and not is_context_fill
         and not is_meeting_update
         and not is_minutes
+        and not is_room_signals
         and (agent != "PersonalListenerAgent" or kind != "note")
     ):
         # Anything else - including an agent class or kind this consumer has never heard of -
@@ -324,7 +331,7 @@ async def _apply_agent_result(
     # meeting id is checked against the tenant like every other result.
     unknown_meeting = is_context_fill and meeting_id == NIL_UUID
     # The shared minutes are for nobody in particular: they carry the nil user.
-    shared_minutes = is_minutes and user_id == NIL_UUID
+    shared_minutes = (is_minutes or is_room_signals) and user_id == NIL_UUID
     visible = (
         await session.execute(
             text(
@@ -342,6 +349,11 @@ async def _apply_agent_result(
         )
     if is_meeting_update:
         return await _apply_agenda_updates(session, meeting_id, value.get("payload_json"))
+    if is_room_signals:
+        payload = room_signals_mod.parse_payload(value.get("payload_json"))
+        if payload is None:
+            return False  # nothing to file; the inbox claim keeps a redelivery a no-op
+        return await room_signals_mod.persist_result(session, org_id, meeting_id, payload)
     if is_minutes:
         return await _persist_minutes(
             session, org_id, meeting_id, None if shared_minutes else user_id, value
