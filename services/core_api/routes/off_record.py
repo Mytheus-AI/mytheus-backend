@@ -30,9 +30,17 @@ WHAT STARTING DOES, in one request:
    gateway reading the flag on every join and by the room re-reading `GET .../off-record`.
 
 Ending deletes the flag first (503 on failure, nothing changes), then closes the row and
-publishes. `start_ms`/`end_ms` place the gap on the meeting's clock (`meeting_rooms.started_at`
-is zero, the transcript's origin), so the transcript, the minutes and a replay show "Off the
-record, 4 min" in place.
+publishes.
+
+RECORDING (polish wave 3, Recording playback). After a start commits, core-api asks
+meeting-service to stop the recording egress (`recording_client.pause`); after an end, to start
+a new one (`recording_client.resume`). So the bucket keeps nothing from the stretch that was off
+the record and the replay shows it as a gap. Best-effort after the response: meeting-service
+also refuses to start a recording while the flag is set.
+
+`start_ms`/`end_ms` place the gap on the meeting's clock (`meeting_rooms.started_at` is zero,
+the transcript's origin), so the transcript, the minutes and a replay show "Off the record,
+4 min" in place.
 
 Routes (member tier, participants only; another tenant's meeting is a 404):
 - `GET  /api/v1/meetings/{id}/off-record`      the state and every segment so far.
@@ -48,7 +56,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +71,7 @@ from libs.shared.cache import get_redis, redis_key
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
+from services.core_api import recording_client
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +355,7 @@ async def get_off_record(
 async def start_off_record(
     meeting_id: uuid.UUID,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    background_tasks: BackgroundTasks,
     body: OffRecordStart | None = None,
 ) -> OffRecordState:
     """Take the meeting off the record (the host or the creator). Pauses every agent and all
@@ -434,6 +444,8 @@ async def start_off_record(
         state = _state(meeting_id, segments, True)
     if inserted is not None:
         await _publish(ctx.org_id, meeting_id, _wire(state, ctx.user_id))
+        # Recording playback: stop the recording too, so nothing from this stretch is kept.
+        background_tasks.add_task(recording_client.pause, ctx.org_id, meeting_id)
     return state
 
 
@@ -441,6 +453,7 @@ async def start_off_record(
 async def end_off_record(
     meeting_id: uuid.UUID,
     ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    background_tasks: BackgroundTasks,
 ) -> OffRecordState:
     """Back on the record (the host or the creator): transcription and the agents resume.
     Idempotent: with nothing running, this answers the state unchanged."""
@@ -486,4 +499,6 @@ async def end_off_record(
         state = _state(meeting_id, segments, True)
     if closed is not None:
         await _publish(ctx.org_id, meeting_id, _wire(state, ctx.user_id))
+        # Recording playback: back on the record, a new recording segment starts.
+        background_tasks.add_task(recording_client.resume, ctx.org_id, meeting_id)
     return state

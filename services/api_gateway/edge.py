@@ -384,6 +384,9 @@ ROUTE_MAP: dict[str, str] = {
     "/api/v1/public": "core-api",
     # Revoking a share link (creating and listing them is under meetings / decisions).
     "/api/v1/share-links": "core-api",
+    # Polish wave 3, Recording playback: deleting and sharing a clip (making and listing them
+    # is under meetings). The recording itself is meeting-service's `/api/meetings/{id}/recording`.
+    "/api/v1/clips": "core-api",
     # The public API's search (core-api) and ask (bff, which calls rag-service as itself:
     # rag-service verifies Clerk sessions only, so an API token reaches it through here).
     "/api/v1/search": "core-api",

@@ -100,10 +100,13 @@ async def test_room_started_taps_audio_and_records_when_allowed():
 
     assert store == {"alice": [b"a1", b"a2"], "bob": [b"b1"]}
     assert [c.method for c in transport.calls] == ["subscribe_room_audio", "start_egress"]
-    sql, params = sessions.log[-1]
+    sql, params = sessions.log[-2]
     assert "UPDATE meeting_rooms SET egress_id" in sql
     assert params["egress_id"] == f"fake-egress-{started.org_id}-{started.meeting_id}"
     assert params["org"] == str(started.org_id)
+    # Recording playback: the same transaction opens the segment's `meeting_recordings` row.
+    sql, params = sessions.log[-1]
+    assert "INSERT INTO meeting_recordings" in sql and params["mt"] == "video/mp4"
 
 
 async def test_consent_required_forwards_only_consented_participants_and_skips_recording():
@@ -125,7 +128,9 @@ async def test_consent_required_forwards_only_consented_participants_and_skips_r
 
     assert store == {"alice": [b"a"]}
     assert "start_egress" not in [c.method for c in transport.calls]
-    assert sessions.log == []
+    # The refusal is remembered so the meeting page can say why there is no recording.
+    assert [sql for sql, _ in sessions.log if "recording_skip_reason" in sql]
+    assert all("meeting_recordings" not in sql for sql, _ in sessions.log)
 
 
 async def test_consent_required_with_nobody_consented_starts_nothing():

@@ -117,15 +117,27 @@ async def persist_egress_id(
     org_id: UUID,
     meeting_id: UUID,
     egress_id: str,
+    media_type: str = "video/mp4",
 ) -> None:
+    """Store the running egress on the room and open its `meeting_recordings` segment
+    (`recording`), in one transaction. The room's skip reason is cleared: it is recorded now."""
+    from services.meeting_service.recordings import record_segment_started
+
     async with session_factory() as session, session.begin():
         await set_rls(session, org_id)
         await session.execute(
             text(
-                "UPDATE meeting_rooms SET egress_id = :egress_id, updated_at = now() "
-                "WHERE org_id = :org AND meeting_id = :meeting"
+                "UPDATE meeting_rooms SET egress_id = :egress_id, recording_skip_reason = NULL, "
+                "updated_at = now() WHERE org_id = :org AND meeting_id = :meeting"
             ),
             {"egress_id": egress_id, "org": str(org_id), "meeting": str(meeting_id)},
+        )
+        await record_segment_started(
+            session,
+            org_id=org_id,
+            meeting_id=meeting_id,
+            egress_id=egress_id,
+            media_type=media_type,
         )
 
 
@@ -186,10 +198,28 @@ async def start_recording(
             started.meeting_id,
         )
         return None
+    from services.meeting_service.recordings import (
+        SKIP_CONSENT_MISSING,
+        off_record_active,
+        set_skip_reason,
+    )
+
     if not started.gate.recording_allowed():
         logger.info(
             "recording: not started - consent required and not every participant consented "
             "(org=%s meeting=%s)",
+            started.org_id,
+            started.meeting_id,
+        )
+        # Remembered, so the meeting page can say why there is no recording.
+        async with session_factory() as session, session.begin():
+            await set_rls(session, started.org_id)
+            await set_skip_reason(session, started.org_id, started.meeting_id, SKIP_CONSENT_MISSING)
+        return None
+    if await off_record_active(started.org_id, started.meeting_id):
+        # Off the record: nothing is kept. core-api resumes the recording when it ends.
+        logger.info(
+            "recording: not started - the meeting is off the record (org=%s meeting=%s)",
             started.org_id,
             started.meeting_id,
         )
@@ -198,7 +228,11 @@ async def start_recording(
         org_id=started.org_id, meeting_id=started.meeting_id, room=started.room
     )
     await persist_egress_id(
-        session_factory, org_id=started.org_id, meeting_id=started.meeting_id, egress_id=egress_id
+        session_factory,
+        org_id=started.org_id,
+        meeting_id=started.meeting_id,
+        egress_id=egress_id,
+        media_type="audio/ogg" if recording.audio_only else "video/mp4",
     )
     return egress_id
 
@@ -250,10 +284,14 @@ async def on_room_finished(
     egress_id: str | None,
     taps: TapManager = TAPS,
     run_tap: bool = True,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    meeting_id: UUID | None = None,
 ) -> None:
     """Stop the tap and the egress. LiveKit also ends a room-composite egress on its own when
     the room closes, so a failed `stop_egress` is logged at info, not treated as an error.
-    `run_tap=False` (worker mode) leaves the tap to the audio tap worker."""
+    `run_tap=False` (worker mode) leaves the tap to the audio tap worker. With a session
+    factory and the meeting, any still-recording segment becomes `processing` (the upload is
+    finishing; `egress_ended` makes it `ready` or `failed`)."""
     if run_tap:
         try:
             await taps.stop(org_id=org_id, room=room)
@@ -269,6 +307,15 @@ async def on_room_finished(
                 org_id,
                 room,
             )
+    if session_factory is not None and meeting_id is not None:
+        from services.meeting_service.recordings import mark_processing
+
+        try:
+            async with session_factory() as session, session.begin():
+                await set_rls(session, org_id)
+                await mark_processing(session, org_id, meeting_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("recording: could not mark segments processing (org=%s)", org_id)
 
 
 __all__ = [

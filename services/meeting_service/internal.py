@@ -21,6 +21,11 @@ Service-to-service, the scheme core-api's internal routes use, with this service
 list: `X-Mytheus-Service: workflow-service`, `X-Mytheus-Service-Token: <secret>` from
 `MYTHEUS_MEETING_CALLER_TOKENS` (`workflow-service=<32+ chars>`), the tenant in
 `X-Mytheus-Org`. Unconfigured means every caller is refused. Not routed by `api-gateway`.
+
+core-api is the second caller (polish wave 3, Recording playback), with its own
+`core-api=<secret>` entry in the same list, for the recording routes in `recordings.py`: pausing
+and resuming the recording around "off the record", erasing a meeting's recording, and the video
+of a publicly shared clip. Each route accepts only the caller it was built for.
 """
 
 from __future__ import annotations
@@ -50,7 +55,7 @@ from services.meeting_service.routes import get_transport
 from services.meeting_service.transport import MeetingTransport
 
 TOKENS_ENV = "MYTHEUS_MEETING_CALLER_TOKENS"
-KNOWN_CALLERS = frozenset({"workflow-service"})
+KNOWN_CALLERS = frozenset({"workflow-service", "core-api"})
 SERVICE_HEADER = "x-mytheus-service"
 SERVICE_TOKEN_HEADER = "x-mytheus-service-token"
 ORG_HEADER = "x-mytheus-org"
@@ -104,6 +109,20 @@ async def workflow_caller(
     _token: Annotated[str | None, Security(service_token_scheme)] = None,
 ) -> uuid.UUID:
     """workflow-service with its secret, for an active tenant; otherwise refuse."""
+    return await verified_caller(request, frozenset({"workflow-service"}))
+
+
+async def core_api_caller(
+    request: Request,
+    _token: Annotated[str | None, Security(service_token_scheme)] = None,
+) -> uuid.UUID:
+    """core-api with its secret, for an active tenant (recording control, erasure, clip video
+    for public clip shares); otherwise refuse."""
+    return await verified_caller(request, frozenset({"core-api"}))
+
+
+async def verified_caller(request: Request, allowed: frozenset[str]) -> uuid.UUID:
+    """A caller in `allowed`, presenting its own secret, for an active tenant."""
     try:
         tokens = parse_caller_tokens(os.environ.get(TOKENS_ENV, ""))
     except ValueError as exc:
@@ -113,6 +132,8 @@ async def workflow_caller(
     if not tokens:
         raise _unauthenticated()
     service = request.headers.get(SERVICE_HEADER, "")
+    if service not in allowed:
+        raise _unauthenticated()
     presented = request.headers.get(SERVICE_TOKEN_HEADER, "").encode("utf-8")
     expected = tokens.get(service)
     if not hmac.compare_digest(presented, expected or b"\x00" * 32) or expected is None:
