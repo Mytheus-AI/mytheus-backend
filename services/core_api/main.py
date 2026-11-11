@@ -12,6 +12,7 @@ never produces either topic.
 from libs.shared.app_factory import create_app
 from services.core_api.routes import (
     action_create,
+    briefings,
     candidates,
     capture,
     chat,
@@ -106,6 +107,8 @@ app.include_router(delegated_answers.router)
 app.include_router(status_asks.router)
 app.include_router(internal_promise_drift.router)
 app.include_router(digests.router)
+# Beyond the meeting, Layer 1: a briefing from your agent (and its internal hand-off).
+app.include_router(briefings.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

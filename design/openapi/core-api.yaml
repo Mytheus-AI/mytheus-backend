@@ -627,6 +627,543 @@ components:
       - attendance
       title: AttendanceUpdate
       type: object
+    BriefMe:
+      additionalProperties: false
+      properties:
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 'A meeting the caller was in; omitted: since the last one.'
+          title: Meeting Id
+      title: BriefMe
+      type: object
+    Briefing:
+      properties:
+        agent:
+          $ref: '#/components/schemas/BriefingAgent'
+        audio:
+          $ref: '#/components/schemas/BriefingAudio'
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        duration_s:
+          title: Duration S
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        language:
+          title: Language
+          type: string
+        length:
+          enum:
+          - short
+          - standard
+          title: Length
+          type: string
+        listened_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Listened At
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
+        ready_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ready At
+        reason:
+          anyOf:
+          - enum:
+            - budget
+            - model_error
+            - timeout
+            type: string
+          - type: 'null'
+          title: Reason
+        segments:
+          items:
+            $ref: '#/components/schemas/BriefingSegment'
+          title: Segments
+          type: array
+        status:
+          enum:
+          - pending
+          - composing
+          - ready
+          - empty
+          - unavailable
+          title: Status
+          type: string
+        trigger:
+          enum:
+          - meeting_end
+          - on_demand
+          title: Trigger
+          type: string
+        word_count:
+          title: Word Count
+          type: integer
+      required:
+      - id
+      - trigger
+      - status
+      - length
+      - language
+      - agent
+      - segments
+      - word_count
+      - duration_s
+      - audio
+      - created_at
+      title: Briefing
+      type: object
+    BriefingAgent:
+      description: The persona the briefing was written in, as it was then.
+      properties:
+        name:
+          title: Name
+          type: string
+        personality:
+          default: balanced
+          enum:
+          - balanced
+          - concise
+          - detailed
+          - direct
+          - friendly
+          title: Personality
+          type: string
+        seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The agent's doodle seed, or null.
+          title: Seed
+      required:
+      - name
+      title: BriefingAgent
+      type: object
+    BriefingAudio:
+      properties:
+        status:
+          description: '`none`: no server voice (speak the script on the device); `ready`: fetch `GET
+            /api/v1/briefings/{id}/audio`; `pending`; `failed` (speak on the device).'
+          enum:
+          - none
+          - pending
+          - ready
+          - failed
+          title: Status
+          type: string
+        voice:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Voice
+      required:
+      - status
+      title: BriefingAudio
+      type: object
+    BriefingAudioUrl:
+      properties:
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        mime:
+          title: Mime
+          type: string
+        url:
+          title: Url
+          type: string
+      required:
+      - url
+      - mime
+      - expires_at
+      title: BriefingAudioUrl
+      type: object
+    BriefingLanguage:
+      properties:
+        code:
+          title: Code
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - code
+      - name
+      title: BriefingLanguage
+      type: object
+    BriefingLatest:
+      properties:
+        auto_play:
+          title: Auto Play
+          type: boolean
+        briefing:
+          anyOf:
+          - $ref: '#/components/schemas/Briefing'
+          - type: 'null'
+        enabled:
+          description: Whether a briefing follows every meeting.
+          title: Enabled
+          type: boolean
+      required:
+      - enabled
+      - auto_play
+      title: BriefingLatest
+      type: object
+    BriefingLink:
+      description: 'Where "open the moment" goes: the moment in the meeting (`at_ms` on its clock, for
+        the
+
+        transcript) or the record itself.'
+      properties:
+        at_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: The moment, on the meeting's clock.
+          title: At Ms
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The decision, action or promise.
+          title: Id
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        type:
+          enum:
+          - meeting
+          - decision
+          - action
+          - promise
+          - question
+          title: Type
+          type: string
+      required:
+      - type
+      - meeting_id
+      title: BriefingLink
+      type: object
+    BriefingList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Briefing'
+          title: Items
+          type: array
+      required:
+      - items
+      title: BriefingList
+      type: object
+    BriefingPreferences:
+      additionalProperties: false
+      properties:
+        auto_play:
+          default: false
+          description: Start playing when it opens.
+          title: Auto Play
+          type: boolean
+        enabled:
+          default: true
+          description: A briefing after every meeting.
+          title: Enabled
+          type: boolean
+        language:
+          default: en
+          maxLength: 8
+          minLength: 2
+          title: Language
+          type: string
+        length:
+          default: standard
+          description: short ~45 s, standard ~90 s.
+          enum:
+          - short
+          - standard
+          title: Length
+          type: string
+        rate:
+          default: 1.0
+          description: Playback speed.
+          maximum: 2.0
+          minimum: 0.5
+          title: Rate
+          type: number
+        server_voice:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          description: The server voice id (when connected).
+          title: Server Voice
+        voice:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          description: The device voice picked, as named on it.
+          title: Voice
+      title: BriefingPreferences
+      type: object
+    BriefingResult:
+      additionalProperties: false
+      description: '`POST /internal/briefings/{id}/result` from agent-runtime-service.'
+      properties:
+        language:
+          anyOf:
+          - maxLength: 8
+            type: string
+          - type: 'null'
+          title: Language
+        prompt_version:
+          maxLength: 64
+          title: Prompt Version
+          type: string
+        reason:
+          anyOf:
+          - enum:
+            - budget
+            - model_error
+            - timeout
+            type: string
+          - type: 'null'
+          title: Reason
+        segments:
+          items:
+            $ref: '#/components/schemas/ResultSegment'
+          maxItems: 40
+          title: Segments
+          type: array
+        status:
+          enum:
+          - ready
+          - empty
+          - unavailable
+          title: Status
+          type: string
+      required:
+      - status
+      - prompt_version
+      title: BriefingResult
+      type: object
+    BriefingSegment:
+      properties:
+        id:
+          description: 'Stable within the briefing: s1, s2, ...'
+          title: Id
+          type: string
+        kind:
+          enum:
+          - opening
+          - changed
+          - waiting
+          - promise
+          - question
+          - closing
+          title: Kind
+          type: string
+        link:
+          anyOf:
+          - $ref: '#/components/schemas/BriefingLink'
+          - type: 'null'
+        text:
+          description: What the agent says, in the briefing's language.
+          title: Text
+          type: string
+      required:
+      - id
+      - kind
+      - text
+      title: BriefingSegment
+      type: object
+    BriefingSettings:
+      properties:
+        auto_play:
+          default: false
+          description: Start playing when it opens.
+          title: Auto Play
+          type: boolean
+        enabled:
+          default: true
+          description: A briefing after every meeting.
+          title: Enabled
+          type: boolean
+        language:
+          default: en
+          maxLength: 8
+          minLength: 2
+          title: Language
+          type: string
+        languages:
+          items:
+            $ref: '#/components/schemas/BriefingLanguage'
+          title: Languages
+          type: array
+        length:
+          default: standard
+          description: short ~45 s, standard ~90 s.
+          enum:
+          - short
+          - standard
+          title: Length
+          type: string
+        rate:
+          default: 1.0
+          description: Playback speed.
+          maximum: 2.0
+          minimum: 0.5
+          title: Rate
+          type: number
+        server_voice:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          description: The server voice id (when connected).
+          title: Server Voice
+        server_voice_connected:
+          description: 'Whether this server renders audio (TTS_PROVIDER). False: device speech.'
+          title: Server Voice Connected
+          type: boolean
+        server_voices:
+          items:
+            $ref: '#/components/schemas/ServerVoiceOption'
+          title: Server Voices
+          type: array
+        voice:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          description: The device voice picked, as named on it.
+          title: Voice
+      required:
+      - server_voice_connected
+      - server_voices
+      - languages
+      title: BriefingSettings
+      type: object
+    BriefingSource:
+      description: '`POST /internal/briefings/{id}/claim`: everything the agent writes from. Only the
+
+        person''s own records and their own minutes; no transcript.'
+      properties:
+        agent:
+          $ref: '#/components/schemas/SourceAgent'
+        briefing_id:
+          format: uuid
+          title: Briefing Id
+          type: string
+        changed:
+          items:
+            $ref: '#/components/schemas/SourceItem'
+          title: Changed
+          type: array
+        language:
+          title: Language
+          type: string
+        language_name:
+          title: Language Name
+          type: string
+        length:
+          enum:
+          - short
+          - standard
+          title: Length
+          type: string
+        meeting:
+          anyOf:
+          - $ref: '#/components/schemas/SourceMeeting'
+          - type: 'null'
+        minutes:
+          anyOf:
+          - $ref: '#/components/schemas/SourceMinutes'
+          - type: 'null'
+        person:
+          $ref: '#/components/schemas/SourcePerson'
+        promises:
+          items:
+            $ref: '#/components/schemas/SourceItem'
+          title: Promises
+          type: array
+        questions:
+          items:
+            $ref: '#/components/schemas/SourceItem'
+          title: Questions
+          type: array
+        since:
+          format: date-time
+          title: Since
+          type: string
+        target_words:
+          title: Target Words
+          type: integer
+        topics:
+          items:
+            type: string
+          title: Topics
+          type: array
+        trigger:
+          enum:
+          - meeting_end
+          - on_demand
+          title: Trigger
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+        waiting:
+          items:
+            $ref: '#/components/schemas/SourceItem'
+          title: Waiting
+          type: array
+      required:
+      - briefing_id
+      - user_id
+      - trigger
+      - length
+      - target_words
+      - language
+      - language_name
+      - person
+      - agent
+      - since
+      - changed
+      - waiting
+      - promises
+      - questions
+      - topics
+      title: BriefingSource
+      type: object
     CalibrationDetail:
       properties:
         dismiss_rate:
@@ -3458,6 +3995,28 @@ components:
       - updated_at
       title: Meeting
       type: object
+    MeetingBriefing:
+      properties:
+        auto_play:
+          title: Auto Play
+          type: boolean
+        briefing:
+          anyOf:
+          - $ref: '#/components/schemas/Briefing'
+          - type: 'null'
+        can_request:
+          description: The caller was in it and it has ended.
+          title: Can Request
+          type: boolean
+        enabled:
+          title: Enabled
+          type: boolean
+      required:
+      - enabled
+      - auto_play
+      - can_request
+      title: MeetingBriefing
+      type: object
     MeetingCreate:
       additionalProperties: false
       properties:
@@ -5353,6 +5912,69 @@ components:
       - attendance
       title: ReminderParticipant
       type: object
+    ResultAccepted:
+      properties:
+        accepted:
+          title: Accepted
+          type: boolean
+        status:
+          enum:
+          - pending
+          - composing
+          - ready
+          - empty
+          - unavailable
+          title: Status
+          type: string
+      required:
+      - accepted
+      - status
+      title: ResultAccepted
+      type: object
+    ResultLink:
+      properties:
+        at_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: At Ms
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        type:
+          title: Type
+          type: string
+      required:
+      - type
+      title: ResultLink
+      type: object
+    ResultSegment:
+      properties:
+        kind:
+          title: Kind
+          type: string
+        link:
+          anyOf:
+          - $ref: '#/components/schemas/ResultLink'
+          - type: 'null'
+        text:
+          maxLength: 2000
+          title: Text
+          type: string
+      required:
+      - kind
+      - text
+      title: ResultSegment
+      type: object
     RetrievalScope:
       properties:
         meetings:
@@ -5693,6 +6315,23 @@ components:
       - items
       title: SearchResults
       type: object
+    ServerVoiceOption:
+      properties:
+        description:
+          title: Description
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - description
+      title: ServerVoiceOption
+      type: object
     ShareLink:
       properties:
         can_revoke:
@@ -5899,6 +6538,36 @@ components:
       - status
       title: SourceAgendaItem
       type: object
+    SourceAgent:
+      properties:
+        instructions:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Instructions
+        name:
+          title: Name
+          type: string
+        personality:
+          default: balanced
+          enum:
+          - balanced
+          - concise
+          - detailed
+          - direct
+          - friendly
+          title: Personality
+          type: string
+        seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The agent's doodle seed, or null.
+          title: Seed
+      required:
+      - name
+      title: SourceAgent
+      type: object
     SourceDecision:
       properties:
         content:
@@ -5916,6 +6585,106 @@ components:
       - content
       - status
       title: SourceDecision
+      type: object
+    SourceItem:
+      properties:
+        at_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: At Ms
+        carried_to:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The follow-up meeting the question was carried to.
+          title: Carried To
+        carried_to_meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Carried To Meeting Id
+        due:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due
+        id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Id
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        meeting_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meeting Title
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+        text:
+          title: Text
+          type: string
+        who:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The person waiting, or who asked.
+          title: Who
+      required:
+      - text
+      title: SourceItem
+      type: object
+    SourceMeeting:
+      properties:
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        id:
+          format: uuid
+          title: Id
+          type: string
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      title: SourceMeeting
+      type: object
+    SourceMinutes:
+      properties:
+        decisions:
+          items:
+            type: string
+          title: Decisions
+          type: array
+        open_items:
+          items:
+            type: string
+          title: Open Items
+          type: array
+        summary:
+          title: Summary
+          type: string
+      required:
+      - summary
+      - decisions
+      - open_items
+      title: SourceMinutes
       type: object
     SourceParticipant:
       properties:
@@ -5942,6 +6711,19 @@ components:
       - attendance
       - role_in_meeting
       title: SourceParticipant
+      type: object
+    SourcePerson:
+      properties:
+        first_name:
+          title: First Name
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - name
+      - first_name
+      title: SourcePerson
       type: object
     SourceTurn:
       properties:
@@ -7624,6 +8406,290 @@ paths:
       summary: Reopen
       tags:
       - actions
+  /api/v1/briefings:
+    get:
+      operationId: list_briefings
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 10
+          maximum: 50
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Briefings
+      tags:
+      - briefings
+    post:
+      operationId: brief_me
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BriefMe'
+        required: true
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Briefing'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Brief Me
+      tags:
+      - briefings
+  /api/v1/briefings/latest:
+    get:
+      operationId: latest_briefing
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingLatest'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Latest Briefing
+      tags:
+      - briefings
+  /api/v1/briefings/preferences:
+    get:
+      operationId: get_preferences_api_v1_briefings_preferences_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingSettings'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Preferences
+      tags:
+      - briefings
+    put:
+      operationId: put_preferences_api_v1_briefings_preferences_put
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BriefingPreferences'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingSettings'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Put Preferences
+      tags:
+      - briefings
+  /api/v1/briefings/{briefing_id}:
+    get:
+      operationId: get_briefing
+      parameters:
+      - in: path
+        name: briefing_id
+        required: true
+        schema:
+          format: uuid
+          title: Briefing Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Briefing'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Get Briefing
+      tags:
+      - briefings
+  /api/v1/briefings/{briefing_id}/audio:
+    get:
+      operationId: briefing_audio_url
+      parameters:
+      - in: path
+        name: briefing_id
+        required: true
+        schema:
+          format: uuid
+          title: Briefing Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingAudioUrl'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Briefing Audio Url
+      tags:
+      - briefings
+  /api/v1/briefings/{briefing_id}/listened:
+    post:
+      operationId: mark_listened
+      parameters:
+      - in: path
+        name: briefing_id
+        required: true
+        schema:
+          format: uuid
+          title: Briefing Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Briefing'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Mark Listened
+      tags:
+      - briefings
   /api/v1/capture/sessions:
     post:
       description: 'authz: member. Start recording an in-person meeting on the caller''s phone.'
@@ -8649,7 +9715,7 @@ paths:
       - digest
   /api/v1/digests/preferences:
     get:
-      operationId: get_preferences
+      operationId: get_preferences_api_v1_digests_preferences_get
       responses:
         '200':
           content:
@@ -8671,7 +9737,7 @@ paths:
       tags:
       - digest
     put:
-      operationId: put_preferences
+      operationId: put_preferences_api_v1_digests_preferences_put
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key
           replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
@@ -9563,6 +10629,42 @@ paths:
       summary: Set Attendance
       tags:
       - meetings
+  /api/v1/meetings/{meeting_id}/briefing:
+    get:
+      operationId: meeting_briefing
+      parameters:
+      - in: path
+        name: meeting_id
+        required: true
+        schema:
+          format: uuid
+          title: Meeting Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingBriefing'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Meeting Briefing
+      tags:
+      - briefings
   /api/v1/meetings/{meeting_id}/candidates:
     get:
       description: 'Proposed, surfaced decision and action candidates for one meeting, oldest first.
@@ -12271,6 +13373,108 @@ paths:
       - MytheusServiceToken: []
       summary: Agent Policy
       tags:
+      - core-internal
+  /internal/briefings/{briefing_id}/claim:
+    post:
+      operationId: claim_briefing
+      parameters:
+      - in: path
+        name: briefing_id
+        required: true
+        schema:
+          format: uuid
+          title: Briefing Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingSource'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Claim Briefing
+      tags:
+      - briefings
+      - core-internal
+  /internal/briefings/{briefing_id}/result:
+    post:
+      operationId: briefing_result
+      parameters:
+      - in: path
+        name: briefing_id
+        required: true
+        schema:
+          format: uuid
+          title: Briefing Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BriefingResult'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultAccepted'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Briefing Result
+      tags:
+      - briefings
       - core-internal
   /internal/decisions/{decision_id}/record:
     get:

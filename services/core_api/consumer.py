@@ -74,6 +74,7 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.core_api import briefings as briefings_mod
 from services.core_api import minutes as minutes_mod
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
@@ -832,6 +833,11 @@ async def _persist_minutes(
     if payload is None:
         return False  # nothing to file; the inbox claim keeps a redelivery a no-op
     written = await minutes_mod.persist(session, org_id, meeting_id, user_id, payload)
+    if written and user_id is not None and payload.get("status") != "unavailable":
+        # Beyond the meeting: the person's own minutes are in, so their agent can brief them.
+        briefing = await briefings_mod.create_after_meeting(session, org_id, meeting_id, user_id)
+        if briefing is not None:
+            AFTER_COMMIT.append(lambda: _ring_briefing(org_id, briefing))
     if written and user_id is None:
         waiting = (
             await session.execute(
@@ -846,6 +852,10 @@ async def _persist_minutes(
         if waiting is not None:
             AFTER_COMMIT.append(lambda: _send_follow_up(org_id, meeting_id))
     return written
+
+
+async def _ring_briefing(org_id: uuid.UUID, briefing_id: uuid.UUID) -> None:
+    await briefings_mod.ring(org_id, briefing_id)
 
 
 async def _send_follow_up(org_id: uuid.UUID, meeting_id: uuid.UUID) -> None:
