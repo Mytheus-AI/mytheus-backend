@@ -501,7 +501,8 @@ async def minutes_source(
             (
                 await session.execute(
                     text(
-                        "SELECT p.user_id, u.email, p.attendance, p.role_in_meeting "
+                        "SELECT p.user_id, u.email, u.display_name, p.attendance, "
+                        "p.role_in_meeting "
                         "FROM meeting_participants p JOIN users u ON u.id = p.user_id "
                         "AND u.deleted_at IS NULL WHERE p.meeting_id = :m "
                         "ORDER BY (p.role_in_meeting = 'host') DESC NULLS LAST, u.email, p.user_id"
@@ -598,7 +599,7 @@ async def minutes_source(
         participants=[
             SourceParticipant(
                 user_id=p["user_id"],
-                name=records.display_name(p["email"]),
+                name=records.person_name(p["display_name"], p["email"]),
                 attendance=p["attendance"],
                 role_in_meeting=p["role_in_meeting"],
             )

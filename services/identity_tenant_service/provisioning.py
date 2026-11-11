@@ -294,10 +294,12 @@ async def provision_tenant(
 # --- workspace membership: one mirror row + one grant per Clerk membership -------------------
 
 _UPSERT_MEMBER = text(
-    "INSERT INTO users (org_id, clerk_user_id, email, avatar_url) "
-    "VALUES (:o, :cuid, :email, :avatar) "
+    "INSERT INTO users (org_id, clerk_user_id, email, avatar_url, display_name) "
+    "VALUES (:o, :cuid, :email, :avatar, :name) "
     "ON CONFLICT (org_id, clerk_user_id) DO UPDATE SET "
     "  email = EXCLUDED.email, avatar_url = EXCLUDED.avatar_url, "
+    # A membership event may carry no name; it never erases one the user sync stored.
+    "  display_name = COALESCE(EXCLUDED.display_name, users.display_name), "
     "  updated_at = now(), deleted_at = NULL "
     "RETURNING id"
 )
@@ -329,13 +331,21 @@ async def ensure_member(
     email: str,
     avatar_url: str | None,
     tier: str,
+    display_name: str | None = None,
 ) -> uuid.UUID:
     """Make a Clerk member of this tenant's organization a member here too: the `users` mirror
     row and an rbac grant. Idempotent; never lowers an `owner`. Caller has set RLS to `org_id`."""
     params = {"o": str(org_id)}
     user_id = (
         await session.execute(
-            _UPSERT_MEMBER, {**params, "cuid": clerk_user_id, "email": email, "avatar": avatar_url}
+            _UPSERT_MEMBER,
+            {
+                **params,
+                "cuid": clerk_user_id,
+                "email": email,
+                "avatar": avatar_url,
+                "name": display_name,
+            },
         )
     ).scalar_one()
     await session.execute(_UPSERT_MEMBER_GRANT, {**params, "u": str(user_id), "t": tier})

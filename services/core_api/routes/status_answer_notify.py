@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 
 def _short(value: str, limit: int) -> str:
@@ -34,7 +34,7 @@ async def notify_asker(
     row = (
         await session.execute(
             text(
-                "SELECT r.requested_by, a.content, a.meeting_id, u.email "
+                "SELECT r.requested_by, a.content, a.meeting_id, u.email, u.display_name "
                 "FROM action_status_requests r JOIN action_items a ON a.id = r.action_id "
                 "LEFT JOIN users u ON u.id = r.user_id "
                 "WHERE r.id = :id"
@@ -44,7 +44,7 @@ async def notify_asker(
     ).first()
     if row is None or row[0] is None or row[0] == owner_id:
         return False
-    asker, content, meeting_id, owner_email = row
+    asker, content, meeting_id, owner_email, owner_display_name = row
     digest = hashlib.sha256(status_text.encode("utf-8")).hexdigest()[:16]
     source = f"statusanswer:{request_id}:{digest}"
     await enqueue(
@@ -59,7 +59,7 @@ async def notify_asker(
                 "channel": "in_app",
                 "user_id": str(asker),
                 "priority": 3,
-                "title": f"{display_name(owner_email) or 'The owner'} answered: "
+                "title": f"{person_name(owner_display_name, owner_email) or 'The owner'} answered: "
                 f"{_short(str(content or 'your status request'), 100)}"[:200],
                 "body": _short(status_text, 2000),
                 "link": f"/meetings/{meeting_id}" if meeting_id else "/work/tasks",

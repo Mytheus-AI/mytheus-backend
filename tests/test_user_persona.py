@@ -234,3 +234,47 @@ def test_a_context_cached_before_the_new_fields_still_validates():
     }
     ctx = UserContext(**old)
     assert ctx.listen_for == [] and ctx.agent_personality == "balanced"
+
+
+# --- the person's real name (users.display_name) ---------------------------------------------
+
+
+def test_display_name_round_trips_on_me_and_the_member_list(client):
+    t = seed_tenant()
+    sign_in(t)
+    assert client.get("/users/me").json()["display_name"] is None
+
+    resp = client.patch(f"/users/{t.user_id}", json={"display_name": "  Samar   Rao "})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["display_name"] == "Samar Rao"
+    assert client.get("/users/me").json()["display_name"] == "Samar Rao"
+    items = {i["id"]: i for i in client.get("/users").json()["items"]}
+    assert items[str(t.user_id)]["display_name"] == "Samar Rao"
+
+    # Blank clears to NULL; more than 80 characters is a 422 naming the field.
+    assert (
+        client.patch(f"/users/{t.user_id}", json={"display_name": "  "}).json()["display_name"]
+        is None
+    )
+    assert ["body", "display_name"] in _loc(
+        client.patch(f"/users/{t.user_id}", json={"display_name": "x" * 81})
+    )
+
+
+def test_display_name_is_self_only_even_for_an_admin(client):
+    admin = seed_tenant(tier="admin")
+    member = _seed_user_row(admin.org_id, "member")
+    sign_in(admin)
+    resp = client.patch(f"/users/{member.user_id}", json={"display_name": "Someone Else"})
+    assert resp.status_code == 403, resp.text
+    row = _sql("SELECT display_name FROM users WHERE id = %(u)s", {"u": str(member.user_id)})[0]
+    assert row["display_name"] is None
+
+
+def test_person_name_prefers_the_stored_name_then_the_email():
+    from services.core_api.records import person_name
+
+    assert person_name("  Samar  Rao ", "nnm23ad071@nmamit.in") == "Samar Rao"
+    assert person_name(None, "nnm23ad071@nmamit.in") == "Nnm23ad071"
+    assert person_name("   ", "maya.patel@acme.com") == "Maya Patel"
+    assert person_name(None, None) is None

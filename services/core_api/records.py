@@ -186,6 +186,17 @@ def display_name(email: str | None) -> str | None:
     return " ".join(w[:1].upper() + w[1:] for w in words)[:80]
 
 
+def person_name(stored: str | None, email: str | None) -> str | None:
+    """How a person is shown: their real name (`users.display_name`, synced from Clerk or set
+    by them) when known, else the name `display_name` guesses from their email. Every query
+    that renders a person selects `u.display_name` next to `u.email` and calls this."""
+    if stored:
+        name = " ".join(str(stored).split())[:80]
+        if name:
+            return name
+    return display_name(email)
+
+
 def _title(raw: Any) -> str:
     return str(raw).strip() if raw and str(raw).strip() else "Untitled meeting"
 
@@ -234,7 +245,7 @@ async def _actions(session: AsyncSession, meeting_id: uuid.UUID) -> list[RecordA
         (
             await session.execute(
                 text(
-                    "SELECT a.id, a.content, a.due_date, a.status, u.email "
+                    "SELECT a.id, a.content, a.due_date, a.status, u.email, u.display_name "
                     "FROM action_items a LEFT JOIN users u ON u.id = a.assignee_id "
                     "WHERE a.meeting_id = :m AND a.deleted_at IS NULL "
                     "AND a.status IN ('confirmed', 'done') "
@@ -250,7 +261,7 @@ async def _actions(session: AsyncSession, meeting_id: uuid.UUID) -> list[RecordA
         RecordAction(
             id=r["id"],
             content=r["content"],
-            owner_name=display_name(r["email"]),
+            owner_name=person_name(r["display_name"], r["email"]),
             due_date=r["due_date"],
             status=r["status"],
         )
@@ -287,7 +298,8 @@ async def build_recap(
         (
             await session.execute(
                 text(
-                    "SELECT u.id, u.email, p.role_in_meeting FROM meeting_participants p "
+                    "SELECT u.id, u.email, u.display_name, "
+                    "p.role_in_meeting FROM meeting_participants p "
                     "JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL "
                     "WHERE p.meeting_id = :m "
                     "ORDER BY (p.role_in_meeting = 'host') DESC NULLS LAST, u.email LIMIT :n"
@@ -298,12 +310,12 @@ async def build_recap(
         .mappings()
         .all()
     )
-    host_email = next((p["email"] for p in people if p["id"] == access.host_id), None)
+    host = next((p for p in people if p["id"] == access.host_id), None)
     agenda = (
         (
             await session.execute(
                 text(
-                    "SELECT i.title, i.status, u.email FROM meeting_agenda_items i "
+                    "SELECT i.title, i.status, u.email, u.display_name FROM meeting_agenda_items i "
                     "LEFT JOIN users u ON u.id = i.owner_user_id "
                     "WHERE i.meeting_id = :m ORDER BY i.position LIMIT :n"
                 ),
@@ -334,11 +346,15 @@ async def build_recap(
         status=access.status,
         scheduled_start=meeting["scheduled_start"],
         scheduled_end=meeting["scheduled_end"],
-        host_name=display_name(host_email),
-        participant_names=[n for n in (display_name(p["email"]) for p in people) if n],
+        host_name=person_name(host["display_name"], host["email"]) if host else None,
+        participant_names=[
+            n for n in (person_name(p["display_name"], p["email"]) for p in people) if n
+        ],
         agenda=[
             RecordAgendaItem(
-                title=a["title"], status=str(a["status"]), owner_name=display_name(a["email"])
+                title=a["title"],
+                status=str(a["status"]),
+                owner_name=person_name(a["display_name"], a["email"]),
             )
             for a in agenda
         ],
@@ -428,7 +444,8 @@ async def build_decision_record(
             await session.execute(
                 text(
                     "SELECT d.id, d.meeting_id, d.content, d.rationale, d.status, d.created_at, "
-                    "u.email AS confirmed_by_email, m.scheduled_start "
+                    "u.email AS confirmed_by_email, u.display_name AS confirmed_by_display_name, "
+                    "m.scheduled_start "
                     "FROM decisions d JOIN meetings m ON m.id = d.meeting_id "
                     "LEFT JOIN users u ON u.id = d.confirmed_by "
                     "WHERE d.id = :d AND d.deleted_at IS NULL "
@@ -486,7 +503,7 @@ async def build_decision_record(
         rationale=row["rationale"],
         status=row["status"],
         decided_at=row["created_at"],
-        confirmed_by_name=display_name(row["confirmed_by_email"]),
+        confirmed_by_name=person_name(row["confirmed_by_display_name"], row["confirmed_by_email"]),
         meeting_id=row["meeting_id"],
         meeting_title=access.title,
         meeting_start=row["scheduled_start"],

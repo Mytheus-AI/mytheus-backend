@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, require_tier, tenant_session
 from services.bff import ask as ask_mod
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +140,8 @@ def is_status_like(item: str) -> bool:
     return bool(_STATUS_RE.search(item))
 
 
-def _name(email: str | None) -> str | None:
-    return display_name(email)
+def _name(stored: str | None, email: str | None) -> str | None:
+    return person_name(stored, email)
 
 
 async def _semantic(ctx: RequestContext, queries: list[str]) -> dict[uuid.UUID, float] | None:
@@ -280,7 +280,8 @@ async def precheck(
             (
                 await session.execute(
                     text(
-                        "SELECT a.id, a.content, a.assignee_id, a.due_date, u.email "
+                        "SELECT a.id, a.content, a.assignee_id, a.due_date, u.email, "
+                        "u.display_name "
                         "FROM action_items a JOIN users u ON u.id = a.assignee_id "
                         " AND u.deleted_at IS NULL "
                         "WHERE a.status = 'confirmed' AND a.deleted_at IS NULL AND ("
@@ -315,7 +316,7 @@ async def precheck(
                     id=best["id"],
                     content=best["content"],
                     owner_user_id=best["assignee_id"],
-                    owner_name=_name(best["email"]),
+                    owner_name=_name(best["display_name"], best["email"]),
                     due_date=best["due_date"],
                 )
             status.append(StatusHint(agenda_index=i, text=item, action=action))

@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 MAX_DECISIONS = 2000
 MAX_ACTIONS = 3000
@@ -189,6 +189,10 @@ _DECISIONS_SQL = text("""
            d.content, d.rationale, d.why, d.quote, d.supersedes,
            (SELECT u.email FROM users u WHERE u.id = d.quote_speaker_id) AS speaker_email,
            (SELECT u.email FROM users u WHERE u.id = d.confirmed_by) AS confirmer_email,
+           (SELECT u.display_name FROM users u WHERE u.id = d.quote_speaker_id)
+             AS speaker_display_name,
+           (SELECT u.display_name FROM users u WHERE u.id = d.confirmed_by)
+             AS confirmer_display_name,
            COALESCE(
              (SELECT min(h.changed_at) FROM record_status_history h
               WHERE h.record_id = d.id AND h.record_kind = 'decision'
@@ -219,10 +223,10 @@ async def load(session: AsyncSession, viewer: uuid.UUID) -> World:
             rationale=r["rationale"],
             why=r["why"],
             quote=r["quote"],
-            quote_speaker=display_name(r["speaker_email"]),
+            quote_speaker=person_name(r["speaker_display_name"], r["speaker_email"]),
             supersedes=r["supersedes"],
             confirmed_at=r["confirmed_at"],
-            confirmed_by=display_name(r["confirmer_email"]),
+            confirmed_by=person_name(r["confirmer_display_name"], r["confirmer_email"]),
             visible=bool(r["visible"]),
         )
         if d.visible:
@@ -238,7 +242,9 @@ async def load(session: AsyncSession, viewer: uuid.UUID) -> World:
                     "SELECT a.id, a.meeting_id, m.title AS meeting_title, "
                     "COALESCE(m.scheduled_start, m.created_at) AS meeting_at, a.content, "
                     "a.due_date, a.created_at, a.status, a.status_changed_at, "
-                    "(SELECT u.email FROM users u WHERE u.id = a.assignee_id) AS owner_email "
+                    "(SELECT u.email FROM users u WHERE u.id = a.assignee_id) AS owner_email, "
+                    "(SELECT u.display_name FROM users u WHERE u.id = a.assignee_id) "
+                    "AS owner_display_name "
                     "FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
                     "AND m.deleted_at IS NULL WHERE a.deleted_at IS NULL "
                     "AND a.status IN ('confirmed', 'done', 'dismissed') "
@@ -277,7 +283,7 @@ async def load(session: AsyncSession, viewer: uuid.UUID) -> World:
                 meeting_id=r["meeting_id"],
                 meeting_title=r["meeting_title"],
                 content=r["content"],
-                owner=display_name(r["owner_email"]),
+                owner=person_name(r["owner_display_name"], r["owner_email"]),
                 due_date=r["due_date"],
                 created_at=r["created_at"],
                 history=hist,
@@ -302,7 +308,9 @@ async def load(session: AsyncSession, viewer: uuid.UUID) -> World:
         await session.execute(
             text(
                 "SELECT g.id, g.title, g.period, g.status, g.created_at, g.updated_at, "
-                "(SELECT u.email FROM users u WHERE u.id = g.owner_user_id) AS owner_email "
+                "(SELECT u.email FROM users u WHERE u.id = g.owner_user_id) AS owner_email, "
+                "(SELECT u.display_name FROM users u WHERE u.id = g.owner_user_id) "
+                "AS owner_display_name "
                 "FROM org_goals g ORDER BY g.position, g.created_at"
             )
         )
@@ -313,7 +321,7 @@ async def load(session: AsyncSession, viewer: uuid.UUID) -> World:
                 title=r["title"],
                 period=r["period"],
                 status=r["status"],
-                owner=display_name(r["owner_email"]),
+                owner=person_name(r["owner_display_name"], r["owner_email"]),
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
             )

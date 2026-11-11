@@ -35,7 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.core_api.records import display_name
+from services.core_api.records import person_name
 
 BetStatus = Literal["proposed", "open", "due", "resolved", "dismissed"]
 BetKind = Literal["metric", "event"]
@@ -276,6 +276,10 @@ BET_COLS = (
     "(SELECT u.email FROM users u WHERE u.id = b.owner_user_id) AS owner_email, "
     "(SELECT u.email FROM users u WHERE u.id = b.quote_speaker_id) AS speaker_email, "
     "(SELECT u.email FROM users u WHERE u.id = b.resolved_by) AS resolver_email, "
+    "(SELECT u.display_name FROM users u WHERE u.id = b.owner_user_id) AS owner_display_name, "
+    "(SELECT u.display_name FROM users u WHERE u.id = b.quote_speaker_id) "
+    "AS speaker_display_name, "
+    "(SELECT u.display_name FROM users u WHERE u.id = b.resolved_by) AS resolver_display_name, "
     "(SELECT t.name FROM teams t WHERE t.id = b.team_id AND t.deleted_at IS NULL) AS team_name"
 )
 
@@ -306,11 +310,11 @@ def bet_from_row(row: Any, evidence: list[BetEvidence] | None = None) -> Bet:
         confidence_pct=row["confidence_pct"],
         assumption=row["assumption"],
         quote=row["quote"],
-        quote_speaker_name=display_name(row["speaker_email"]),
+        quote_speaker_name=person_name(row["speaker_display_name"], row["speaker_email"]),
         proposed_by=row["proposed_by"],
         agent_confidence=row["agent_confidence"],
         owner_user_id=row["owner_user_id"],
-        owner_name=display_name(row["owner_email"]),
+        owner_name=person_name(row["owner_display_name"], row["owner_email"]),
         team_id=row["team_id"] if row["team_name"] else None,
         team_name=row["team_name"],
         evidence_status=row["evidence_status"],
@@ -322,7 +326,7 @@ def bet_from_row(row: Any, evidence: list[BetEvidence] | None = None) -> Bet:
         assumption_held=row["assumption_held"],
         lesson=row["lesson"],
         resolved_at=row["resolved_at"],
-        resolved_by_name=display_name(row["resolver_email"]),
+        resolved_by_name=person_name(row["resolver_display_name"], row["resolver_email"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         evidence=evidence or [],

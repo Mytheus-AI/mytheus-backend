@@ -145,7 +145,7 @@ async def crm_digest(
             (
                 await session.execute(
                     text(
-                        "SELECT a.id, a.content, a.due_date, a.status, u.email "
+                        "SELECT a.id, a.content, a.due_date, a.status, u.email, u.display_name "
                         "FROM action_items a LEFT JOIN users u ON u.id = a.assignee_id "
                         "WHERE a.meeting_id = :m AND a.deleted_at IS NULL "
                         "AND a.status IN ('confirmed', 'done') ORDER BY a.created_at, a.id "
@@ -171,7 +171,7 @@ async def crm_digest(
             CrmAction(
                 id=a["id"],
                 content=a["content"],
-                owner_name=records.display_name(a["email"]),
+                owner_name=records.person_name(a["display_name"], a["email"]),
                 due_date=a["due_date"],
                 status=a["status"],
             )

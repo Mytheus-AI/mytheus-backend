@@ -51,7 +51,8 @@ from services.identity_tenant_service.schemas import (
 router = APIRouter(tags=["users"])
 
 _USER_COLUMNS = (
-    "id, email, role, skills, bio, avatar_url, listen_for, ignore_topics, agent_name, "
+    "id, email, display_name, role, skills, bio, avatar_url, listen_for, ignore_topics, "
+    "agent_name, "
     "agent_avatar_seed, agent_personality, agent_instructions, created_at, updated_at"
 )
 
@@ -94,7 +95,8 @@ async def list_members(
         (
             await session.execute(
                 text(
-                    "SELECT u.id, u.clerk_user_id, u.email, u.avatar_url, u.role, g.tier, "
+                    "SELECT u.id, u.clerk_user_id, u.email, u.display_name, u.avatar_url, u.role, "
+                    "g.tier, "
                     "u.agent_name, u.agent_avatar_seed "
                     "FROM users u LEFT JOIN rbac_grants g ON g.user_id = u.id "
                     "WHERE u.deleted_at IS NULL ORDER BY lower(u.email), u.id LIMIT :n"
@@ -147,6 +149,15 @@ async def update_user_profile(
             403,
             ErrorCode.FORBIDDEN_ROLE,
             "Only the person themselves can change their agent",
+        )
+
+    # A person's name is theirs to set (the Clerk sync writes it too); an admin cannot rename
+    # someone, for the same reason they cannot rename their agent.
+    if "display_name" in body.model_fields_set and ctx.user_id != user_id:
+        raise ProblemDetail(
+            403,
+            ErrorCode.FORBIDDEN_ROLE,
+            "Only the person themselves can change their name",
         )
 
     fields = body.model_dump(exclude_unset=True)

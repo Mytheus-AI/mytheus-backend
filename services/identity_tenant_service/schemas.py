@@ -21,6 +21,8 @@ MAX_TOPIC_ITEMS = 15
 MAX_TOPIC_CHARS = 100
 MAX_AGENT_NAME = 40
 MAX_AGENT_INSTRUCTIONS = 500
+# `users.display_name`: the person's real name, at most 80 characters (a CHECK enforces it).
+MAX_DISPLAY_NAME = 80
 # The UI's `isDoodleSeed`.
 AGENT_AVATAR_SEED_PATTERN = r"^[a-z0-9]{4,32}$"
 
@@ -58,6 +60,14 @@ def _blank_to_none(raw: str | None) -> str | None:
     return value or None
 
 
+def clerk_display_name(first: object, last: object) -> str | None:
+    """Clerk's `first_name` + `last_name` as one name: whitespace collapsed, at most
+    `MAX_DISPLAY_NAME` characters, None when both are empty. What the webhook stores."""
+    parts = [str(p) for p in (first, last) if isinstance(p, str)]
+    joined = " ".join(" ".join(parts).split())
+    return joined[:MAX_DISPLAY_NAME].rstrip() or None
+
+
 class UserProfileUpdate(BaseModel):
     """`PATCH /users/{user_id}` body. `avatar_url` is deliberately absent: it is Clerk-managed
     (set from `image_url` by the `/clerk/webhook` sync in `routes/auth.py`), so a second write
@@ -86,6 +96,8 @@ class UserProfileUpdate(BaseModel):
     agent_avatar_seed: str | None = None
     agent_personality: AgentPersonality | None = None
     agent_instructions: str | None = None
+    # The person's real name. Self only (see the route); an empty string stores NULL.
+    display_name: str | None = None
 
     @field_validator("listen_for", "ignore_topics")
     @classmethod
@@ -98,6 +110,15 @@ class UserProfileUpdate(BaseModel):
         value = _blank_to_none(v)
         if value is not None and len(value) > MAX_AGENT_NAME:
             raise ValueError(f"must be at most {MAX_AGENT_NAME} characters")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def _display_name(cls, v: str | None) -> str | None:
+        value = " ".join(v.split()) if v is not None else None
+        value = value or None
+        if value is not None and len(value) > MAX_DISPLAY_NAME:
+            raise ValueError(f"must be at most {MAX_DISPLAY_NAME} characters")
         return value
 
     @field_validator("agent_avatar_seed")
@@ -137,6 +158,8 @@ class UserProfileUpdate(BaseModel):
 class UserProfile(BaseModel):
     id: uuid.UUID
     email: str
+    # The person's real name; null until known (clients fall back to their own label).
+    display_name: str | None = None
     role: str | None
     skills: list[str]
     bio: str | None
@@ -153,7 +176,8 @@ class UserProfile(BaseModel):
 
 class Member(BaseModel):
     """One person in the caller's tenant: who to show in a members list or an invite picker.
-    Names are not stored here (Clerk owns them); clients join on `clerk_user_id` for display.
+    `display_name` is the person's real name as synced from Clerk (or set by the person); null
+    until known, in which case clients join on `clerk_user_id` or fall back to the email.
     `agent_name` / `agent_avatar_seed` let a meeting room label everyone's agent (ADR-0038 D3);
     null means the UI's default ("{first name}'s agent", a seed derived from the user id)."""
 
@@ -163,6 +187,7 @@ class Member(BaseModel):
     avatar_url: str | None
     role: str | None
     tier: str | None
+    display_name: str | None = None
     agent_name: str | None = None
     agent_avatar_seed: str | None = None
 
