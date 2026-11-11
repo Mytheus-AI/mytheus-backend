@@ -23,6 +23,8 @@ REST, and bff stays a non-writer: `create_action` is core-api's `POST /api/v1/ac
 
 Tools: `search_meetings`, `ask_meetings`, `get_meeting_outcome` (decisions, actions, agenda:
 the minutes), `get_decision_record`, `list_my_open_actions`, `list_my_promises`,
+`check_against_decisions` (a draft checked against the confirmed decisions of the caller's
+meetings: core-api's `POST /api/v1/decisions/check`, read-only),
 `create_action` (a confirmed task for the caller, the caller's own explicit request; needs a
 `read_write` token). Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
 Markdown, listed for the caller's recent meetings) and
@@ -175,6 +177,36 @@ TOOLS: list[dict[str, Any]] = [
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },
     {
+        "name": "check_against_decisions",
+        "title": "Check a draft against decisions",
+        "description": (
+            "Before you send or publish a draft (a message, a doc, a plan, a reply), check whether "
+            "it contradicts or reopens a decision your team already confirmed in a meeting you "
+            "took part in. Returns each conflicting decision with the conflicting quote, the "
+            "meeting, the date, the owner, a confidence and why. Read-only; the draft is not "
+            "stored. An empty result means no conflict was found, not that none exists."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "topic": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Optional: what the draft is about.",
+                },
+                "place": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Optional: where it will go, e.g. 'email to Acme'.",
+                },
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
         "name": "create_action",
         "title": "Create a task",
         "description": (
@@ -316,6 +348,34 @@ def record_markdown(d: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def check_markdown(body: dict[str, Any]) -> str:
+    conflicts = body.get("conflicts") or []
+    if body.get("status") == "skipped" and body.get("reason") == "never_record":
+        return "Not checked: the draft names a topic your workspace never records."
+    if body.get("status") == "skipped":
+        return "Not checked: the draft is too short to compare with decisions."
+    if not conflicts:
+        degraded = body.get("status") == "degraded"
+        return (
+            "Not checked fully: the workspace's AI budget is used up for now."
+            if degraded
+            else "No conflict with a confirmed decision from meetings you took part in."
+        )
+    lines = [f"{len(conflicts)} confirmed decision(s) conflict with this draft:", ""]
+    for c in conflicts:
+        when = f" on {c['decided_at']}" if c.get("decided_at") else ""
+        where = f" ({c['meeting_title']})" if c.get("meeting_title") else ""
+        owner = f", owner {c['owner']['name']}" if (c.get("owner") or {}).get("name") else ""
+        verb = "contradicts" if c.get("relation") == "contradicts" else "reopens"
+        lines += [
+            f"- Decided{when}{where}{owner}: {c['decision_content']} `{c['decision_id']}`",
+            f'  The draft {verb} it: "{c["quote"]}"',
+            f"  Why: {c.get('why') or 'it goes against the decision'} "
+            f"(confidence {float(c.get('confidence', 0)):.2f})",
+        ]
+    return "\n".join(lines)
+
+
 def _search_markdown(body: dict[str, Any]) -> str:
     items = body.get("items", [])
     if not items:
@@ -401,6 +461,21 @@ async def call_tool(
             for c in items
         )
         return text or f"No {status} promises.", body
+    if name == "check_against_decisions":
+        draft = str(args.get("text") or "")
+        if not draft.strip():
+            raise ToolError("`text` is required.")
+        context = {
+            k: str(args[v])[:limit]
+            for k, v, limit in (("topic", "topic", 200), ("place_label", "place", 120))
+            if args.get(v)
+        }
+        body = await core.call(
+            "POST",
+            "/api/v1/decisions/check",
+            json_body={"text": draft, "source": "mcp", "context": context or None},
+        )
+        return check_markdown(body), body
     if name == "create_action":
         if not ctx.can_write:
             raise ToolError(_READ_ONLY)
@@ -556,7 +631,7 @@ _OPENAPI_BODY = {
         "`Authorization: Bearer mytheus_pat_...`, or add it as a Claude custom connector "
         "(OAuth: discovery at `/.well-known/oauth-protected-resource`). Tools: "
         "search_meetings, ask_meetings, get_meeting_outcome, get_decision_record, "
-        "list_my_open_actions, list_my_promises, "
+        "list_my_open_actions, list_my_promises, check_against_decisions, "
         "create_action (read_write tokens). Resources: meeting summaries and decision records."
     ),
     openapi_extra=_OPENAPI_BODY,
