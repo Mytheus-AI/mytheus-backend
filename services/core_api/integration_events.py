@@ -230,6 +230,18 @@ async def _upsert(session: AsyncSession, org_id: uuid.UUID, value: dict[str, Any
                 metadata={"source": "google_calendar", "calendar_event_id": event_id},
             )
 
+    # Promise ledger capacity: the Google event type (`focusTime`, `outOfOffice`, ...) so focus
+    # time is not counted as meeting time. Absent from older events; never part of `changed`.
+    kind = payload.get("event_kind")
+    if isinstance(kind, str) and 0 < len(kind) <= 40:
+        await session.execute(
+            text(
+                "UPDATE meetings SET calendar_event_kind = :k WHERE id = :id "
+                "AND calendar_event_kind IS DISTINCT FROM :k"
+            ),
+            {"k": kind, "id": str(meeting_id)},
+        )
+
     for email, user_id in users.items():
         if email not in emails and email != organizer_email:
             continue

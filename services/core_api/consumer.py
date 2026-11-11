@@ -75,6 +75,7 @@ from libs.shared.metrics import (
 )
 from libs.shared.tenancy import set_rls
 from services.core_api import minutes as minutes_mod
+from services.core_api.capacity import warn_on_landing
 from services.core_api.confidence import SILENT_FROM as _SILENT_FROM
 from services.core_api.confidence import SURFACE_ABOVE as _SURFACE_ABOVE
 from services.core_api.confidence import thresholds
@@ -85,6 +86,7 @@ from services.core_api.integration_events import (
 )
 from services.core_api.learning import band_for
 from services.core_api.person_memory import FeedbackPoison, handle_agent_feedback
+from services.core_api.promise_dates import parse_due_hint
 from services.core_api.visibility import is_visible
 
 logger = logging.getLogger(__name__)
@@ -623,6 +625,16 @@ async def _persist_commitments(
     entries = payload.get("commitments") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
         return False
+    # Promise ledger: the channel (a phone recording is `in_person`), the date the hint names
+    # (said on the meeting's day), and the capacity warning when it makes that day tight.
+    meeting = (
+        await session.execute(
+            text("SELECT source, scheduled_start FROM meetings WHERE id = :m"),
+            {"m": str(meeting_id)},
+        )
+    ).first()
+    channel = "in_person" if meeting is not None and meeting[0] == "in_person" else "meeting"
+    said_on = meeting[1].date() if meeting is not None and meeting[1] is not None else date.today()
     written = False
     for entry in entries[:MAX_COMMITMENTS_PER_RECORD]:
         if not isinstance(entry, dict):
@@ -630,27 +642,43 @@ async def _persist_commitments(
         content = _bounded_text(entry.get("content"), MAX_COMMITMENT_CHARS)
         if content is None:
             continue
+        due_hint = _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS)
+        due_at = parse_due_hint(due_hint, max(said_on, date.today()))
         inserted = (
             await session.execute(
                 text(
                     "INSERT INTO commitments (org_id, user_id, meeting_id, content, due_hint, "
-                    "source_window_id, moment_id) VALUES (:o, :u, :m, :c, :d, :w, :mo) "
-                    "ON CONFLICT DO NOTHING RETURNING 1"
+                    "source_window_id, moment_id, channel, due_at, source_quote) "
+                    "VALUES (:o, :u, :m, :c, :d, :w, :mo, :ch, :da, :q) "
+                    "ON CONFLICT DO NOTHING RETURNING id"
                 ),
                 {
                     "o": str(org_id),
                     "u": str(user_id),
                     "m": str(meeting_id),
                     "c": content,
-                    "d": _bounded_text(entry.get("due_hint"), MAX_DUE_HINT_CHARS),
+                    "d": due_hint,
                     "w": window_id,
                     # polish: the moment the promise was made (a confirmed action of the same
                     # moment for this person closes it, routes/candidates.py)
                     "mo": (str(mo) if (mo := _optional_uuid(entry.get("moment_id"))) else None),
+                    "ch": channel,
+                    "da": due_at,
+                    "q": _bounded_text(entry.get("quote"), 1000),
                 },
             )
         ).first()
-        written = written or inserted is not None
+        if inserted is not None:
+            written = True
+            await warn_on_landing(
+                session,
+                org_id,
+                user_id=user_id,
+                kind="commitment",
+                item_id=inserted[0],
+                content=content,
+                due=due_at,
+            )
     return written
 
 

@@ -22,9 +22,11 @@ on the caller's behalf). So a tool can never see or do more than the same token 
 REST, and bff stays a non-writer: `create_action` is core-api's `POST /api/v1/actions`.
 
 Tools: `search_meetings`, `ask_meetings`, `get_meeting_outcome` (decisions, actions, agenda:
-the minutes), `get_decision_record`, `list_my_open_actions`, `list_my_promises`,
+the minutes), `get_decision_record`, `list_my_open_actions`, `list_my_promises` (the promise
+ledger, every channel), `check_my_capacity` (the capacity check before a deadline is accepted),
 `create_action` (a confirmed task for the caller, the caller's own explicit request; needs a
-`read_write` token). Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
+`read_write` token) and `add_promise` (a manual promise in the caller's ledger; `read_write`).
+Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
 Markdown, listed for the caller's recent meetings) and
 `mytheus://decisions/{decision_id}/record`.
 """
@@ -66,7 +68,9 @@ INSTRUCTIONS = (
     "Mytheus is your team's meeting memory: decisions with their history, actions with owners, "
     "promises, and meeting outcomes. Search or ask first, then open a meeting's outcome or a "
     "decision record by id. Everything is limited to meetings you took part in. "
-    "create_action records a confirmed task immediately; only call it when the user asked."
+    "Before agreeing to a deadline for the user, check_my_capacity says whether that day is "
+    "already full. create_action and add_promise write immediately; only call them when the "
+    "user asked."
 )
 
 _READ_ONLY = (
@@ -160,7 +164,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_my_promises",
         "title": "List my promises",
-        "description": "Things you said you would do in meetings (private to you).",
+        "description": (
+            "Things you promised, from every channel: meetings, phone recordings, Slack, email "
+            "and ones you added (private to you), with their due dates and where they were made."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -173,6 +180,64 @@ TOOLS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "check_my_capacity",
+        "title": "Check my capacity",
+        "description": (
+            "Before saying yes to a deadline: how full a day is (promises and actions due, "
+            "meeting and focus time) and, when it is tight, the first day with room. Without "
+            "`due_date`, your week day by day. Private to you."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "due_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "The date someone asked for (YYYY-MM-DD).",
+                },
+                "days": {"type": "integer", "minimum": 1, "maximum": 14, "default": 7},
+                "timezone": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "description": "Your IANA time zone, e.g. Europe/London. Default UTC.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "add_promise",
+        "title": "Add a promise",
+        "description": (
+            "Write down a promise you made (to a colleague, a customer, anyone) in your private "
+            "promise ledger, with an optional due date; the answer says whether that day is "
+            "already full. Only call this when the user asked."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "minLength": 1, "maxLength": 500},
+                "due_date": {"type": "string", "format": "date"},
+                "recipient_id": {**_UUID, "description": "A colleague it was promised to."},
+                "recipient": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Or who, in words (a customer, a team).",
+                },
+                "timezone": {"type": "string", "maxLength": 64},
+            },
+            "required": ["content"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
     },
     {
         "name": "create_action",
@@ -277,6 +342,51 @@ def _line_action(a: dict[str, Any]) -> str:
     due = f", due {a['due_date']}" if a.get("due_date") else ""
     done = " [done]" if a.get("status") == "done" else ""
     return f"- {a['content']}{owner}{due}{done} `{a['id']}`"
+
+
+def _line_promise(c: dict[str, Any]) -> str:
+    due = (
+        f", due {c['due_at']}"
+        if c.get("due_at")
+        else (f" ({c['due_hint']})" if c.get("due_hint") else "")
+    )
+    to = f" to {c['recipient_name']}" if c.get("recipient_name") else ""
+    source = c.get("source") or {}
+    where = f" [{source.get('label')}]" if source.get("label") else ""
+    review = (
+        " (found by your agent, not confirmed yet)" if c.get("review_state") == "pending" else ""
+    )
+    return f"- {c['content']}{to}{due}{where}{review} `{c['id']}`"
+
+
+def _capacity_check_text(body: dict[str, Any]) -> str:
+    lines = [str(body.get("message") or "")]
+    lines.append(
+        f"{body.get('items_on_day')} things due {body.get('due_label')} counting this one; "
+        f"{round(int(body.get('meeting_minutes') or 0) / 60, 1)} h of meetings. "
+        f"Level: {body.get('level')}."
+    )
+    if body.get("suggested_date"):
+        lines.append(f"First day with room: {body['suggested_date']} ({body['suggested_label']}).")
+    return "\n".join(lines)
+
+
+def _capacity_text(body: dict[str, Any]) -> str:
+    lines = []
+    for d in body.get("days", []):
+        meetings = round(int(d.get("meeting_minutes") or 0) / 60, 1)
+        focus = round(int(d.get("focus_minutes") or 0) / 60, 1)
+        extra = f", {focus} h focus" if focus else ""
+        away = ", away" if d.get("away") else ""
+        lines.append(
+            f"- {d['date']} ({d['label']}): {d['items']} due, {meetings} h meetings{extra}{away} "
+            f"-> {d['level']}"
+        )
+    if body.get("overdue"):
+        lines.append(f"Overdue: {body['overdue']}.")
+    if not body.get("calendar_synced"):
+        lines.append("Only Mytheus meetings are counted: Google Calendar is not synced for you.")
+    return "\n".join(lines) or "Nothing scheduled."
 
 
 def recap_markdown(r: dict[str, Any]) -> str:
@@ -392,15 +502,43 @@ async def call_tool(
         status = str(args.get("status") or "open")
         if status not in ("open", "done", "dismissed"):
             raise ToolError("`status` must be open, done or dismissed.")
-        body = await core.call("GET", "/api/v1/commitments", params={"status": status})
+        body = await core.call("GET", "/api/v1/promises", params={"status": status})
         items = body.get("items", [])
-        text = "\n".join(
-            f"- {c['content']}"
-            + (f" ({c['due_hint']})" if c.get("due_hint") else "")
-            + (f", said in {c['meeting_title']}" if c.get("meeting_title") else "")
-            for c in items
-        )
+        text = "\n".join(_line_promise(c) for c in items)
         return text or f"No {status} promises.", body
+    if name == "check_my_capacity":
+        tz = str(args["timezone"]) if args.get("timezone") else None
+        if args.get("due_date"):
+            params = {"due_date": str(args["due_date"])} | ({"tz": tz} if tz else {})
+            body = await core.call("GET", "/api/v1/promises/capacity/check", params=params)
+            return _capacity_check_text(body), body
+        days = max(1, min(int(args.get("days") or 7), 14))
+        params = {"days": days} | ({"tz": tz} if tz else {})
+        body = await core.call("GET", "/api/v1/promises/capacity", params=params)
+        return _capacity_text(body), body
+    if name == "add_promise":
+        if not ctx.can_write:
+            raise ToolError(_READ_ONLY)
+        content = str(args.get("content") or "").strip()
+        if not content:
+            raise ToolError("`content` is required.")
+        payload: dict[str, Any] = {"content": content}
+        if args.get("due_date"):
+            payload["due_at"] = str(args["due_date"])
+        if args.get("recipient_id"):
+            payload["recipient_user_id"] = str(_uuid_arg(args, "recipient_id"))
+        elif args.get("recipient"):
+            payload["recipient_label"] = str(args["recipient"])
+        tz_params = {"tz": str(args["timezone"])} if args.get("timezone") else None
+        body = await core.call("POST", "/api/v1/promises", params=tz_params, json_body=payload)
+        promise = body.get("promise") or {}
+        text = f"Added to your promises: {promise.get('content', content)}"
+        if promise.get("due_at"):
+            text += f", due {promise['due_at']}"
+        check = body.get("capacity") or {}
+        if check.get("warn"):
+            text += f"\n\nHeads up: {check.get('message')}"
+        return text + f" `{promise.get('id', '')}`", body
     if name == "create_action":
         if not ctx.can_write:
             raise ToolError(_READ_ONLY)

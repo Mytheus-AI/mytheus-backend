@@ -311,7 +311,20 @@ SLACK_API = "https://slack.com/api"
 
 class SlackOAuth(_Http):
     provider = config.SLACK
-    scopes = ("chat:write", "users:read", "users:read.email", "im:write")
+    # The history scopes let the person's agent read the messages they post (promise ledger:
+    # Slack events `message.channels`, `message.groups`, `message.im`, `message.mpim` in the app's
+    # event subscriptions). An install made before them keeps working for briefs and summaries;
+    # it captures promises once an admin reconnects Slack and grants them.
+    scopes = (
+        "chat:write",
+        "users:read",
+        "users:read.email",
+        "im:write",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "mpim:history",
+    )
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
         query = {
@@ -435,6 +448,30 @@ class SlackApi(_Http):
             json={"channel": channel, "text": text, "blocks": blocks, "unfurl_links": False},
         )
         return {"channel": str(body.get("channel") or channel), "ts": str(body.get("ts") or "")}
+
+    async def user_info(self, token: str, user_id: str) -> dict[str, str | None] | None:
+        """-> {email, name} of a workspace member, None when Slack does not know them. A bot,
+        or a member whose email the install may not read, has no email."""
+        try:
+            body = await self._web(
+                token, "user_info", "GET", "users.info", params={"user": user_id}
+            )
+        except ProviderError as exc:
+            if exc.reason in ("user_not_found", "user_not_visible"):
+                return None
+            raise
+        user = body.get("user") or {}
+        profile = user.get("profile") or {}
+        if user.get("is_bot") or user.get("deleted"):
+            return None
+        name = (
+            profile.get("display_name")
+            or profile.get("real_name")
+            or user.get("real_name")
+            or user.get("name")
+        )
+        email = profile.get("email")
+        return {"email": str(email) if email else None, "name": str(name) if name else None}
 
     async def permalink(self, token: str, *, channel: str, ts: str) -> str | None:
         try:

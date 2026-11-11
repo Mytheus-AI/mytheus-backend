@@ -48,6 +48,7 @@ from libs.shared.authz import RequestContext, not_found, require_tier, tenant_se
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
+from services.core_api.capacity import warn_on_landing
 from services.core_api.learning import band_for, edit_diff, record_feedback
 from services.core_api.meeting_ledger import mark_candidate
 from services.core_api.routes.chat import (
@@ -592,6 +593,18 @@ async def confirm_action(
         ip=ctx.ip,
     )
     await close_matching_promises(session, confirmed)
+    if confirmed["assignee_id"] is not None and confirmed["assignee_id"] != user_id:
+        # Promise ledger: the assignee's agent warns them if this makes their day tight (the
+        # confirmer never sees the assignee's load).
+        await warn_on_landing(
+            session,
+            ctx.org_id,
+            user_id=confirmed["assignee_id"],
+            kind="action",
+            item_id=confirmed["id"],
+            content=confirmed["content"],
+            due=confirmed["due_date"],
+        )
     await mark_candidate(
         ctx.org_id, confirmed["meeting_id"], action_id, kind="action", status="confirmed"
     )

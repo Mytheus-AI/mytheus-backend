@@ -762,6 +762,198 @@ components:
       - content
       title: CandidateState
       type: object
+    Capacity:
+      properties:
+        calendar_synced:
+          description: True when this person's Google Calendar events reach Mytheus.
+          title: Calendar Synced
+          type: boolean
+        days:
+          items:
+            $ref: '#/components/schemas/CapacityDay'
+          title: Days
+          type: array
+        item_minutes:
+          title: Item Minutes
+          type: integer
+        overdue:
+          title: Overdue
+          type: integer
+        start:
+          format: date
+          title: Start
+          type: string
+        today:
+          format: date
+          title: Today
+          type: string
+        tz:
+          title: Tz
+          type: string
+        undated:
+          title: Undated
+          type: integer
+        workday_minutes:
+          title: Workday Minutes
+          type: integer
+      required:
+      - start
+      - today
+      - tz
+      - days
+      - overdue
+      - undated
+      - calendar_synced
+      - workday_minutes
+      - item_minutes
+      title: Capacity
+      type: object
+    CapacityCheck:
+      properties:
+        due_date:
+          format: date
+          title: Due Date
+          type: string
+        due_label:
+          title: Due Label
+          type: string
+        items_on_day:
+          description: Things due that day, counting this one.
+          title: Items On Day
+          type: integer
+        level:
+          description: The day with this one more thing on it.
+          enum:
+          - ok
+          - tight
+          - over
+          - 'off'
+          title: Level
+          type: string
+        meeting_minutes:
+          title: Meeting Minutes
+          type: integer
+        message:
+          description: What your agent says, in one or two sentences.
+          title: Message
+          type: string
+        suggested_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Suggested Date
+        suggested_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suggested Label
+        warn:
+          description: True when your agent suggests offering another date.
+          title: Warn
+          type: boolean
+      required:
+      - due_date
+      - due_label
+      - level
+      - items_on_day
+      - meeting_minutes
+      - warn
+      - message
+      - suggested_date
+      - suggested_label
+      title: CapacityCheck
+      type: object
+    CapacityDay:
+      properties:
+        actions:
+          title: Actions
+          type: integer
+        away:
+          title: Away
+          type: boolean
+        capacity_minutes:
+          title: Capacity Minutes
+          type: integer
+        date:
+          format: date
+          title: Date
+          type: string
+        focus_minutes:
+          title: Focus Minutes
+          type: integer
+        items:
+          title: Items
+          type: integer
+        label:
+          title: Label
+          type: string
+        level:
+          enum:
+          - ok
+          - tight
+          - over
+          - 'off'
+          title: Level
+          type: string
+        load_minutes:
+          title: Load Minutes
+          type: integer
+        meeting_minutes:
+          title: Meeting Minutes
+          type: integer
+        promises:
+          title: Promises
+          type: integer
+      required:
+      - date
+      - label
+      - promises
+      - actions
+      - items
+      - meeting_minutes
+      - focus_minutes
+      - away
+      - load_minutes
+      - capacity_minutes
+      - level
+      title: CapacityDay
+      type: object
+    CaptureCheck:
+      additionalProperties: false
+      properties:
+        author_email:
+          maxLength: 320
+          minLength: 3
+          title: Author Email
+          type: string
+        channel:
+          enum:
+          - slack
+          - email
+          title: Channel
+          type: string
+      required:
+      - channel
+      - author_email
+      title: CaptureCheck
+      type: object
+    CaptureCheckResult:
+      properties:
+        enabled:
+          title: Enabled
+          type: boolean
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+      required:
+      - user_id
+      - enabled
+      title: CaptureCheckResult
+      type: object
     CaptureEnded:
       properties:
         meeting_id:
@@ -776,6 +968,20 @@ components:
       required:
       - meeting_id
       title: CaptureEnded
+      type: object
+    CapturePreferencesUpdate:
+      additionalProperties: false
+      properties:
+        email_enabled:
+          title: Email Enabled
+          type: boolean
+        slack_enabled:
+          title: Slack Enabled
+          type: boolean
+      required:
+      - slack_enabled
+      - email_enabled
+      title: CapturePreferencesUpdate
       type: object
     CaptureRefresh:
       additionalProperties: false
@@ -834,6 +1040,25 @@ components:
       - consent_at
       title: CaptureSession
       type: object
+    CaptureSettings:
+      properties:
+        email_connected:
+          description: 'False: Mytheus has no mail-reading integration yet, so nothing is captured from
+            email until one is connected.'
+          title: Email Connected
+          type: boolean
+        email_enabled:
+          title: Email Enabled
+          type: boolean
+        slack_enabled:
+          title: Slack Enabled
+          type: boolean
+      required:
+      - slack_enabled
+      - email_enabled
+      - email_connected
+      title: CaptureSettings
+      type: object
     CaptureStart:
       additionalProperties: false
       properties:
@@ -867,6 +1092,119 @@ components:
       required:
       - configured
       title: CaptureStatus
+      type: object
+    Captured:
+      additionalProperties: false
+      properties:
+        author_email:
+          maxLength: 320
+          minLength: 3
+          title: Author Email
+          type: string
+        channel:
+          enum:
+          - slack
+          - email
+          title: Channel
+          type: string
+        occurred_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Occurred At
+        promises:
+          items:
+            $ref: '#/components/schemas/CapturedPromise'
+          maxItems: 20
+          title: Promises
+          type: array
+        prompt_version:
+          anyOf:
+          - maxLength: 80
+            type: string
+          - type: 'null'
+          title: Prompt Version
+        source_link:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Source Link
+        source_ref:
+          maxLength: 300
+          minLength: 1
+          title: Source Ref
+          type: string
+      required:
+      - channel
+      - author_email
+      - source_ref
+      - promises
+      title: Captured
+      type: object
+    CapturedPromise:
+      properties:
+        confidence:
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+          type: number
+        content:
+          maxLength: 500
+          minLength: 1
+          title: Content
+          type: string
+        due_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due Date
+        due_hint:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          title: Due Hint
+        quote:
+          anyOf:
+          - maxLength: 1000
+            type: string
+          - type: 'null'
+          title: Quote
+        recipient_email:
+          anyOf:
+          - maxLength: 320
+            type: string
+          - type: 'null'
+          title: Recipient Email
+        recipient_label:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Recipient Label
+      required:
+      - content
+      - confidence
+      title: CapturedPromise
+      type: object
+    CapturedResult:
+      properties:
+        user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: User Id
+        written:
+          title: Written
+          type: integer
+      required:
+      - user_id
+      - written
+      title: CapturedResult
       type: object
     CarryForward:
       description: '`GET /meetings/{id}/carry-forward`: what the previous meeting left open. Empty lists
@@ -1962,6 +2300,133 @@ components:
       - actions
       - link
       title: CrmDigest
+      type: object
+    DateProposal:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        current_due:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Current Due
+        decided_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Decided At
+        id:
+          format: uuid
+          title: Id
+          type: string
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+        proposed_due:
+          format: date
+          title: Proposed Due
+          type: string
+        proposer_id:
+          format: uuid
+          title: Proposer Id
+          type: string
+        proposer_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proposer Name
+        requester_id:
+          format: uuid
+          title: Requester Id
+          type: string
+        requester_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requester Name
+        state:
+          enum:
+          - pending
+          - accepted
+          - declined
+          - withdrawn
+          title: State
+          type: string
+        target:
+          enum:
+          - commitment
+          - action
+          title: Target
+          type: string
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - id
+      - target
+      - target_id
+      - content
+      - current_due
+      - proposed_due
+      - note
+      - state
+      - proposer_id
+      - proposer_name
+      - requester_id
+      - requester_name
+      - created_at
+      - decided_at
+      title: DateProposal
+      type: object
+    DateProposalCreate:
+      additionalProperties: false
+      properties:
+        note:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Note
+        proposed_due:
+          format: date
+          title: Proposed Due
+          type: string
+        target:
+          enum:
+          - commitment
+          - action
+          title: Target
+          type: string
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - target
+      - target_id
+      - proposed_due
+      title: DateProposalCreate
+      type: object
+    DateProposalList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/DateProposal'
+          title: Items
+          type: array
+      required:
+      - items
+      title: DateProposalList
       type: object
     Decision:
       description: One `decisions` row. `proposed` until a participant confirms or dismisses it.
@@ -3062,6 +3527,42 @@ components:
           type: array
       title: HTTPValidationError
       type: object
+    HandOff:
+      additionalProperties: false
+      properties:
+        note:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Note
+        to_user_id:
+          format: uuid
+          title: To User Id
+          type: string
+      required:
+      - to_user_id
+      title: HandOff
+      type: object
+    HandOffResult:
+      properties:
+        copy_id:
+          format: uuid
+          title: Copy Id
+          type: string
+        handed_to_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Handed To Name
+        promise:
+          $ref: '#/components/schemas/LedgerPromise'
+      required:
+      - promise
+      - handed_to_name
+      - copy_id
+      title: HandOffResult
+      type: object
     IndexPolicy:
       properties:
         confidential:
@@ -3279,6 +3780,144 @@ components:
       - text
       - answered_at
       title: LatestStatus
+      type: object
+    LedgerPromise:
+      properties:
+        action_item_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Action Item Id
+        channel:
+          enum:
+          - meeting
+          - in_person
+          - slack
+          - email
+          - manual
+          title: Channel
+          type: string
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        done_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Done At
+        due_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due At
+        due_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Due Hint
+        handed_off_from:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Handed Off From
+        handed_off_to:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Handed Off To
+        handed_off_to_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Handed Off To Name
+        id:
+          format: uuid
+          title: Id
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        moment_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Moment Id
+        pending_proposal:
+          anyOf:
+          - $ref: '#/components/schemas/ProposalBrief'
+          - type: 'null'
+        recipient_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Who it was promised to: a colleague''s name or the label the source gave.'
+          title: Recipient Name
+        recipient_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Recipient User Id
+        review_state:
+          enum:
+          - pending
+          - confirmed
+          title: Review State
+          type: string
+        source:
+          $ref: '#/components/schemas/PromiseSource'
+        status:
+          enum:
+          - open
+          - done
+          - dismissed
+          title: Status
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - content
+      - status
+      - review_state
+      - channel
+      - due_at
+      - due_hint
+      - recipient_user_id
+      - recipient_name
+      - source
+      - meeting_id
+      - moment_id
+      - action_item_id
+      - confidence
+      - handed_off_to
+      - handed_off_to_name
+      - handed_off_from
+      - created_at
+      - updated_at
+      - done_at
+      - pending_proposal
+      title: LedgerPromise
       type: object
     LineageStep:
       description: 'One decision in the chain around the subject, oldest first.
@@ -5052,6 +5691,214 @@ components:
       - status
       - code
       type: object
+    PromiseConfirm:
+      additionalProperties: false
+      properties:
+        due_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: Optionally set or correct the date.
+          title: Due At
+      title: PromiseConfirm
+      type: object
+    PromiseCreate:
+      additionalProperties: false
+      properties:
+        content:
+          description: What you promised.
+          maxLength: 500
+          minLength: 1
+          title: Content
+          type: string
+        due_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: When it is due (YYYY-MM-DD).
+          title: Due At
+        recipient_label:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          description: Or who, in words (a customer, a team).
+          title: Recipient Label
+        recipient_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: A colleague in this workspace you promised it to.
+          title: Recipient User Id
+        source_link:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          description: Optional link to where you promised it.
+          title: Source Link
+      required:
+      - content
+      title: PromiseCreate
+      type: object
+    PromiseLedger:
+      properties:
+        capture:
+          $ref: '#/components/schemas/CaptureSettings'
+        items:
+          items:
+            $ref: '#/components/schemas/LedgerPromise'
+          title: Items
+          type: array
+        pending_review:
+          title: Pending Review
+          type: integer
+      required:
+      - items
+      - pending_review
+      - capture
+      title: PromiseLedger
+      type: object
+    PromiseSource:
+      description: 'Where the promise was made, as a chip: the meeting moment, the Slack message, the
+        email,
+
+        or who added it.'
+      properties:
+        at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: When it was said or sent.
+          title: At
+        channel:
+          enum:
+          - meeting
+          - in_person
+          - slack
+          - email
+          - manual
+          title: Channel
+          type: string
+        external:
+          description: True when `link` leaves Mytheus (a Slack permalink).
+          title: External
+          type: boolean
+        label:
+          description: 'What the chip says: a meeting title, `Slack`, `Added by you`.'
+          title: Label
+          type: string
+        link:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The original moment or message: an app path (`/meetings/...`) or the provider''s
+            permalink. Null when there is nothing to open.'
+          title: Link
+        quote:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The words the promise was made in.
+          title: Quote
+      required:
+      - channel
+      - label
+      - external
+      title: PromiseSource
+      type: object
+    PromiseUpdate:
+      additionalProperties: false
+      properties:
+        clear_due:
+          default: false
+          description: True removes the due date.
+          title: Clear Due
+          type: boolean
+        content:
+          anyOf:
+          - maxLength: 500
+            minLength: 1
+            type: string
+          - type: 'null'
+          title: Content
+        due_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Due At
+        recipient_label:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Recipient Label
+        recipient_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Recipient User Id
+        status:
+          anyOf:
+          - enum:
+            - open
+            - done
+            - dismissed
+            type: string
+          - type: 'null'
+          description: '`done` (kept), `dismissed` (dropped), `open` (undo either).'
+          title: Status
+      title: PromiseUpdate
+      type: object
+    PromiseWithCapacity:
+      properties:
+        capacity:
+          anyOf:
+          - $ref: '#/components/schemas/CapacityCheck'
+          - type: 'null'
+        promise:
+          $ref: '#/components/schemas/LedgerPromise'
+      required:
+      - promise
+      - capacity
+      title: PromiseWithCapacity
+      type: object
+    ProposalBrief:
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        proposed_due:
+          format: date
+          title: Proposed Due
+          type: string
+        requester_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requester Name
+        state:
+          enum:
+          - pending
+          - accepted
+          - declined
+          - withdrawn
+          title: State
+          type: string
+      required:
+      - id
+      - proposed_due
+      - state
+      - requester_name
+      title: ProposalBrief
+      type: object
     PublicClipShare:
       description: What a public clip page renders.
       properties:
@@ -5352,6 +6199,52 @@ components:
       - user_id
       - attendance
       title: ReminderParticipant
+      type: object
+    RenegotiateResult:
+      properties:
+        due_at:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: The date it carries now.
+          title: Due At
+        mode:
+          description: '`proposed`: the requester was asked and decides. `applied`: nobody else asked
+            for it, so the new date is set at once.'
+          enum:
+          - proposed
+          - applied
+          title: Mode
+          type: string
+        previous_due:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Previous Due
+        proposal:
+          anyOf:
+          - $ref: '#/components/schemas/DateProposal'
+          - type: 'null'
+        target:
+          enum:
+          - commitment
+          - action
+          title: Target
+          type: string
+        target_id:
+          format: uuid
+          title: Target Id
+          type: string
+      required:
+      - mode
+      - proposal
+      - target
+      - target_id
+      - due_at
+      - previous_due
+      title: RenegotiateResult
       type: object
     RetrievalScope:
       properties:
@@ -11283,6 +12176,782 @@ paths:
       summary: Start Wrap Up
       tags:
       - meetings
+  /api/v1/promises:
+    get:
+      description: 'Every promise you made, from every channel (meetings, phone recordings, Slack, email,
+
+        added by hand), with its source and any date you asked to move. Only you see it.'
+      operationId: list_promises
+      parameters:
+      - in: query
+        name: status
+        required: false
+        schema:
+          default: all
+          enum:
+          - open
+          - done
+          - dismissed
+          - all
+          title: Status
+          type: string
+      - in: query
+        name: channel
+        required: false
+        schema:
+          anyOf:
+          - items:
+              enum:
+              - meeting
+              - in_person
+              - slack
+              - email
+              - manual
+              type: string
+            type: array
+          - type: 'null'
+          title: Channel
+      - description: A colleague's user id, or `none` for no recipient.
+        in: query
+        name: recipient
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          description: A colleague's user id, or `none` for no recipient.
+          title: Recipient
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromiseLedger'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: My promise ledger
+      tags:
+      - promises
+    post:
+      description: 'Write down a promise you made anywhere (a call, a hallway, a message). It is yours
+        at
+
+        once (you said so); the answer carries the capacity check for its date. Honours
+
+        `Idempotency-Key`. Needs a session or a `read_write` token.'
+      operationId: create_promise
+      parameters:
+      - in: query
+        name: tz
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          title: Tz
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromiseCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromiseWithCapacity'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Add a promise
+      tags:
+      - promises
+  /api/v1/promises/capacity:
+    get:
+      description: 'Your days: what is due (promises and actions), meeting and focus time, and how full
+        each
+
+        day is. Private to you.'
+      operationId: get_capacity
+      parameters:
+      - description: First day; default this Monday.
+        in: query
+        name: start
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: First day; default this Monday.
+          title: Start
+      - in: query
+        name: days
+        required: false
+        schema:
+          default: 7
+          maximum: 31
+          minimum: 1
+          title: Days
+          type: integer
+      - description: IANA zone, default UTC.
+        in: query
+        name: tz
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          description: IANA zone, default UTC.
+          title: Tz
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capacity'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: My capacity
+      tags:
+      - promises
+  /api/v1/promises/capacity/check:
+    get:
+      description: 'What one more thing due on `due_date` does to that day, before you say yes: "That''s
+        your
+
+        seventh promise due Friday. Offer Monday instead?" `exclude_*` leaves out the item being
+
+        accepted when it is already stored.'
+      operationId: check_capacity
+      parameters:
+      - in: query
+        name: due_date
+        required: true
+        schema:
+          format: date
+          title: Due Date
+          type: string
+      - in: query
+        name: tz
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          title: Tz
+      - in: query
+        name: exclude_kind
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - commitment
+            - action
+            type: string
+          - type: 'null'
+          title: Exclude Kind
+      - in: query
+        name: exclude_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Exclude Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapacityCheck'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Check my capacity
+      tags:
+      - promises
+  /api/v1/promises/capture-preferences:
+    get:
+      description: Whether your agent may look for promises in your own Slack messages and email.
+      operationId: get_capture_preferences
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSettings'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Where my agent looks
+      tags:
+      - promises
+    put:
+      description: Turn promise capture from Slack or email on or off, for you only.
+      operationId: put_capture_preferences
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapturePreferencesUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureSettings'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Set where my agent looks
+      tags:
+      - promises
+  /api/v1/promises/date-proposals:
+    get:
+      description: '`incoming`: what people who owe you something asked to move. `outgoing`: what you
+
+        asked.'
+      operationId: list_proposals
+      parameters:
+      - in: query
+        name: role
+        required: false
+        schema:
+          default: incoming
+          enum:
+          - incoming
+          - outgoing
+          title: Role
+          type: string
+      - in: query
+        name: state
+        required: false
+        schema:
+          default: pending
+          enum:
+          - pending
+          - all
+          title: State
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DateProposalList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Date proposals
+      tags:
+      - promises
+    post:
+      description: 'Offer another date for something you owe. When a colleague asked for it (the person
+        you
+
+        promised it to, or who assigned you the action) they are asked, with one notification, and
+
+        decide; a new proposal replaces a pending one. Otherwise the date moves at once.'
+      operationId: renegotiate
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DateProposalCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenegotiateResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Renegotiate a date
+      tags:
+      - promises
+  /api/v1/promises/date-proposals/{proposal_id}/accept:
+    post:
+      description: The person who asked accepts the new date; it applies and the proposer is told.
+      operationId: accept_proposal
+      parameters:
+      - in: path
+        name: proposal_id
+        required: true
+        schema:
+          format: uuid
+          title: Proposal Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DateProposal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Accept a date
+      tags:
+      - promises
+  /api/v1/promises/date-proposals/{proposal_id}/decline:
+    post:
+      description: The person who asked keeps the original date; the proposer is told.
+      operationId: decline_proposal
+      parameters:
+      - in: path
+        name: proposal_id
+        required: true
+        schema:
+          format: uuid
+          title: Proposal Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DateProposal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decline a date
+      tags:
+      - promises
+  /api/v1/promises/date-proposals/{proposal_id}/withdraw:
+    post:
+      description: The proposer's undo, while the other person has not decided.
+      operationId: withdraw_proposal
+      parameters:
+      - in: path
+        name: proposal_id
+        required: true
+        schema:
+          format: uuid
+          title: Proposal Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DateProposal'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Withdraw a date proposal
+      tags:
+      - promises
+  /api/v1/promises/{promise_id}:
+    patch:
+      description: 'Kept (`done`), dropped (`dismissed`), back to `open` (the undo of either), or an edit.
+
+        Owner only. A promise you handed off is reopened through the hand-off undo.'
+      operationId: update_promise
+      parameters:
+      - in: path
+        name: promise_id
+        required: true
+        schema:
+          format: uuid
+          title: Promise Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromiseUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerPromise'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Update a promise
+      tags:
+      - promises
+  /api/v1/promises/{promise_id}/confirm:
+    post:
+      description: A promise your agent found (or a colleague handed you) becomes yours. Idempotent.
+      operationId: confirm_promise
+      parameters:
+      - in: path
+        name: promise_id
+        required: true
+        schema:
+          format: uuid
+          title: Promise Id
+          type: string
+      - in: query
+        name: tz
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          title: Tz
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromiseConfirm'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromiseWithCapacity'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Confirm a promise
+      tags:
+      - promises
+  /api/v1/promises/{promise_id}/hand-off:
+    post:
+      description: 'Give an open promise to a colleague. They get it to confirm or dismiss (agents propose,
+
+        people decide); yours closes as handed off. Undo while they have not confirmed it.'
+      operationId: hand_off
+      parameters:
+      - in: path
+        name: promise_id
+        required: true
+        schema:
+          format: uuid
+          title: Promise Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandOff'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HandOffResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Hand off a promise
+      tags:
+      - promises
+  /api/v1/promises/{promise_id}/hand-off/undo:
+    post:
+      description: Take back a promise you handed off, while the colleague has not confirmed it yet.
+      operationId: undo_hand_off
+      parameters:
+      - in: path
+        name: promise_id
+        required: true
+        schema:
+          format: uuid
+          title: Promise Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerPromise'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Take a promise back
+      tags:
+      - promises
   /api/v1/public/clips/{token}:
     get:
       description: 'No authentication: the signed token in the path is the credential. The clip''s transcript
@@ -13038,6 +14707,98 @@ paths:
       security:
       - MytheusServiceToken: []
       summary: Nudge
+      tags:
+      - core-internal
+  /internal/promises/capture-check:
+    post:
+      operationId: capture_check
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureCheck'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureCheckResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Capture Check
+      tags:
+      - core-internal
+  /internal/promises/captured:
+    post:
+      operationId: captured
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Captured'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapturedResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Captured
       tags:
       - core-internal
   /internal/retrieval/records:
