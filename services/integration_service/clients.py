@@ -117,12 +117,19 @@ GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3"
 
 class GoogleOAuth(_Http):
     provider = config.GOOGLE_CALENDAR
-    scopes = (
+    BASE_SCOPES: tuple[str, ...] = (
         "openid",
         "email",
         "https://www.googleapis.com/auth/calendar.readonly",
-        "https://www.googleapis.com/auth/drive.readonly",
     )
+    DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+    @property
+    def scopes(self) -> tuple[str, ...]:
+        """Calendar only, unless Drive attachment ingestion is switched on (see config)."""
+        if config.drive_attachments_enabled():
+            return (*self.BASE_SCOPES, self.DRIVE_SCOPE)
+        return self.BASE_SCOPES
 
     def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
         query = {

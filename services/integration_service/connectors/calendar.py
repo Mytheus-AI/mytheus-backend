@@ -258,7 +258,7 @@ async def _handle_event(
         key = object_key(org_id, meeting_id, file_id, att.get("title"))
         stored: str | None = None
         idem = f"gcal:{event_id}:attachment:{file_id}"
-        if attachments is not None:
+        if attachments is not None and config.drive_attachments_enabled():
             if await _already_enqueued(session, idem):
                 stored = key
             elif not await _owned_by_tenant(session, clients, access_token, file_id):
