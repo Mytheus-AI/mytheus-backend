@@ -1,4 +1,7 @@
-"""`POST /internal/jira/issue-status` (workflow-service): are these actions' Jira issues open?
+"""`POST /internal/jira/issue-status` (workflow-service): are these actions' tracker issues open?
+
+The path keeps its name; since ADR-0044 it answers for the tenant's tracker, Jira or Linear,
+and says which in `provider`.
 
 Polish wave 3, promise drift. The daily `PromiseDriftWorkflow` hands over the ids of overdue
 open actions; this answers, for each one linked to a Jira issue this tenant created (the
@@ -14,7 +17,7 @@ connected" state: the workflow then nudges nobody). Never a 5xx for a provider p
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,9 +25,8 @@ from sqlalchemy import text
 
 from libs.shared.db import get_sessionmaker
 from libs.shared.tenancy import set_rls
-from services.integration_service import config, store
+from services.integration_service import store, tracker
 from services.integration_service.clients import Clients, get_clients
-from services.integration_service.connectors import jira
 from services.integration_service.internal_auth import workflow_caller
 from services.integration_service.redaction import get_logger
 
@@ -46,11 +48,13 @@ class IssueStatus(BaseModel):
     issue_key: str
     issue_url: str | None = None
     open: bool
-    source: str  # "jira" (re-read now) | "watermark" (last synced status)
+    source: str  # "jira" | "linear" (re-read now) | "watermark" (last synced status)
 
 
 class IssueStatusResult(BaseModel):
     connected: bool
+    # Which tracker answered (ADR-0044): None when the tenant has none connected.
+    provider: Literal["jira", "linear"] | None = None
     issues: list[IssueStatus]
 
 
@@ -58,16 +62,14 @@ async def issue_statuses(
     org_id: uuid.UUID, action_ids: list[uuid.UUID], clients: Clients | None = None
 ) -> IssueStatusResult:
     clients = clients or get_clients()
-    if not action_ids:
-        async with get_sessionmaker()() as session, session.begin():
-            await set_rls(session, org_id)
-            conn = await store.get_connection(session, config.JIRA, active_only=True)
-        return IssueStatusResult(connected=conn is not None, issues=[])
     async with get_sessionmaker()() as session, session.begin():
         await set_rls(session, org_id)
-        conn = await store.get_connection(session, config.JIRA, active_only=True)
-        if conn is None:
+        found = await tracker.active(session)
+        if found is None:
             return IssueStatusResult(connected=False, issues=[])
+        provider, conn = found
+        if not action_ids:
+            return IssueStatusResult(connected=True, provider=provider, issues=[])
         links = (
             await session.execute(
                 text(
@@ -75,37 +77,34 @@ async def issue_statuses(
                     "FROM integration_id_map WHERE provider = :p AND nexus_kind = 'action' "
                     "AND nexus_id = ANY(CAST(:ids AS uuid[]))"
                 ),
-                {"p": config.JIRA, "ids": [str(a) for a in action_ids]},
+                {"p": provider, "ids": [str(a) for a in action_ids]},
             )
         ).all()
         token: str | None = None
-        cloud_id: str | None = None
+        ctx: dict[str, Any] = {}
         if links:
             try:
-                tokens = await store.access_token(session, conn, clients.oauth[config.JIRA])
+                tokens = await store.access_token(session, conn, clients.oauth[provider])
                 token = tokens.access_token
-                site: dict[str, Any] = jira._site(
-                    await store.get_cursor(session, conn.id, jira.SITE_KIND), conn
-                )
-                cloud_id = str(site["cloud_id"])
+                ctx = await tracker.context(session, provider, conn)
             except Exception:  # noqa: BLE001 - no usable token: the watermark answers
-                logger.warning("jira token unavailable; answering from the watermark")
+                logger.warning("%s token unavailable; answering from the watermark", provider)
     out: list[IssueStatus] = []
     for nexus_id, key, url, watermark in links:
         open_, source = watermark != "done", "watermark"
-        if token and cloud_id:
+        if token:
             try:
-                fetched = await clients.jira.get_issue(token, cloud_id, str(key))
+                fetched = await tracker.read_issue(provider, clients, token, ctx, str(key))
                 if fetched is not None:
-                    open_, source = jira.map_status(fetched) != "done", "jira"
+                    open_, source = tracker.map_status(provider, fetched) != "done", provider
             except Exception:  # noqa: BLE001 - a provider hiccup falls back to the watermark
-                logger.warning("jira re-read failed for one issue; using the watermark")
+                logger.warning("%s re-read failed for one issue; using the watermark", provider)
         out.append(
             IssueStatus(
                 action_id=nexus_id, issue_key=str(key), issue_url=url, open=open_, source=source
             )
         )
-    return IssueStatusResult(connected=True, issues=out)
+    return IssueStatusResult(connected=True, provider=provider, issues=out)
 
 
 @router.post("/internal/jira/issue-status", response_model=IssueStatusResult)

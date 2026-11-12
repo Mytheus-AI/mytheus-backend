@@ -7,7 +7,7 @@ of the two is connected.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +15,13 @@ from services.integration_service import config, store
 from services.integration_service.clients import Clients
 from services.integration_service.connectors import jira, linear
 
+TrackerName = Literal["jira", "linear"]
+TRACKERS: tuple[TrackerName, ...] = ("jira", "linear")
 
-async def active(session: AsyncSession) -> tuple[str, store.Connection] | None:
+
+async def active(session: AsyncSession) -> tuple[TrackerName, store.Connection] | None:
     """The tenant's one active tracker connection, provider name first, or None."""
-    for provider in (config.JIRA, config.LINEAR):
+    for provider in TRACKERS:
         conn = await store.get_connection(session, provider, active_only=True)
         if conn is not None:
             return provider, conn

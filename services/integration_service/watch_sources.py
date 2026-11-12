@@ -7,8 +7,9 @@ tenant's own tokens:
 
 - `jira`: `{connected, issues: [{key, summary, status, status_category, due_date, url}]}`. An
   issue Jira no longer has is left out. Read with the same token and site as promise drift.
-- `linear`: always `{connected: false}`. Linear is in the closed provider enum but not built
-  (R8); the screens say "not connected".
+- `linear`: `{connected, issues: [...]}` when Linear is the tenant's tracker (ADR-0044): the
+  same keys (`jira_keys`; Linear identifiers have the same `ENG-42` shape) read from Linear.
+  Only one of `jira` and `linear` is ever connected.
 - `hubspot`: `{connected, deals: [...], domain_deals: [{domain, deals: [...]}]}`. Deals by id
   (amount, stage, close date, won/lost), and the deals of the companies whose domain matches a
   guest domain. Needs the `crm.objects.deals.read` scope; a connection made before that scope
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,6 +62,7 @@ class SourcesRequest(BaseModel):
 
 class WatchIssue(BaseModel):
     key: str
+    provider: Literal["jira", "linear"] = "jira"
     summary: str | None = None
     status: str | None = None
     status_category: str | None = None
@@ -91,6 +93,7 @@ class JiraSource(BaseModel):
 
 class LinearSource(BaseModel):
     connected: bool = False
+    issues: list[WatchIssue] = Field(default_factory=list)
 
 
 class HubSpotSource(BaseModel):
@@ -180,6 +183,48 @@ async def _jira(org_id: uuid.UUID, keys: list[str], clients: Clients) -> JiraSou
     return JiraSource(connected=True, issues=issues)
 
 
+# Linear workflow state types, as Jira status categories (what core-api's watch reads).
+_LINEAR_CATEGORY = {"completed": "done", "canceled": "done", "started": "indeterminate"}
+
+
+def linear_issue_from(raw: dict[str, Any]) -> WatchIssue:
+    state = raw.get("state") or {}
+    return WatchIssue(
+        key=str(raw.get("identifier") or ""),
+        provider="linear",
+        summary=raw.get("title"),
+        status=state.get("name"),
+        status_category=_LINEAR_CATEGORY.get(str(state.get("type")), "new"),
+        due_date=_date(raw.get("dueDate")),
+        url=raw.get("url"),
+    )
+
+
+async def _linear(org_id: uuid.UUID, keys: list[str], clients: Clients) -> LinearSource:
+    async with get_sessionmaker()() as session, session.begin():
+        await set_rls(session, org_id)
+        conn = await store.get_connection(session, config.LINEAR, active_only=True)
+        if conn is None:
+            return LinearSource(connected=False)
+        if not keys:
+            return LinearSource(connected=True)
+        try:
+            tokens = await store.access_token(session, conn, clients.oauth[config.LINEAR])
+        except Exception:  # noqa: BLE001 - no usable token: nothing to read this run
+            logger.warning("linear token unavailable for the assumption watch")
+            return LinearSource(connected=True)
+    issues: list[WatchIssue] = []
+    for key in keys:
+        try:
+            raw = await clients.linear.get_issue(tokens.access_token, key)
+        except Exception:  # noqa: BLE001 - one issue's hiccup skips that issue
+            logger.warning("linear read failed for one watched issue")
+            continue
+        if raw is not None:
+            issues.append(linear_issue_from(raw))
+    return LinearSource(connected=True, issues=issues)
+
+
 async def _hubspot(
     org_id: uuid.UUID, deal_ids: list[str], domains: list[str], clients: Clients
 ) -> HubSpotSource:
@@ -235,7 +280,7 @@ async def watch_sources(
     domains = list(dict.fromkeys(d.strip().lower() for d in body.domains if d.strip()))
     return WatchSources(
         jira=await _jira(org_id, keys, clients),
-        linear=LinearSource(),
+        linear=await _linear(org_id, keys, clients),
         hubspot=await _hubspot(org_id, deal_ids, domains, clients),
     )
 
