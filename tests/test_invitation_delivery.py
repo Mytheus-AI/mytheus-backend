@@ -173,9 +173,7 @@ def test_sends_with_the_attachment_and_a_replay_never_resends(client):
     assert attachment.content == ICS and attachment.content_type.endswith("method=REQUEST")
     again = client.post("/internal/email/invitations", json=body, headers=_headers(t.org_id))
     assert all(r["replayed"] for r in again.json()["results"]) and len(fake.sent) == 2
-    rows = _sql(
-        "SELECT kind, status FROM email_deliveries WHERE meeting_id = %(m)s", {"m": str(m)}
-    )
+    rows = _sql("SELECT kind, status FROM email_deliveries WHERE meeting_id = %(m)s", {"m": str(m)})
     assert rows == [{"kind": "meeting_invitation", "status": "sent"}] * 2
 
 

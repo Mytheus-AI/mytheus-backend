@@ -261,9 +261,12 @@ def test_host_invites_a_member_who_is_added_recorded_and_emailed(client, fake):
 def test_a_member_without_a_time_zone_reads_utc_spelled_out(client, fake):
     host, member, _o, m = setup_meeting()
     sign_in(host)
-    assert client.post(
-        f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]}
-    ).json()["sent"] == 1
+    assert (
+        client.post(
+            f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]}
+        ).json()["sent"]
+        == 1
+    )
     text = fake.calls[-1]["messages"][0]["text"]
     assert "15:30 to 16:15 (UTC (Coordinated Universal Time))" in text
     assert fake.calls[-1]["messages"][0]["subject"].endswith("Thu 3 Dec, 15:30 UTC")
@@ -296,9 +299,12 @@ def test_another_tenants_meeting_is_404_everywhere(client, fake):
     _h, _m, _o, m = setup_meeting()
     other = seed_tenant(tier="admin")
     sign_in(other)
-    assert client.post(
-        f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(other.user_id)]}
-    ).status_code == 404
+    assert (
+        client.post(
+            f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(other.user_id)]}
+        ).status_code
+        == 404
+    )
     assert client.get(f"/api/v1/meetings/{m}/invitations").status_code == 404
     assert client.get(f"/api/v1/meetings/{m}/calendar.ics").status_code == 404
     assert fake.calls == [] and _rows(m) == []
@@ -349,9 +355,7 @@ def test_not_configured_records_it_and_sends_nothing(client):
     notification_client.set_notifications(f)  # type: ignore[arg-type]
     host, member, _o, m = setup_meeting()
     sign_in(host)
-    res = client.post(
-        f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]}
-    )
+    res = client.post(f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]})
     assert res.status_code == 200
     out = res.json()
     assert out["email_configured"] is False and out["not_configured"] == 1 and f.calls == []
@@ -369,9 +373,7 @@ def test_no_caller_secret_is_not_configured_and_a_down_service_is_failed(client)
         FakeNotifications(error=NotConfigured(None, "x"))  # type: ignore[arg-type]
     )
     body = {"user_ids": [str(member.user_id)]}
-    assert client.post(f"/api/v1/meetings/{m}/invitations", json=body).json()[
-        "not_configured"
-    ] == 1
+    assert client.post(f"/api/v1/meetings/{m}/invitations", json=body).json()["not_configured"] == 1
     notification_client.set_notifications(
         FakeNotifications(error=NotificationServiceError(503, "down"))  # type: ignore[arg-type]
     )
@@ -422,9 +424,7 @@ def test_an_ended_meeting_takes_no_invitations(client, fake):
     host, member, _o, m = setup_meeting()
     _sql("UPDATE meetings SET status = 'ended' WHERE id = %(m)s", {"m": str(m)})
     sign_in(host)
-    res = client.post(
-        f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]}
-    )
+    res = client.post(f"/api/v1/meetings/{m}/invitations", json={"user_ids": [str(member.user_id)]})
     assert res.status_code == 409
 
 
@@ -531,9 +531,9 @@ def test_without_a_key_there_is_no_public_link(client, fake, monkeypatch):
     host, _member, _o, m = setup_meeting()
     assert cal.mint_token(host.org_id, m) is None
     sign_in(host)
-    assert client.get(f"/api/v1/meetings/{m}/invitations").json()["calendar"][
-        "public_ics_url"
-    ] is None
+    assert (
+        client.get(f"/api/v1/meetings/{m}/invitations").json()["calendar"]["public_ics_url"] is None
+    )
 
 
 # --- reschedule and cancel ---------------------------------------------------------------------
@@ -605,9 +605,9 @@ def test_no_update_without_email_or_without_anyone_emailed(client):
     client.patch(f"/api/v1/meetings/{m}", json={"status": "cancelled"})
     time.sleep(0.3)
     assert f.calls == []
-    assert _sql(
-        "SELECT calendar_sequence FROM meetings WHERE id = %(m)s", {"m": str(m)}
-    ) == [{"calendar_sequence": 1}]
+    assert _sql("SELECT calendar_sequence FROM meetings WHERE id = %(m)s", {"m": str(m)}) == [
+        {"calendar_sequence": 1}
+    ]
 
 
 # --- the email itself -------------------------------------------------------------------------
