@@ -44,6 +44,7 @@ from services.core_api.routes import (
     internal_reach,
     internal_retrieval,
     internal_room_signals,
+    invitations,
     listening,
     me_memory,
     meeting_templates,
@@ -100,6 +101,9 @@ app.include_router(public_api.router)
 app.include_router(share_links.router)
 app.include_router(share_links.public_router)
 app.include_router(followups.router)
+# ADR-0043: meeting invitations by email, the meeting's .ics and its signed public calendar link.
+app.include_router(invitations.router)
+app.include_router(invitations.public_router)
 app.include_router(internal_reach.router)
 # Polish program, Phase 1: the room's close-out ritual and late-joiner line (room_closeout),
 # and asking a stand-in agent (stand_ins).

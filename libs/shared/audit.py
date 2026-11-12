@@ -220,3 +220,8 @@ ACTION_SETTLEMENT_PROPOSED = "settlement.proposed"
 ACTION_SETTLEMENT_SUPERSEDED = "settlement.superseded"
 ACTION_SETTLEMENT_DECLINED = "settlement.declined"
 ACTION_SETTLEMENT_MEETING_BOOKED = "settlement.meeting_booked"
+
+# ADR-0043: meeting invitations sent by email (an invitation, an update after a reschedule, or a
+# cancellation). Who sent it and to whom is a compliance fact: it sends meeting details outside
+# the product.
+ACTION_MEETING_INVITATIONS_SENT = "meeting.invitations_sent"
