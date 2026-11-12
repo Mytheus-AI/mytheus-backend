@@ -140,9 +140,9 @@ async def test_meeting_created_pre_creates_the_meeting_rooms_row(migrated_db):
         assert row["status"] == "pending"
         assert row["livekit_metadata_synced_at"] is None, "not synced yet - no transport call"
 
-        # `handle_meeting_event` makes NO transport call itself (fix round 1); it reports that
-        # a sync is still needed, for `process_decoded_message` to act on afterward.
-        assert result.pending_room_sync == (org_id, f"meeting-{meeting_id}")
+        # No LiveKit room is opened at creation: it opens at the first join (an empty room
+        # made LiveKit report the meeting live, then end it after five minutes).
+        assert result.pending_room_sync is None
     finally:
         await app_engine.dispose()
         await su.dispose()
@@ -240,7 +240,7 @@ async def test_redelivery_of_created_is_a_dedupe_no_op(migrated_db):
         async with app_engine.connect() as conn, conn.begin():
             second = await handle_meeting_event(conn, redis, value)
         assert first.applied is True
-        assert first.pending_room_sync == (org_id, f"meeting-{meeting_id}")
+        assert first.pending_room_sync is None
         assert second.applied is False, "a redelivered idempotency_key must be a no-op"
         assert second.pending_room_sync is None
 
@@ -393,7 +393,7 @@ async def test_an_unrecognized_event_type_is_a_poison_message():
 # --- fix round 1: process_decoded_message completes the LiveKit sync, out of band -------------
 
 
-async def test_process_decoded_message_syncs_livekit_metadata_for_a_created_event(migrated_db):
+async def test_process_decoded_message_opens_no_livekit_room_for_a_created_event(migrated_db):
     su = create_async_engine(migrated_db)
     org_id = uuid.uuid4()
     await seed_org(su, org_id, slug_prefix="me9")
@@ -425,15 +425,12 @@ async def test_process_decoded_message_syncs_livekit_metadata_for_a_created_even
         # explicitly to observe what it did.
         await _drain_background_sync_tasks()
 
-        room_calls = [c for c in transport.calls if c.method == "ensure_room"]
-        assert len(room_calls) == 1
-        assert room_calls[0].kwargs == {"org_id": org_id, "room": f"meeting-{meeting_id}"}
-        assert transport.room_metadata[f"meeting-{meeting_id}"] == json.dumps(
-            {"org_id": str(org_id)}
-        )
-
+        assert [
+            c for c in transport.calls if c.method == "ensure_room"
+        ] == [], "a created meeting must not open its LiveKit room before anyone joins"
         row = await _meeting_room(app_engine, org_id, meeting_id)
-        assert row["livekit_metadata_synced_at"] is not None
+        assert row["status"] == "pending"
+        assert row["livekit_metadata_synced_at"] is None
     finally:
         await app_engine.dispose()
         await su.dispose()

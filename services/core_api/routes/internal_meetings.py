@@ -8,7 +8,9 @@ here, and core-api applies them to its own table:
 
 - `live`: `scheduled` -> `live`. Anything else is left alone (a re-opened room never revives
   an ended or cancelled meeting).
-- `ended`: `scheduled` or `live` -> `ended`, with the same `meeting-events` `ended` outbox
+- `ended`: `live` -> `ended` only. A room that closes while the meeting is still `scheduled`
+  never had anyone in it (a person joining is what makes it `live`), so the meeting has not
+  happened and stays bookable. Otherwise, with the same `meeting-events` `ended` outbox
   record and audit row a user ending it through `PATCH /api/v1/meetings/{id}` produces, so
   meeting-service's own consumer closes the room records exactly as it does today.
 
@@ -148,7 +150,7 @@ async def core_caller(
 
 _TRANSITION = {
     "live": ("live", ("scheduled",)),
-    "ended": ("ended", ("scheduled", "live")),
+    "ended": ("ended", ("live",)),
 }
 
 

@@ -631,6 +631,14 @@ def test_room_lifecycle_reports_the_meeting_live_then_ended(client, _recording_e
     FAKE.verify_webhook_result = _evt("room_started", room=_room_with_sid(room, org_id, "RM_S"))
     client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
     client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})  # redelivery
+    assert reported == [], "an open room with nobody in it is not a live meeting"
+
+    FAKE.verify_webhook_result = _evt(
+        "participant_joined",
+        room=_room_with_sid(room, org_id, "RM_S"),
+        participant=_participant("PA_live", uuid.uuid4()),
+    )
+    client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
     FAKE.verify_webhook_result = _evt("room_finished", room=_room_with_sid(room, org_id, "RM_S"))
     client.post("/livekit/webhook", content=b"{}", headers={"Authorization": "sig"})
 

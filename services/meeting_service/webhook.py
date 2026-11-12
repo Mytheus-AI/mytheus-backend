@@ -627,6 +627,15 @@ async def livekit_webhook(
     in_process = audio_tap_mode() == MODE_IN_PROCESS
     room_sid = _room_sid(evt) or "-"
     if joined_meeting is not None:
+        # A person is in the room, so the call is live (core-api owns `meetings.status`, see
+        # meeting_status.py; it moves only scheduled -> live, so a rejoin is a no-op). Not on
+        # `room_started`: a room can exist with nobody in it.
+        background_tasks.add_task(
+            report_room_state,
+            org_id=org_id,
+            meeting_id=joined_meeting,
+            state="live",
+        )
         # Someone (back) in the room. LiveKit keeps an emptied room, same sid, for its
         # departure timeout, and the tap leaves when the room empties, so a rejoin inside that
         # window brings no `room_started` and transcription stayed silent for the rest of the
@@ -660,13 +669,6 @@ async def livekit_webhook(
                 room_sid=room_sid,
                 started=True,
             )
-        # The call is live: core-api owns `meetings.status` (see meeting_status.py).
-        background_tasks.add_task(
-            report_room_state,
-            org_id=lifecycle.org_id,
-            meeting_id=lifecycle.meeting_id,
-            state="live",
-        )
         background_tasks.add_task(
             on_room_started,
             sessionmaker,

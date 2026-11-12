@@ -175,15 +175,10 @@ def test_seeded_participant_receives_token_room_and_livekit_url(client, tenant_a
     assert body["token"].startswith("fake.")
     assert "livekit_url" in body
 
-    # Fix round 1: `transport.ensure_room` no longer runs inline inside the route (it made two
-    # real LiveKit HTTP calls that, before the fix, ran inside this request's open Postgres
-    # transaction). It is scheduled via `BackgroundTasks`, which Starlette runs AFTER the
-    # response is sent and every dependency (including the DB session) has already closed -
-    # so on `FAKE.calls` it now lands AFTER `mint_join_token`, not before. `TestClient` awaits
-    # the background task as part of the same ASGI call, so it has already run by the time
-    # this `client.post(...)` returns - no sleep/poll needed to observe it.
+    # The room is opened (with its org metadata) before the token is handed out, after the
+    # route's DB transaction has closed, so it exists when the first person connects.
     assert len(FAKE.calls) == 2
-    mint_call, room_call = FAKE.calls
+    room_call, mint_call = FAKE.calls
     assert mint_call.method == "mint_join_token"
     assert mint_call.kwargs["org_id"] == tenant_a.org_id
     assert mint_call.kwargs["meeting_id"] == meeting_id
@@ -241,10 +236,10 @@ def test_repeated_mint_reuses_the_same_room(client, tenant_a):
 
     # Fix round 1, "consider whether they need to happen on every mint at all": once a room
     # has synced successfully, a later mint for the SAME meeting must not call
-    # `transport.ensure_room` again - `livekit_metadata_synced_at` makes the second mint a
-    # pure DB upsert with no LiveKit round trip at all.
+    # Every mint re-opens the room: LiveKit closes an emptied room after five minutes, and a
+    # rejoin must not auto-create a bare room the webhooks cannot place. Idempotent.
     ensure_room_calls = [c for c in FAKE.calls if c.method == "ensure_room"]
-    assert len(ensure_room_calls) == 1, "a synced room must not be re-synced on a later mint"
+    assert len(ensure_room_calls) == 2
 
 
 # --- acceptance check 2: non-participant -------------------------------------------------------

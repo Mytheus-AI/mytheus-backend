@@ -352,14 +352,17 @@ async def mint_token(
     # `transport.ensure_room` is a real LiveKit HTTP call; it must never run while a Postgres
     # transaction from this request is open (see module docstring). Skipped once
     # `needs_livekit_sync` is false: a synced room never pays this cost again on a later mint.
-    if result.needs_livekit_sync:
-        background_tasks.add_task(
-            sync_livekit_metadata,
-            sessionmaker,
-            transport,
-            org_id=ctx.org_id,
-            room=result.room,
-        )
+    # Open the room now, before the token is handed out, so the room exists with its org
+    # metadata when the first person connects (the webhooks resolve the tenant from it). It
+    # runs on every mint: LiveKit closes an emptied room after five minutes, and a rejoin must
+    # not auto-create a bare room the webhooks cannot place. Idempotent, short timeout, never
+    # raises; the DB transaction above is already closed.
+    await sync_livekit_metadata(
+        sessionmaker,
+        transport,
+        org_id=ctx.org_id,
+        room=result.room,
+    )
 
     token = await transport.mint_join_token(
         org_id=ctx.org_id,
