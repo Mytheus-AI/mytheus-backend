@@ -22,6 +22,7 @@ CALLER_SECRET_WF = "w" * 40
 CORE_SECRET_INTEG = "i" * 40
 SLACK_SIGNING = "slack-signing-secret-for-tests"
 JIRA_SECRET = "jira-client-secret-for-tests-0123456789"
+LINEAR_WEBHOOK = "linear-webhook-secret-for-tests"
 
 ENV = {
     "ENVIRONMENT": "test",
@@ -39,6 +40,9 @@ ENV = {
     "SLACK_SIGNING_SECRET": SLACK_SIGNING,
     "JIRA_CLIENT_ID": "jira-client",
     "JIRA_CLIENT_SECRET": JIRA_SECRET,
+    "LINEAR_CLIENT_ID": "linear-client",
+    "LINEAR_CLIENT_SECRET": "linear-secret",
+    "LINEAR_WEBHOOK_SECRET": LINEAR_WEBHOOK,
     "MYTHEUS_INTEGRATION_CALLER_TOKENS": (
         f"notification-service={CALLER_SECRET_NOTIF},workflow-service={CALLER_SECRET_WF}"
     ),
@@ -67,8 +71,14 @@ SECRET_TOKENS = {
     "google_calendar": ("ya29.google-ACCESS-secret", "1//google-REFRESH-secret"),
     "slack": ("xoxb-slack-ACCESS-secret", None),
     "jira": ("jira-ACCESS-secret-token", "jira-REFRESH-secret-token"),
+    "linear": ("lin-ACCESS-secret-token", "lin-REFRESH-secret-token"),
 }
-ACCOUNTS = {"google_calendar": "owner@example.com", "slack": "T0TEAM", "jira": "cloud-123"}
+ACCOUNTS = {
+    "google_calendar": "owner@example.com",
+    "slack": "T0TEAM",
+    "jira": "cloud-123",
+    "linear": "lin-org",
+}
 
 
 class FakeOAuth:
@@ -102,7 +112,7 @@ class FakeOAuth:
             expires_in=3600,
             scopes=list(self.scopes),
             external_account_id=self.account or f"{ACCOUNTS[self.provider]}-{uuid.uuid4().hex[:8]}",
-            extra={"site_url": "https://nexus.atlassian.net"} if self.provider == "jira" else {},
+            extra=_EXTRA.get(self.provider, {}),
         )
 
     async def refresh(self, refresh_token: str) -> TokenGrant:
@@ -209,17 +219,89 @@ class FakeJira:
         return "acc-1" if email == "assignee@example.com" else None
 
 
+class FakeLinear:
+    """Linear in memory: issues by identifier, attachments by URL, users by email."""
+
+    def __init__(self) -> None:
+        self.issues: list[dict[str, Any]] = []
+        self.created: list[dict[str, Any]] = []
+        self.attachments: dict[str, str] = {}  # url -> issue identifier
+        self.lookups = 0
+        self.reads: list[str] = []
+        self.fail_reads = False
+
+    async def first_team(self, token: str) -> dict[str, str] | None:
+        return {"id": "team-1", "key": "ENG"}
+
+    async def user_id_for_email(self, token: str, email: str) -> str | None:
+        return "lin-user-1" if email == "assignee@example.com" else None
+
+    async def create_issue(
+        self,
+        token: str,
+        *,
+        team_id: str,
+        title: str,
+        description: str,
+        due_date: str | None,
+        assignee_id: str | None,
+    ) -> dict[str, Any]:
+        n = len(self.issues) + 1
+        issue = {
+            "id": f"lin-issue-{n}",
+            "identifier": f"ENG-{n}",
+            "url": f"https://linear.app/acme/issue/ENG-{n}",
+            "title": title,
+            "dueDate": due_date,
+            "state": {"name": "Todo", "type": "unstarted"},
+        }
+        self.issues.append(issue)
+        self.created.append(
+            {"team_id": team_id, "title": title, "description": description,
+             "due_date": due_date, "assignee_id": assignee_id}
+        )
+        return issue
+
+    async def attach_url(self, token: str, *, issue_id: str, url: str, title: str) -> None:
+        ident = next(i["identifier"] for i in self.issues if i["id"] == issue_id)
+        self.attachments[url] = ident
+
+    async def issues_for_url(self, token: str, url: str) -> list[dict[str, Any]]:
+        self.lookups += 1
+        ident = self.attachments.get(url)
+        return [i for i in self.issues if i["identifier"] == ident]
+
+    async def get_issue(self, token: str, ref: str) -> dict[str, Any] | None:
+        self.reads.append(ref)
+        if self.fail_reads:
+            raise ProviderError("linear", "get_issue", "http_503", 503)
+        return next((i for i in self.issues if ref in (i["identifier"], i["id"])), None)
+
+    def set_state(self, identifier: str, type_: str, name: str = "Done") -> None:
+        for issue in self.issues:
+            if issue["identifier"] == identifier:
+                issue["state"] = {"name": name, "type": type_}
+
+
+_EXTRA: dict[str, dict[str, Any]] = {
+    "jira": {"site_url": "https://nexus.atlassian.net"},
+    "linear": {"url_key": "acme"},
+}
+
+
 def fake_clients() -> Clients:
     oauth: dict[str, Any] = {
         "google_calendar": FakeOAuth("google_calendar", ("calendar.readonly",)),
         "slack": FakeOAuth("slack", ("chat:write", "users:read", "users:read.email", "im:write")),
         "jira": FakeOAuth("jira", ("read:jira-work", "write:jira-work")),
+        "linear": FakeOAuth("linear", ("read", "write", "issues:create")),
     }
     return Clients(
         oauth=oauth,
         calendar=FakeCalendar(),  # type: ignore[arg-type]
         slack=FakeSlack(),  # type: ignore[arg-type]
         jira=FakeJira(),  # type: ignore[arg-type]
+        linear=FakeLinear(),  # type: ignore[arg-type]
     )
 
 

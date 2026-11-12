@@ -15,6 +15,9 @@ Environment:
     GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
     SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_SIGNING_SECRET
     JIRA_CLIENT_ID / JIRA_CLIENT_SECRET   (Atlassian OAuth 2.0 3LO)
+    LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET / LINEAR_WEBHOOK_SECRET
+                                          (a Linear OAuth application, actor=app; all three,
+                                          or Linear is not configured; ADR-0044)
     HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET          (Phase 4 CRM sync)
     NOTION_CLIENT_ID / NOTION_CLIENT_SECRET            (Phase 4 decision exports; a public
                                                        Notion integration)
@@ -49,9 +52,9 @@ HUBSPOT: Final = "hubspot"
 NOTION: Final = "notion"
 CONFLUENCE: Final = "confluence"
 
-# R8: Calendar + Slack + exactly one PM tool. Linear is in the closed enum (canon) but is not
-# built, so it is not offered and cannot be connected.
-R8_PROVIDERS: Final = (GOOGLE_CALENDAR, SLACK, JIRA)
+# R8: Calendar + Slack + exactly one PM tool, Jira or Linear (Linear built by ADR-0044). The
+# one-tracker rule is `PM_PROVIDERS` below.
+R8_PROVIDERS: Final = (GOOGLE_CALENDAR, SLACK, JIRA, LINEAR)
 PM_PROVIDERS: Final = frozenset({JIRA, LINEAR})
 # Phase 4 reach: the CRM and the two document tools a decision record can be exported to.
 REACH_PROVIDERS: Final = (HUBSPOT, NOTION, CONFLUENCE)
@@ -64,6 +67,7 @@ _CREDENTIAL_ENV = {
     GOOGLE_CALENDAR: ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"),
     SLACK: ("SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"),
     JIRA: ("JIRA_CLIENT_ID", "JIRA_CLIENT_SECRET"),
+    LINEAR: ("LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"),
     HUBSPOT: ("HUBSPOT_CLIENT_ID", "HUBSPOT_CLIENT_SECRET"),
     NOTION: ("NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET"),
     CONFLUENCE: ("CONFLUENCE_CLIENT_ID", "CONFLUENCE_CLIENT_SECRET"),
@@ -91,6 +95,8 @@ def credentials(provider: str) -> AppCredentials | None:
         return None
     if provider == SLACK and not os.environ.get("SLACK_SIGNING_SECRET", "").strip():
         return None  # an install we could never verify an event from is not configured
+    if provider == LINEAR and not os.environ.get("LINEAR_WEBHOOK_SECRET", "").strip():
+        return None  # same rule: no verifiable status updates, no Linear
     return AppCredentials(client_id, client_secret)
 
 
@@ -139,4 +145,9 @@ def state_secret() -> bytes:
 
 def slack_signing_secret() -> bytes | None:
     raw = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
+    return raw.encode("utf-8") if raw else None
+
+
+def linear_webhook_secret() -> bytes | None:
+    raw = os.environ.get("LINEAR_WEBHOOK_SECRET", "").strip()
     return raw.encode("utf-8") if raw else None

@@ -1,5 +1,5 @@
 """Provider HTTP clients: the only code in integration-service that talks to Google, Slack,
-Atlassian (Jira, Confluence), HubSpot or Notion.
+Atlassian (Jira, Confluence), Linear, HubSpot or Notion.
 
 Each provider is two small classes: an OAuth client (authorize URL, code exchange, refresh,
 revoke) and an API client (the handful of REST calls the connector needs). Everything above this
@@ -775,6 +775,206 @@ class JiraApi(_Http):
         return None
 
 
+# --- Linear (OAuth 2.0, GraphQL; ADR-0044) ---------------------------------------------------
+
+LINEAR_AUTHORIZE = "https://linear.app/oauth/authorize"
+LINEAR_TOKEN = "https://api.linear.app/oauth/token"
+LINEAR_REVOKE = "https://api.linear.app/oauth/revoke"
+LINEAR_GRAPHQL = "https://api.linear.app/graphql"
+
+_ISSUE_FIELDS = "id identifier url title dueDate state { name type }"
+
+
+def _linear_scopes(raw: Any) -> list[str]:
+    return [s for s in str(raw or "").replace(",", " ").split() if s]
+
+
+class LinearOAuth(_Http):
+    provider = config.LINEAR
+    scopes = ("read", "write", "issues:create")
+
+    def authorize_url(self, *, state: str, code_challenge: str, redirect_uri: str) -> str:
+        query = {
+            "client_id": _creds(self.provider).client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": ",".join(self.scopes),
+            "state": state,
+            "actor": "app",
+            "prompt": "consent",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+        return f"{LINEAR_AUTHORIZE}?{urlencode(query)}"
+
+    async def _token(self, operation: str, form: dict[str, str]) -> dict[str, Any]:
+        creds = _creds(self.provider)
+        form = {**form, "client_id": creds.client_id, "client_secret": creds.client_secret}
+        body: dict[str, Any] = await self.json(
+            self.provider, operation, "POST", LINEAR_TOKEN, data=form
+        )
+        if not body.get("access_token"):
+            raise ProviderError(self.provider, operation, "no_access_token")
+        return body
+
+    async def exchange(self, *, code: str, code_verifier: str, redirect_uri: str) -> TokenGrant:
+        body = await self._token(
+            "exchange",
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
+            },
+        )
+        data = await LinearApi(self._transport).query(
+            body["access_token"], "exchange", "query { organization { id urlKey } }"
+        )
+        org = data.get("organization") or {}
+        if not org.get("id"):
+            raise ProviderError(self.provider, "exchange", "no_organization")
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token"),
+            expires_in=body.get("expires_in"),
+            scopes=_linear_scopes(body.get("scope")),
+            external_account_id=str(org["id"]),
+            extra={"url_key": org.get("urlKey")},
+        )
+
+    async def refresh(self, refresh_token: str) -> TokenGrant:
+        body = await self._token(
+            "refresh", {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+        return TokenGrant(
+            access_token=body["access_token"],
+            refresh_token=body.get("refresh_token") or refresh_token,
+            expires_in=body.get("expires_in"),
+            scopes=_linear_scopes(body.get("scope")),
+        )
+
+    async def revoke(self, token: str) -> None:
+        await self.request(
+            self.provider,
+            "revoke",
+            "POST",
+            LINEAR_REVOKE,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+class LinearApi(_Http):
+    provider = config.LINEAR
+
+    async def query(
+        self, token: str, operation: str, query: str, variables: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """One GraphQL call. Raises `ProviderError` on an HTTP error or a GraphQL `errors` list;
+        an `ENTITY_NOT_FOUND` error raises with reason `not_found`."""
+        body = await self.json(
+            self.provider,
+            operation,
+            "POST",
+            LINEAR_GRAPHQL,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"query": query, "variables": variables or {}},
+        )
+        errors = body.get("errors") if isinstance(body, dict) else None
+        if errors:
+            codes = {
+                str((e.get("extensions") or {}).get("code") or "")
+                for e in errors
+                if isinstance(e, dict)
+            }
+            reason = "not_found" if "ENTITY_NOT_FOUND" in codes else "graphql_error"
+            raise ProviderError(self.provider, operation, reason)
+        data = body.get("data") if isinstance(body, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    async def first_team(self, token: str) -> dict[str, str] | None:
+        data = await self.query(
+            token, "first_team", "query { teams(first: 1) { nodes { id key } } }"
+        )
+        nodes = (data.get("teams") or {}).get("nodes") or []
+        team = nodes[0] if nodes else None
+        return {"id": str(team["id"]), "key": str(team.get("key") or "")} if team else None
+
+    async def user_id_for_email(self, token: str, email: str) -> str | None:
+        data = await self.query(
+            token,
+            "user_for_email",
+            "query($e: String!) { users(filter: { email: { eq: $e } }, first: 1) "
+            "{ nodes { id } } }",
+            {"e": email},
+        )
+        nodes = (data.get("users") or {}).get("nodes") or []
+        return str(nodes[0]["id"]) if nodes else None
+
+    async def create_issue(
+        self,
+        token: str,
+        *,
+        team_id: str,
+        title: str,
+        description: str,
+        due_date: str | None,
+        assignee_id: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"teamId": team_id, "title": title, "description": description}
+        if due_date:
+            payload["dueDate"] = due_date
+        if assignee_id:
+            payload["assigneeId"] = assignee_id
+        data = await self.query(
+            token,
+            "create_issue",
+            "mutation($input: IssueCreateInput!) { issueCreate(input: $input) "
+            "{ success issue { " + _ISSUE_FIELDS + " } } }",
+            {"input": payload},
+        )
+        issue = (data.get("issueCreate") or {}).get("issue")
+        if not isinstance(issue, dict) or not issue.get("identifier"):
+            raise ProviderError(self.provider, "create_issue", "no_issue")
+        return issue
+
+    async def attach_url(self, token: str, *, issue_id: str, url: str, title: str) -> None:
+        await self.query(
+            token,
+            "attach_url",
+            "mutation($input: AttachmentCreateInput!) { attachmentCreate(input: $input) "
+            "{ success } }",
+            {"input": {"issueId": issue_id, "url": url, "title": title}},
+        )
+
+    async def issues_for_url(self, token: str, url: str) -> list[dict[str, Any]]:
+        data = await self.query(
+            token,
+            "issues_for_url",
+            "query($u: String!) { attachmentsForURL(url: $u) "
+            "{ nodes { issue { " + _ISSUE_FIELDS + " } } } }",
+            {"u": url},
+        )
+        nodes = (data.get("attachmentsForURL") or {}).get("nodes") or []
+        return [
+            n["issue"] for n in nodes if isinstance(n, dict) and isinstance(n.get("issue"), dict)
+        ]
+
+    async def get_issue(self, token: str, ref: str) -> dict[str, Any] | None:
+        try:
+            data = await self.query(
+                token,
+                "get_issue",
+                "query($id: String!) { issue(id: $id) { " + _ISSUE_FIELDS + " } }",
+                {"id": ref},
+            )
+        except ProviderError as exc:
+            if exc.reason == "not_found":
+                return None
+            raise
+        issue = data.get("issue")
+        return issue if isinstance(issue, dict) else None
+
+
 # --- HubSpot (Phase 4 CRM sync) -------------------------------------------------------------
 
 HUBSPOT_AUTHORIZE = "https://app.hubspot.com/oauth/authorize"
@@ -1361,6 +1561,8 @@ class Clients:
     calendar: GoogleCalendarApi
     slack: SlackApi
     jira: JiraApi
+    # Linear (ADR-0044). Defaulted so existing containers stay valid.
+    linear: LinearApi = field(default_factory=LinearApi)
     # Phase 4 reach. Defaulted so a container built for the R8 providers alone stays valid.
     hubspot: HubSpotApi = field(default_factory=HubSpotApi)
     notion: NotionApi = field(default_factory=NotionApi)
@@ -1373,6 +1575,7 @@ def default_clients() -> Clients:
             config.GOOGLE_CALENDAR: GoogleOAuth(),
             config.SLACK: SlackOAuth(),
             config.JIRA: JiraOAuth(),
+            config.LINEAR: LinearOAuth(),
             config.HUBSPOT: HubSpotOAuth(),
             config.NOTION: NotionOAuth(),
             config.CONFLUENCE: ConfluenceOAuth(),
