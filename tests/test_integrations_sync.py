@@ -401,7 +401,8 @@ class MemoryStore:
         self.objects[key] = data
 
 
-async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory):
+async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory, monkeypatch):
+    monkeypatch.setenv("GOOGLE_DRIVE_ATTACHMENTS", "1")
     t = seed_tenant("owner")
     alice = seed_user(t)
     _sql("UPDATE users SET email = 'Alice@Example.com' WHERE id = %(u)s", {"u": str(alice.user_id)})
@@ -477,7 +478,53 @@ async def test_a_calendar_sync_emits_the_event_and_its_attachment(factory):
     assert again[0]["n"] == 2
 
 
-async def test_an_event_organized_outside_the_tenant_is_not_ingested(factory):
+async def test_without_drive_attachments_are_listed_but_never_read(factory, monkeypatch):
+    """Default: no Drive scope, so a meeting lists its attachments and nothing is downloaded."""
+    monkeypatch.delenv("GOOGLE_DRIVE_ATTACHMENTS", raising=False)
+    t = seed_tenant("owner")
+    alice = seed_user(t)
+    _sql("UPDATE users SET email = 'alice@example.com' WHERE id = %(u)s", {"u": str(alice.user_id)})
+    clients = fx.fake_clients()
+    await connect(factory, t, "google_calendar", f"o-{uuid.uuid4().hex[:6]}@example.com")
+    event_id = f"evt{uuid.uuid4().hex[:8]}"
+    clients.calendar.events = [
+        calendar_event(
+            event_id,
+            ["alice@example.com"],
+            attachments=[{"fileId": "f1", "title": "Plan.pdf", "mimeType": "application/pdf"}],
+        )
+    ]
+    clients.calendar.owners = {"f1": ["alice@example.com"]}
+    blobs = MemoryStore()
+    async with factory() as session, session.begin():
+        await set_rls(session, t.org_id)
+        await calendar.process(session, t.org_id, {}, "initial_sync", clients, blobs)
+    assert clients.calendar.downloads == []
+    assert blobs.objects == {}
+    rows = _sql(
+        "SELECT payload FROM outbox WHERE org_id = %(o)s AND topic = 'integration-events'",
+        {"o": str(t.org_id)},
+    )
+    kinds = {r["payload"]["event_type"]: r["payload"] for r in rows}
+    assert set(kinds) == {"calendar_event_upserted"}
+    upsert = json.loads(kinds["calendar_event_upserted"]["payload_json"])
+    assert [(a["file_id"], a["title"], a["object_key"]) for a in upsert["attachments"]] == [
+        ("f1", "Plan.pdf", None)
+    ]
+
+
+def test_google_asks_for_calendar_only_unless_drive_is_switched_on(monkeypatch):
+    from services.integration_service.clients import GoogleOAuth
+
+    monkeypatch.delenv("GOOGLE_DRIVE_ATTACHMENTS", raising=False)
+    assert not any("drive" in s for s in GoogleOAuth().scopes)
+    assert "https://www.googleapis.com/auth/calendar.readonly" in GoogleOAuth().scopes
+    monkeypatch.setenv("GOOGLE_DRIVE_ATTACHMENTS", "1")
+    assert "https://www.googleapis.com/auth/drive.readonly" in GoogleOAuth().scopes
+
+
+async def test_an_event_organized_outside_the_tenant_is_not_ingested(factory, monkeypatch):
+    monkeypatch.setenv("GOOGLE_DRIVE_ATTACHMENTS", "1")
     t = seed_tenant("owner")
     alice = seed_user(t)
     _sql("UPDATE users SET email = 'alice@example.com' WHERE id = %(u)s", {"u": str(alice.user_id)})

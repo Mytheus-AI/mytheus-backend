@@ -98,6 +98,16 @@ def is_configured(provider: str) -> bool:
     return credentials(provider) is not None
 
 
+def drive_attachments_enabled() -> bool:
+    """Whether Google Calendar also asks for Drive read access and ingests event attachments.
+
+    Off by default: `drive.readonly` is a Google *restricted* scope, which needs a paid yearly
+    security assessment before the app can be verified for external users. With it off, a
+    meeting still lists its attachments (title and link); the agent just does not read them.
+    Set GOOGLE_DRIVE_ATTACHMENTS=1 to turn it back on."""
+    return os.environ.get("GOOGLE_DRIVE_ATTACHMENTS", "").strip().lower() in {"1", "true", "yes"}
+
+
 def redirect_base() -> str:
     return os.environ.get("OAUTH_REDIRECT_BASE", "http://localhost:8000").rstrip("/")
 
