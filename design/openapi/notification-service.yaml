@@ -186,6 +186,102 @@ components:
           type: array
       title: HTTPValidationError
       type: object
+    InvitationAttachment:
+      additionalProperties: false
+      properties:
+        content_base64:
+          maxLength: 200000
+          minLength: 1
+          title: Content Base64
+          type: string
+        content_type:
+          enum:
+          - text/calendar; method=REQUEST
+          - text/calendar; method=CANCEL
+          title: Content Type
+          type: string
+        filename:
+          maxLength: 100
+          minLength: 1
+          pattern: ^[A-Za-z0-9._-]+$
+          title: Filename
+          type: string
+      required:
+      - filename
+      - content_type
+      - content_base64
+      title: InvitationAttachment
+      type: object
+    InvitationMessage:
+      additionalProperties: false
+      properties:
+        html:
+          anyOf:
+          - maxLength: 200000
+            type: string
+          - type: 'null'
+          title: Html
+        idempotency_key:
+          maxLength: 200
+          minLength: 1
+          title: Idempotency Key
+          type: string
+        recipient:
+          title: Recipient
+          type: string
+        reply_to:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reply To
+        subject:
+          maxLength: 200
+          minLength: 1
+          title: Subject
+          type: string
+        text:
+          maxLength: 20000
+          minLength: 1
+          title: Text
+          type: string
+      required:
+      - idempotency_key
+      - recipient
+      - subject
+      - text
+      title: InvitationMessage
+      type: object
+    InvitationSend:
+      additionalProperties: false
+      properties:
+        attachment:
+          anyOf:
+          - $ref: '#/components/schemas/InvitationAttachment'
+          - type: 'null'
+        kind:
+          enum:
+          - meeting_invitation
+          - meeting_update
+          - meeting_cancel
+          title: Kind
+          type: string
+        meeting_id:
+          format: uuid
+          title: Meeting Id
+          type: string
+        messages:
+          items:
+            $ref: '#/components/schemas/InvitationMessage'
+          maxItems: 50
+          minItems: 1
+          title: Messages
+          type: array
+      required:
+      - kind
+      - meeting_id
+      - messages
+      title: InvitationSend
+      type: object
     NotificationPage:
       properties:
         items:
@@ -543,6 +639,53 @@ paths:
           description: Unhandled server error. Carries a `trace_id` and no internals.
       security: []
       summary: Healthz
+  /internal/email/invitations:
+    post:
+      description: Send meeting invitations (or their update or cancellation). See the module doc.
+      operationId: send_invitations
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationSend'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailSendResult'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Missing or invalid credentials for this operation's own security scheme (not a
+            bearer token).
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      security:
+      - MytheusServiceToken: []
+      summary: Send Invitations
+      tags:
+      - notification-internal
   /internal/email/send:
     post:
       operationId: send_email

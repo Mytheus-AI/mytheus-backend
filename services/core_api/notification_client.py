@@ -157,6 +157,44 @@ class NotificationClient:
         result: dict[str, Any] = response.json()
         return result
 
+    async def send_invitations(
+        self,
+        org_id: uuid.UUID,
+        *,
+        meeting_id: uuid.UUID,
+        kind: str,
+        messages: list[dict[str, Any]],
+        attachment: dict[str, str] | None,
+    ) -> dict[str, Any]:
+        """`POST /internal/email/invitations` (ADR-0043): a meeting's invitations, update or
+        cancellation, one rendered message per recipient and the shared `.ics`. Same errors
+        as `send_email`."""
+        if not self._secret:
+            raise NotConfigured(None, f"{TOKENS_ENV} has no {SERVICE_NAME} entry")
+        headers = {
+            "X-Mytheus-Service": SERVICE_NAME,
+            "X-Mytheus-Service-Token": self._secret,
+            "X-Mytheus-Org": str(org_id),
+        }
+        body: dict[str, Any] = {
+            "kind": kind,
+            "meeting_id": str(meeting_id),
+            "messages": messages,
+            "attachment": attachment,
+        }
+        try:
+            # Up to 50 sends with retries: generous, and still bounded.
+            async with httpx.AsyncClient(transport=self._transport, timeout=120.0) as client:
+                response = await client.post(
+                    f"{self._base}/internal/email/invitations", headers=headers, json=body
+                )
+        except httpx.HTTPError as exc:
+            raise NotificationServiceError(None, type(exc).__name__) from None
+        if response.status_code >= 300:
+            raise NotificationServiceError(response.status_code, f"HTTP {response.status_code}")
+        result: dict[str, Any] = response.json()
+        return result
+
 
 _client: NotificationClient | None = None
 

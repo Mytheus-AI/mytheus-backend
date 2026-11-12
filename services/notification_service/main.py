@@ -13,7 +13,7 @@ Processes:
 """
 
 from libs.shared.app_factory import create_app
-from services.notification_service import internal, push, routes, user_email
+from services.notification_service import internal, invitations, push, routes, user_email
 
 app = create_app("notification-service")
 app.include_router(routes.router)
@@ -22,3 +22,4 @@ app.include_router(push.router)
 # `POST /internal/email/send` (core-api caller token): follow-up email to non-user guests.
 app.include_router(internal.router)
 app.include_router(user_email.router)
+app.include_router(invitations.router)

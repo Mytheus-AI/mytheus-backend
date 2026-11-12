@@ -1,12 +1,18 @@
 """The email channel: a provider abstraction, off unless configured.
 
-Two providers, one interface (`EmailSender.send(to, subject, body, html=None)`):
+Two providers, one interface (`EmailSender.send(to, subject, body, html=None, reply_to=None,
+attachments=None)`):
 
 - **Resend** (`ResendEmailSender`): `POST https://api.resend.com/emails` with
   `Authorization: Bearer $RESEND_API_KEY`, sender `$EMAIL_FROM`.
 - **SMTP** (`SmtpEmailSender`): `SMTP_URL` (`smtp://[user:pass@]host[:port]` for
   STARTTLS-when-offered, or `smtps://[user:pass@]host[:port]` for implicit TLS) and `SMTP_FROM`
   (the sender; `EMAIL_FROM` is accepted too).
+
+`EMAIL_FROM` defaults to `Mytheus <noreply@mytheus.cloud>` (the verified sending domain) when
+Resend has a key but no sender was set (ADR-0043). `reply_to` sets `Reply-To` (a meeting
+invitation replies to the person who sent it); `attachments` carry e.g. the `.ics` of an
+invitation with its full content type (`text/calendar; method=REQUEST`).
 
 Selection. `EMAIL_PROVIDER=resend|smtp` picks one explicitly (and is "not configured" when that
 provider's settings are missing); unset, Resend is used when `RESEND_API_KEY` and `EMAIL_FROM`
@@ -26,9 +32,11 @@ body, a recipient or a provider response.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import smtplib
 import ssl
+from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Literal, Protocol
 from urllib.parse import unquote, urlparse
@@ -39,6 +47,7 @@ SMTP_TIMEOUT_S = 15.0
 RESEND_URL = "https://api.resend.com/emails"
 RESEND_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 PROVIDERS = ("resend", "smtp")
+DEFAULT_EMAIL_FROM = "Mytheus <noreply@mytheus.cloud>"
 ProviderName = Literal["resend", "smtp"]
 
 
@@ -50,8 +59,26 @@ class EmailError(Exception):
         self.reason = reason
 
 
+@dataclass(frozen=True)
+class Attachment:
+    """A file sent with an email. `content_type` is the full MIME type with parameters."""
+
+    filename: str
+    content_type: str
+    content: bytes
+
+
 class EmailSender(Protocol):
-    async def send(self, *, to: str, subject: str, body: str, html: str | None = None) -> None: ...
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        html: str | None = None,
+        reply_to: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> None: ...
 
 
 class SmtpEmailSender:
@@ -68,14 +95,41 @@ class SmtpEmailSender:
         self._password = unquote(parsed.password) if parsed.password else None
         self._sender = sender
 
-    async def send(self, *, to: str, subject: str, body: str, html: str | None = None) -> None:
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        html: str | None = None,
+        reply_to: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> None:
         msg = EmailMessage()
         msg["From"] = self._sender
         msg["To"] = to
         msg["Subject"] = subject
+        if reply_to:
+            msg["Reply-To"] = reply_to
         msg.set_content(body)
         if html:
             msg.add_alternative(html, subtype="html")
+        for item in attachments or []:
+            maintype, _, rest = item.content_type.partition("/")
+            subtype, *params = [p.strip() for p in rest.split(";")]
+            if maintype == "text":
+                msg.add_attachment(
+                    item.content.decode("utf-8"), subtype=subtype, filename=item.filename
+                )
+            else:
+                msg.add_attachment(
+                    item.content, maintype=maintype, subtype=subtype, filename=item.filename
+                )
+            part = list(msg.iter_attachments())[-1]
+            for param in params:  # e.g. `method=REQUEST` on text/calendar
+                key, _, value = param.partition("=")
+                if key and value:
+                    part.set_param(key.strip(), value.strip())
         await asyncio.to_thread(self._send_sync, msg)
 
     def _send_sync(self, msg: EmailMessage) -> None:
@@ -119,7 +173,16 @@ class ResendEmailSender:
     def __repr__(self) -> str:  # never render the key
         return f"ResendEmailSender(sender={self._sender!r}, api_key=<redacted>)"
 
-    async def send(self, *, to: str, subject: str, body: str, html: str | None = None) -> None:
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        html: str | None = None,
+        reply_to: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> None:
         payload: dict[str, object] = {
             "from": self._sender,
             "to": [to],
@@ -128,6 +191,17 @@ class ResendEmailSender:
         }
         if html:
             payload["html"] = html
+        if reply_to:
+            payload["reply_to"] = reply_to
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": a.filename,
+                    "content": base64.b64encode(a.content).decode("ascii"),
+                    "content_type": a.content_type,
+                }
+                for a in attachments
+            ]
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=RESEND_TIMEOUT
@@ -154,8 +228,8 @@ def email_sender_from_env() -> EmailSender | None:
         return None
     resend_key, email_from = _env("RESEND_API_KEY"), _env("EMAIL_FROM")
     smtp_url, smtp_from = _env("SMTP_URL"), _env("SMTP_FROM") or email_from
-    if choice in ("", "resend") and resend_key and email_from:
-        return ResendEmailSender(resend_key, email_from)
+    if choice in ("", "resend") and resend_key:
+        return ResendEmailSender(resend_key, email_from or DEFAULT_EMAIL_FROM)
     if choice in ("", "smtp") and smtp_url and smtp_from:
         return SmtpEmailSender(smtp_url, smtp_from)
     return None

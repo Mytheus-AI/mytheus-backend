@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Text, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -83,10 +83,16 @@ class Meeting(Base, TenantMixin, TimestampMixin):
     # Promise ledger (migration a0b1c2d3e4f5): the Google Calendar event type of a synced event
     # (`focusTime`, `outOfOffice`, ...), so capacity counts focus time apart from meeting time.
     calendar_event_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Meeting invitations (migration d4e5f6a7b8c9, ADR-0043): the iCalendar SEQUENCE, bumped when
+    # the scheduled time changes or the meeting is cancelled.
+    calendar_sequence: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
     __table_args__ = (
         CheckConstraint("status IN ('scheduled','live','ended','cancelled')", name="status_valid"),
         CheckConstraint("source IN ('mytheus', 'meet', 'teams', 'zoom')", name="source"),
+        CheckConstraint("calendar_sequence >= 0", name="calendar_sequence"),
         Index(
             "uq_meetings_org_id_calendar_event_id",
             "org_id",

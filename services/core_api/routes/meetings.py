@@ -44,6 +44,7 @@ from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
 from services.core_api import minutes
 from services.core_api.brain import latest_statuses, may_see_source
+from services.core_api.routes.invitations import schedule_change_after_commit
 from services.core_api.routes.off_record import close_open_segment
 from services.core_api.schemas import (
     MAX_AGENDA_ITEMS,
@@ -753,7 +754,16 @@ async def update_meeting(
             {"m": str(meeting_id), "h": str(new_host)},
         )
 
+    # ADR-0043: a new time or a cancellation bumps the iCalendar SEQUENCE (so calendars replace
+    # the event) and, after the commit, emails everyone who was invited the update.
+    time_changed = any(
+        name in fields and fields[name] != current[name]
+        for name in ("scheduled_start", "scheduled_end")
+    )
+    cancelled_now = fields.get("status") == "cancelled" and current["status"] != "cancelled"
     assignments = "".join(f"{name} = :{name}, " for name in fields)
+    if time_changed or cancelled_now:
+        assignments += "calendar_sequence = calendar_sequence + 1, "
     params: dict[str, Any] = {
         k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in fields.items()
     }
@@ -813,6 +823,10 @@ async def update_meeting(
         metadata={"changed": sorted(body.model_fields_set)},
         ip=ctx.ip,
     )
+    if cancelled_now or (time_changed and row["status"] not in _CLOSED):
+        schedule_change_after_commit(
+            session, ctx.org_id, meeting_id, "cancel" if cancelled_now else "update", ctx.user_id
+        )
 
     return await _detail(session, row, ctx.user_id)
 
