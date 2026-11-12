@@ -144,7 +144,7 @@ async def _set_choice(
         raise ProblemDetail(
             422,
             ErrorCode.VALIDATION_FAILED,
-            "This meeting is confidential, so no agent listens to it. Attend or skip.",
+            "This meeting is confidential, so no Myte listens to it. Attend or skip.",
         )
     before = await listening.listening_agents(session, meeting_id)
     if choice is None:
@@ -983,7 +983,7 @@ class MeetingViewList(BaseModel):
 def _chat_text(kind: str, name: str, body: str) -> str:
     first = listening.first_name(name)
     if kind == "hold_line":
-        return f"{first}'s agent is holding the line for {first}: {body}"
+        return f"{first}'s Myte is holding the line for {first}: {body}"
     return f"{first}'s view: {body}"
 
 

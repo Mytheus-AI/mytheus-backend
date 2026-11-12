@@ -284,7 +284,7 @@ async def persona(session: AsyncSession, user_id: uuid.UUID) -> tuple[BriefingAg
     return (
         BriefingAgent.model_validate(
             {
-                "name": agent_name or f"{first}'s agent",
+                "name": agent_name or f"{first}'s Myte",
                 "seed": str(seed) if seed else None,
                 "personality": personality if personality in _PERSONALITIES else "balanced",
             }
@@ -354,7 +354,7 @@ def from_row(row: Any) -> Briefing:
         language=row["language"],
         agent=BriefingAgent.model_validate(
             {
-                "name": agent.get("name") or "Your agent",
+                "name": agent.get("name") or "Your Myte",
                 "seed": agent.get("seed"),
                 "personality": (
                     agent.get("personality")
@@ -954,7 +954,7 @@ async def build_source(session: AsyncSession, row: Any) -> BriefingSource:
                     meeting_id=meeting.id,
                     meeting_title=meeting.title,
                     text=_short(r[0]),
-                    status="your agent saved it for next time",
+                    status="your Myte saved it for next time",
                     at_ms=r[1],
                     carried_to=carried,
                     carried_to_meeting_id=follow["id"] if follow else None,
@@ -1223,7 +1223,7 @@ async def notify(session: AsyncSession, org_id: uuid.UUID, briefing_id: uuid.UUI
     )
     if row is None:
         return False
-    agent = _json(row["agent"]).get("name") or "Your agent"
+    agent = _json(row["agent"]).get("name") or "Your Myte"
     content = _json(row["content"])
     minutes_long = max(1, round(int(content.get("duration_s") or 60) / 60))
     span = "about a minute" if minutes_long <= 1 else f"about {minutes_long} minutes"

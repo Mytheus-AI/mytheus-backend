@@ -204,8 +204,8 @@ class ReminderActivities:
                         org_id=org_id,
                         user_id=str(p["user_id"]),
                         source_event_id=f"meetingcatchup:{meeting_id}",
-                        title=f"Your agent's catch-up from {title}",
-                        body="What was decided, what is yours, and your agent's notes.",
+                        title=f"Your Myte's catch-up from {title}",
+                        body="What was decided, what is yours, and your Myte's notes.",
                         link=f"/meetings/{meeting_id}/catch-up",
                     )
                 )

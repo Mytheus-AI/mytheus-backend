@@ -148,7 +148,7 @@ async def update_user_profile(
         raise ProblemDetail(
             403,
             ErrorCode.FORBIDDEN_ROLE,
-            "Only the person themselves can change their agent",
+            "Only the person themselves can change their Myte",
         )
 
     # A person's name is theirs to set (the Clerk sync writes it too); an admin cannot rename

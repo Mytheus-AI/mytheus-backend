@@ -639,7 +639,7 @@ def test_hold_the_line_only_with_pre_approved_positions(client, redis):
     view = res.json()
     assert view["kind"] == "hold_line"
     assert view["text"] == "On Pricing: No discount above 10% for SMB without finance."
-    assert view["chat_text"].startswith("Sushan's agent is holding the line for Sushan: ")
+    assert view["chat_text"].startswith("Sushan's Myte is holding the line for Sushan: ")
     statements = _sql(
         "SELECT text FROM delegated_answer_statements WHERE meeting_id = %(m)s AND user_id = %(u)s",
         {"m": str(m), "u": str(member.user_id)},
@@ -720,7 +720,7 @@ def test_evening_digest_is_built_stored_once_and_notified(client, redis):
     preview = client.get(f"/api/v1/listening/digests/{today.isoformat()}").json()
     assert preview["id"] is None and preview["status"] == "ready"
     text_ = "".join(s["text"] for s in preview["paragraph"])
-    assert text_.startswith("Your agent sat in on 1 meeting for you today.")
+    assert text_.startswith("Your Myte sat in on 1 meeting for you today.")
     assert "the team agreed the SMB floor" in text_
     assert "It pulled you in once, about pricing." in text_
     assert "You also skipped Design crit" in text_

@@ -183,9 +183,9 @@ async def captured(
             where = "Slack" if body.channel == "slack" else "your email"
             first = written[0] if len(written[0]) <= 100 else written[0][:97].rstrip() + "..."
             title = (
-                f"Your agent found a promise in {where}: {first}"
+                f"Your Myte found a promise in {where}: {first}"
                 if len(written) == 1
-                else f"Your agent found {len(written)} promises in {where}"
+                else f"Your Myte found {len(written)} promises in {where}"
             )
             ref_key = hashlib.sha256(body.source_ref.encode()).hexdigest()[:24]
             await notify(
