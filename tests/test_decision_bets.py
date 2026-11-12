@@ -706,6 +706,7 @@ def test_activity_reads_the_crm_and_jira_then_posts_the_check():
     assert check[0] == f"/internal/bets/{bet_id}/check"
     assert check[1]["metric"]["value"] == 12 and check[1]["jira"] == {
         "connected": False,
+        "provider": None,
         "issues": [],
     }
 

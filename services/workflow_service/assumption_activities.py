@@ -48,6 +48,7 @@ class AssumptionWatchActivities(ScheduledActivities):
             {"jira_keys": keys[:200], "deal_ids": deals[:200], "domains": domains[:50]},
         )
         jira, hubspot = found.get("jira") or {}, found.get("hubspot") or {}
+        linear = found.get("linear") or {}
         applied = await self._core(
             "POST",
             "/internal/assumptions/watch-results",
@@ -56,10 +57,11 @@ class AssumptionWatchActivities(ScheduledActivities):
                 "as_of": as_of.isoformat(),
                 "sources": {
                     "jira": _state(jira),
-                    "linear": _state(found.get("linear")),
+                    "linear": _state(linear),
                     "hubspot": _state(hubspot),
                 },
-                "issues": jira.get("issues") or [],
+                # Only one tracker is ever connected; each issue carries its `provider`.
+                "issues": (jira.get("issues") or []) + (linear.get("issues") or []),
                 "deals": hubspot.get("deals") or [],
                 "domain_deals": hubspot.get("domain_deals") or [],
             },

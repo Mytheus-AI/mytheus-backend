@@ -843,6 +843,11 @@ def test_watch_rules():
     assert jira_break(item, on_time, date(2026, 4, 2)) is not None  # still open past the date
     done = Issue(key="SSO-142", status="Done", status_category="done")
     assert jira_break(item, done, date(2026, 5, 1)) is None
+    linear_open = Issue(
+        key="ENG-7", provider="linear", status_category="new", due_date=date(2026, 3, 1)
+    )
+    linear_found = jira_break(item, linear_open, date(2026, 4, 2))
+    assert linear_found is not None and linear_found[1].startswith("linear:ENG-7:")
     assert deal_break(item, Deal(id="9", name="Acme", amount=39000)) is None
     broke = deal_break(item, Deal(id="9", name="Acme renewal", amount=46000))
     assert broke == ("Acme renewal is now 46,000 USD in HubSpot.", "hubspot:9:amount:46000.0")
@@ -901,6 +906,51 @@ def test_watch_list_and_results_break_on_evidence_and_record_sources(client):
     broken = next(a for a in why_body["assumptions"] if a["status"] == "broken")
     assert broken["open_break"]["redacted"] is False  # Jira evidence is not a meeting
     assert broken["open_break"]["source_url"] == "https://acme.atlassian.net/browse/SSO-142"
+
+
+def test_a_linear_issue_breaks_the_reason_with_linear_as_the_source(client):
+    owner, raj, m, d = world()
+    apply(why_record(owner, m, d, owner.user_id))
+    sso = _sql(
+        "SELECT id FROM decision_assumptions WHERE decision_id = %(d)s AND kind = 'dependency'",
+        {"d": str(d)},
+    )[0]["id"]
+    h = headers("workflow-service", owner.org_id)
+    issue = {
+        "key": "SSO-142",
+        "provider": "linear",
+        "summary": "SAML SSO",
+        "status": "In Progress",
+        "status_category": "indeterminate",
+        "due_date": "2026-04-14",
+        "url": "https://linear.app/acme/issue/SSO-142",
+    }
+    # Linear issue, but Linear reported not connected: no break.
+    off = {
+        "as_of": "2026-02-01",
+        "sources": {"jira": "not_connected", "linear": "not_connected", "hubspot": "not_connected"},
+        "issues": [issue],
+        "deals": [],
+        "domain_deals": [],
+    }
+    assert (
+        client.post("/internal/assumptions/watch-results", json=off, headers=h).json()["broken"]
+        == 0
+    )
+    on = {
+        **off,
+        "sources": {"jira": "not_connected", "linear": "connected", "hubspot": "not_connected"},
+    }
+    assert (
+        client.post("/internal/assumptions/watch-results", json=on, headers=h).json()["broken"] == 1
+    )
+    ev = _sql(
+        "SELECT source, source_ref, source_url FROM assumption_evidence "
+        "WHERE assumption_id = %(a)s",
+        {"a": str(sso)},
+    )
+    assert ev[0]["source"] == "linear" and ev[0]["source_ref"] == "SSO-142"
+    assert ev[0]["source_url"] == "https://linear.app/acme/issue/SSO-142"
 
 
 def test_integration_service_answers_not_connected(migrated_db):

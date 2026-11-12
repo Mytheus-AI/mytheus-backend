@@ -58,7 +58,7 @@ class ExternalStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["done", "confirmed"]
-    source: Literal["jira"]
+    source: Literal["jira", "linear"]  # the tracker the status came from (ADR-0044)
     external_key: str = Field(min_length=1, max_length=100)
 
 

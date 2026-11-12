@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime, time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -184,9 +184,13 @@ class JiraIssue(BaseModel):
 
 
 class JiraOutcome(BaseModel):
+    """The tenant's tracker outcome. Named for Jira on the wire; since ADR-0044 it may be
+    Linear, and `provider` says which (evidence `kind` stays `jira`, meaning the tracker)."""
+
     model_config = ConfigDict(extra="forbid")
 
     connected: bool
+    provider: Literal["jira", "linear"] | None = None
     issues: list[JiraIssue] = Field(default_factory=list, max_length=MAX_ACTIONS)
 
 
@@ -455,6 +459,7 @@ async def check_bet(
                     at=stamp,
                 )
         j = body.jira
+        tracker = "Linear" if j is not None and j.provider == "linear" else "Jira"
         if j is not None and j.connected and j.issues:
             done = [i for i in j.issues if not i.open]
             added += await _evidence(
@@ -463,8 +468,10 @@ async def check_bet(
                 bet_id,
                 kind="jira",
                 ref=f"jira:summary:{body.as_of}",
-                title=(f"{len(done)} of {len(j.issues)} Jira issues from this meeting are done"),
-                detail="The work the meeting agreed on, as Jira sees it on the check date.",
+                title=(
+                    f"{len(done)} of {len(j.issues)} {tracker} issues from this meeting are done"
+                ),
+                detail=f"The work the meeting agreed on, as {tracker} sees it on the check date.",
                 signal="supports" if len(done) == len(j.issues) else "neutral",
                 at=stamp,
             )
@@ -487,8 +494,8 @@ async def check_bet(
                 bet_id,
                 kind="jira",
                 ref="jira:not_connected",
-                title="Jira is not connected, so the work's status was not read",
-                detail="Connect Jira in Workspace, Integrations to see it here.",
+                title="No tracker is connected, so the work's status was not read",
+                detail="Connect Jira or Linear in Workspace, Integrations to see it here.",
                 signal="neutral",
                 at=stamp,
             )

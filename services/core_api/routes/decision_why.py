@@ -79,7 +79,7 @@ class WatchInput(BaseModel):
             return None
         key = v.strip().upper()
         if not why.JIRA_KEY.match(key):
-            raise ValueError("not a Jira issue key (like SSO-142)")
+            raise ValueError("not an issue key (like SSO-142)")
         return key
 
     @field_validator("deal_id")

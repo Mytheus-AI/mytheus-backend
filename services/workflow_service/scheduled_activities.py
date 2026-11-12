@@ -128,7 +128,11 @@ class ScheduledActivities:
                 "POST",
                 "/internal/promise-drift/nudges",
                 org_id,
-                {"as_of": as_of.isoformat(), "issues": still_open},
+                {
+                    "as_of": as_of.isoformat(),
+                    "provider": status.get("provider") or "jira",
+                    "issues": still_open,
+                },
             )
         return {
             "due": len(ids),

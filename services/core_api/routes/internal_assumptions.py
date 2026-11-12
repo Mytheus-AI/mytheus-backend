@@ -142,6 +142,8 @@ class Issue(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     key: str
+    # The tracker the issue lives in (ADR-0044); the watch sends both trackers' issues.
+    provider: Literal["jira", "linear"] = "jira"
     summary: str | None = None
     status: str | None = None
     status_category: str | None = None  # "done" | "indeterminate" | "new"
@@ -411,12 +413,12 @@ def jira_break(item: dict[str, Any], issue: Issue, as_of: date) -> tuple[str, st
     if issue.due_date is not None and issue.due_date > watch_date:
         return (
             f"{issue.key} is now due {issue.due_date:%d %b %Y}, after {watch_date:%d %b %Y}.",
-            f"jira:{issue.key}:due:{issue.due_date.isoformat()}",
+            f"{issue.provider}:{issue.key}:due:{issue.due_date.isoformat()}",
         )
     if as_of > watch_date:
         return (
             f"{issue.key} is still {status} on {as_of:%d %b %Y}, past {watch_date:%d %b %Y}.",
-            f"jira:{issue.key}:overdue:{watch_date.isoformat()}",
+            f"{issue.provider}:{issue.key}:overdue:{watch_date.isoformat()}",
         )
     return None
 
@@ -488,11 +490,11 @@ async def watch_results(
             found: tuple[str, str] | None = None
             evidence: dict[str, Any] = {}
             issue = issues.get(str(r["watch_jira_key"] or ""))
-            if issue is not None and body.sources.jira == "connected":
+            if issue is not None and getattr(body.sources, issue.provider) == "connected":
                 found = jira_break(item, issue, body.as_of)
                 due = f", due {issue.due_date:%d %b %Y}" if issue.due_date else ""
                 evidence = {
-                    "source": "jira",
+                    "source": issue.provider,
                     "source_ref": issue.key,
                     "source_url": issue.url,
                     "quote": why.clip(

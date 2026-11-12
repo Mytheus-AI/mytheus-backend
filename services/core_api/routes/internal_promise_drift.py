@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -65,6 +65,8 @@ class DriftNudgeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     as_of: date
+    # The tenant's tracker (ADR-0044); the copy names it.
+    provider: Literal["jira", "linear"] = "jira"
     issues: list[OpenIssue] = Field(max_length=MAX_DUE)
 
 
@@ -142,6 +144,7 @@ async def nudge(
     owner_sent = host_sent = 0
     async with get_sessionmaker()() as session, session.begin():
         await set_rls(session, org_id)
+        tracker = "Linear" if body.provider == "linear" else "Jira"
         for issue in body.issues:
             row = (
                 (
@@ -199,7 +202,7 @@ async def nudge(
                         source=f"promise-drift:{row['id']}:{due.isoformat()}:owner",
                         title=(
                             f"Your promise to finish {content} by {due_label(due)}: "
-                            "the Jira ticket is still open"
+                            f"the {tracker} ticket is still open"
                         ),
                         body=(
                             f"{issue.issue_key} is still open. Close it, or change the due "
@@ -243,7 +246,8 @@ async def nudge(
                 source=f"promise-drift:{row['id']}:{due.isoformat()}:host",
                 title=f'{owner}\'s promise "{content}" is {late} days past due',
                 body=(
-                    f"Due {due_label(due)}; {issue.issue_key} is still open in Jira. {owner} was "
+                    f"Due {due_label(due)}; {issue.issue_key} is still open in {tracker}. "
+                    f"{owner} was "
                     "reminded privately two days ago."
                 ),
                 link=f"/meetings/{row['meeting_id']}",

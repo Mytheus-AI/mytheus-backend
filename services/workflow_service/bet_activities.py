@@ -68,6 +68,7 @@ class BetActivities(ScheduledActivities):
             )
             jira = {
                 "connected": bool(status.get("connected")),
+                "provider": status.get("provider"),
                 "issues": [
                     {
                         "action_id": i["action_id"],
