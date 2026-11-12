@@ -210,9 +210,10 @@ async def handle_meeting_event(
                 meeting_id,
             )
         else:
-            result = await ensure_meeting_room(session, org_id, meeting_id)
-            if result.needs_livekit_sync:
-                pending_room_sync = (org_id, result.room)
+            # Only the meeting_rooms row. The LiveKit room itself is opened at the first join
+            # (routes.mint_token): pre-opening it here made LiveKit report the meeting live at
+            # once and close it after five empty minutes, ending a meeting before it began.
+            await ensure_meeting_room(session, org_id, meeting_id)
     elif event_type == "ended":
         await mark_room_ended(session, org_id, meeting_id)
     else:  # "updated"

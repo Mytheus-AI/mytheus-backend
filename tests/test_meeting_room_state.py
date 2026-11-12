@@ -107,6 +107,16 @@ def test_a_closed_room_ends_the_meeting_with_its_event_and_audit(client) -> None
     ) == [{"actor_type": "system"}]
 
 
+def test_a_room_closing_before_anyone_joined_leaves_the_meeting_scheduled(client) -> None:
+    """The bug this pins: a room opened ahead of time closed after five empty minutes and
+    ended a meeting booked for later, so Join and "send my Myte" were refused."""
+    org_id, meeting_id = _meeting("scheduled")
+    r = _post(client, org_id, meeting_id, "ended")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"meeting_id": str(meeting_id), "status": "scheduled", "changed": False}
+    assert _status(meeting_id) == "scheduled"
+
+
 def test_an_ended_meeting_is_never_revived(client) -> None:
     org_id, meeting_id = _meeting("ended")
     r = _post(client, org_id, meeting_id, "live")
