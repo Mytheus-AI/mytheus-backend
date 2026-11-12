@@ -286,7 +286,7 @@ def test_receipt_shows_own_agreement_with_its_clauses(client, monkeypatch):
     assert keys[0] == "transcript" and "off_record" in keys and keys[-1] == "agreement"
     av = next(c for c in body["clauses"] if c["key"] == "audio_video")
     assert av["title"] == "Audio and video are not recorded"
-    assert body["current_version"] == "room-notice-2026-11-11.2"
+    assert body["current_version"] == "room-notice-2026-11-12"
 
     # the host's own row: not agreed yet, so no clauses to show
     sign_in(host)
@@ -309,3 +309,23 @@ def test_receipt_older_version_and_access(client):
     assert client.get(f"/api/meetings/{m}/consent-receipt").status_code == 403
     sign_in(seed_tenant())
     assert client.get(f"/api/meetings/{m}/consent-receipt").status_code == 404
+
+
+def test_myte_notices_keep_older_words_verbatim():
+    """ADR-0042: the 2026-11-12 notices say "Myte"; receipts for older versions keep the words
+    that were on screen."""
+    from services.meeting_service.consent_notices import CURRENT_VERSION, clauses_for
+
+    def notes(version: str) -> str:
+        found = clauses_for(version, False)
+        assert found is not None
+        return next(c.title for c in found if c.key == "agent_notes")
+
+    assert notes("room-notice-2026-11-11.2") == "Your agent's notes are yours"
+    assert notes("room-notice-2026-11-12") == "Your Myte's notes are yours"
+    assert notes("room-notice-2026-11-12-mobile") == "Your Myte's notes are yours"
+    assert CURRENT_VERSION == "room-notice-2026-11-12"
+    web = clauses_for("room-notice-2026-11-12", False) or []
+    assert "every Myte pauses" in next(c.body for c in web if c.key == "off_record")
+    mobile = clauses_for("room-notice-2026-11-12-mobile", False) or []
+    assert "off_record" not in [c.key for c in mobile]
