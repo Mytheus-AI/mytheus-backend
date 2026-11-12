@@ -64,8 +64,15 @@ def test_authorize_url_asks_for_app_actor_and_pkce() -> None:
 async def test_exchange_returns_organization_id() -> None:
     rec = Recorder(
         [
-            (200, {"access_token": "lin-AT", "refresh_token": "lin-RT", "expires_in": 86399,
-                   "scope": "read write issues:create"}),
+            (
+                200,
+                {
+                    "access_token": "lin-AT",
+                    "refresh_token": "lin-RT",
+                    "expires_in": 86399,
+                    "scope": "read write issues:create",
+                },
+            ),
             (200, {"data": {"organization": {"id": "org-1", "urlKey": "acme"}}}),
         ]
     )
@@ -94,24 +101,47 @@ async def test_graphql_errors_raise_provider_error() -> None:
 
 async def test_get_issue_not_found_is_none() -> None:
     rec = Recorder(
-        [(200, {"errors": [{"message": "Entity not found",
-                            "extensions": {"code": "ENTITY_NOT_FOUND"}}]})]
+        [
+            (
+                200,
+                {
+                    "errors": [
+                        {"message": "Entity not found", "extensions": {"code": "ENTITY_NOT_FOUND"}}
+                    ]
+                },
+            )
+        ]
     )
-    assert await LinearApi(transport=httpx.MockTransport(rec.handler)).get_issue("t", "ENG-9") is None
+    assert (
+        await LinearApi(transport=httpx.MockTransport(rec.handler)).get_issue("t", "ENG-9") is None
+    )
 
 
 async def test_create_issue_sends_team_title_due_and_assignee() -> None:
-    issue = {"id": "i1", "identifier": "ENG-1", "url": "https://linear.app/acme/issue/ENG-1",
-             "state": {"type": "unstarted"}}
+    issue = {
+        "id": "i1",
+        "identifier": "ENG-1",
+        "url": "https://linear.app/acme/issue/ENG-1",
+        "state": {"type": "unstarted"},
+    }
     rec = Recorder([(200, {"data": {"issueCreate": {"success": True, "issue": issue}}})])
     out = await LinearApi(transport=httpx.MockTransport(rec.handler)).create_issue(
-        "t", team_id="team-1", title="Ship it", description="d", due_date="2026-11-20",
+        "t",
+        team_id="team-1",
+        title="Ship it",
+        description="d",
+        due_date="2026-11-20",
         assignee_id="user-1",
     )
     assert out["identifier"] == "ENG-1"
     sent = json.loads(rec.requests[0].content)["variables"]["input"]
-    assert sent == {"teamId": "team-1", "title": "Ship it", "description": "d",
-                    "dueDate": "2026-11-20", "assigneeId": "user-1"}
+    assert sent == {
+        "teamId": "team-1",
+        "title": "Ship it",
+        "description": "d",
+        "dueDate": "2026-11-20",
+        "assigneeId": "user-1",
+    }
 
 
 def test_linear_not_configured_without_webhook_secret() -> None:

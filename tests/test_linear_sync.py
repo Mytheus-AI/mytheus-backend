@@ -4,6 +4,7 @@ Real Postgres (as `mytheus_app`), fakes for Linear and core-api. Mirrors the Jir
 `test_integrations_sync.py`.
 """
 
+# ruff: noqa: F811 - pytest fixtures are imported and then requested by name.
 from __future__ import annotations
 
 import uuid

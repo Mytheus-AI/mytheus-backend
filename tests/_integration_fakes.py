@@ -257,8 +257,13 @@ class FakeLinear:
         }
         self.issues.append(issue)
         self.created.append(
-            {"team_id": team_id, "title": title, "description": description,
-             "due_date": due_date, "assignee_id": assignee_id}
+            {
+                "team_id": team_id,
+                "title": title,
+                "description": description,
+                "due_date": due_date,
+                "assignee_id": assignee_id,
+            }
         )
         return issue
 

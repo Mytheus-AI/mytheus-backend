@@ -92,6 +92,30 @@ def verify_slack(headers: Any, body: bytes, *, now: float | None = None) -> None
 _CLOUD_CLAIMS = ("cloudId", "cloud_id", "aud", "iss", "sub")
 
 
+LINEAR_MAX_SKEW_MS = 60_000
+
+
+def verify_linear(headers: Any, body: bytes, *, now: float | None = None) -> dict[str, Any]:
+    """`Linear-Signature` = hex HMAC-SHA256(`LINEAR_WEBHOOK_SECRET`, raw body), and the body's
+    `webhookTimestamp` (ms) within 60 s. Returns the parsed body (ADR-0044 D3)."""
+    secret = config.linear_webhook_secret()
+    given = headers.get("linear-signature", "")
+    if not secret or not given:
+        raise _unauthorized()
+    expected = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, given):
+        raise _unauthorized()
+    data = _json(body)
+    try:
+        sent = int(str(data.get("webhookTimestamp")))
+    except (TypeError, ValueError):
+        raise _unauthorized() from None
+    current = (now if now is not None else time.time()) * 1000
+    if abs(current - sent) > LINEAR_MAX_SKEW_MS:
+        raise _unauthorized()
+    return data
+
+
 def _claimed_clouds(claims: dict[str, Any]) -> set[str]:
     found: set[str] = set()
     for key in _CLOUD_CLAIMS:
@@ -239,6 +263,18 @@ async def receive(provider: str, request: Request) -> JSONResponse:
             state or None,
             {"channel_id": channel_id, "resource_state": state},
         )
+
+    if provider == config.LINEAR:
+        data = verify_linear(headers, body)
+        org = data.get("organizationId")
+        if not isinstance(org, str):
+            return _ack("ignored")
+        org_id = await _route(provider, org)
+        if org_id is None:
+            return _ack("ignored")
+        delivery = headers.get("linear-delivery") or hashlib.sha256(body).hexdigest()
+        event_type = f"{data.get('type')}:{data.get('action')}"
+        return await _accept(org_id, provider, delivery, event_type, data)
 
     # Jira
     cloud_id = request.query_params.get("cloud_id", "")

@@ -221,7 +221,7 @@ def test_a_member_cannot_list_connect_or_disconnect(client):
 
 def test_a_provider_outside_r8_is_404(client):
     admin_tenant()
-    assert client.post("/integrations/linear/connect").status_code == 404
+    # Linear is connectable since ADR-0044; a provider no ADR names is still 404.
     assert client.post("/integrations/github/connect").status_code == 404
 
 

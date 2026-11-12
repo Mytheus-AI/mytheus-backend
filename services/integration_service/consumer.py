@@ -3,7 +3,7 @@
     python -m services.integration_service.consumer
 
 `actions` carries only user-confirmed actions (core-api's outbox, on confirm). Each one is pushed
-to Jira when the tenant has Jira connected (`connectors/jira.push_action`); otherwise it is
+to the tenant's tracker, Jira or Linear (`tracker.push_action`, ADR-0044); otherwise it is
 consumed and recorded with no effect.
 
 The recipe from CLAUDE.md: re-assert `org_id` from the header (poison if missing), fast-path
@@ -39,8 +39,8 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.tenancy import set_rls
+from services.integration_service import tracker
 from services.integration_service.clients import Clients, get_clients
-from services.integration_service.connectors import jira
 from services.integration_service.redaction import get_logger, install_redaction
 
 logger = get_logger(__name__)
@@ -96,7 +96,7 @@ async def handle_action(
             raise PoisonMessage(f"actions message names unknown tenant {org_id}") from exc
         if claimed is None:
             return "duplicate"
-        return await jira.push_action(session, org_id, value, clients or get_clients())
+        return await tracker.push_action(session, org_id, value, clients or get_clients())
     except BaseException:
         await redis.delete(f"nexus:{org_id}:dedupe:{TOPIC}:{key}")
         raise

@@ -54,7 +54,14 @@ from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.integration_service import config, store
 from services.integration_service.clients import ProviderError, get_clients
-from services.integration_service.connectors import calendar, decision_export, hubspot, jira, slack
+from services.integration_service.connectors import (
+    calendar,
+    decision_export,
+    hubspot,
+    jira,
+    linear,
+    slack,
+)
 from services.integration_service.oauth_state import (
     STATE_TTL_SECONDS,
     StateError,
@@ -383,6 +390,8 @@ async def oauth_complete(
                 await slack.post_install(session, conn, clients)
             elif provider == config.JIRA:
                 await jira.post_install(session, conn, clients, grant.extra)
+            elif provider == config.LINEAR:
+                await linear.post_install(session, conn, clients)
             elif provider == config.HUBSPOT:
                 await hubspot.post_install(session, conn, clients)
             elif provider == config.NOTION:

@@ -32,7 +32,7 @@ from libs.shared.metrics import serve_metrics, set_service
 from libs.shared.tenancy import set_rls
 from services.integration_service import config, store
 from services.integration_service.clients import Clients, ProviderError, get_clients
-from services.integration_service.connectors import calendar, jira, slack
+from services.integration_service.connectors import calendar, jira, linear, slack
 from services.integration_service.core_client import CoreApiClient, CoreApiError, get_core
 from services.integration_service.redaction import get_logger, install_redaction, redact_text
 from services.integration_service.storage import AttachmentStore, store_from_env
@@ -72,6 +72,8 @@ async def _dispatch(
         return await slack.process(session, payload, org_id=org_id, clients=clients, core=core)
     if provider == config.JIRA:
         return await jira.process_webhook(session, org_id, payload, core, clients)
+    if provider == config.LINEAR:
+        return await linear.process_webhook(session, org_id, payload, core, clients)
     return "skipped"
 
 
