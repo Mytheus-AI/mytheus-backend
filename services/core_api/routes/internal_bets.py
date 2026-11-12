@@ -684,7 +684,7 @@ async def persist_bet_proposals(
                 org_id,
                 user_id=owner,
                 source=f"decision-bet:{bet_id[0]}:proposed",
-                title=f"Your agent heard an expected outcome: {_short(e['statement'], 120)}",
+                title=f"Your Myte heard an expected outcome: {_short(e['statement'], 120)}",
                 body=(
                     f'For "{_short(decision["content"], 140)}". Keep it as the bet this '
                     f"decision is checked against on {e['check_date']}, edit it, or dismiss it."

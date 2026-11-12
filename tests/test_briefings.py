@@ -229,7 +229,7 @@ async def test_own_minutes_create_one_after_meeting_briefing(client, doorbell):
     assert [(r["trigger"], r["status"], str(r["meeting_id"])) for r in rows] == [
         ("meeting_end", "pending", str(m))
     ]
-    assert rows[0]["agent"]["name"] == "Sam's agent"  # no agent name: "{first}'s agent"
+    assert rows[0]["agent"]["name"] == "Sam's Myte"  # no agent name: "{first}'s Myte"
     # Rung only after the commit.
     assert doorbell == []
     await consumer.drain_after_commit()
@@ -310,7 +310,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
     assert res.status_code == 200, res.text
     src = res.json()
     assert src["person"] == {"name": "Sam Lee", "first_name": "Sam"}
-    assert src["agent"]["name"] == "Sam's agent" and src["target_words"] == 220
+    assert src["agent"]["name"] == "Sam's Myte" and src["target_words"] == 220
     assert src["meeting"]["title"] == "Pricing review"
     assert src["minutes"]["summary"].startswith("Agreed the price rise")
     assert [c["text"] for c in src["changed"]][:1] == ["Raise the base price by 8%"]
@@ -327,9 +327,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
     assert src["promises"][0]["at_ms"] == 90000
     questions = {q["text"]: q for q in src["questions"]}
     assert questions["Does legal need to review?"]["carried_to"].startswith("Pricing follow-up")
-    assert (
-        questions["Who owns the reseller terms?"]["status"] == "your agent saved it for next time"
-    )
+    assert questions["Who owns the reseller terms?"]["status"] == "your Myte saved it for next time"
     # Taken: nothing more to claim while it is being written.
     assert client.post(f"{url}/claim", headers=_agent_headers(host.org_id)).status_code == 409
     # Another tenant's agent token cannot see it.
@@ -343,7 +341,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
         {"o": str(foreign_host.org_id), "m": str(foreign_meeting)},
     )[0]["id"]
     segments = [
-        {"kind": "opening", "text": "  Hi Sam,   it's your agent.  "},
+        {"kind": "opening", "text": "  Hi Sam,   it's your Myte.  "},
         {
             "kind": "changed",
             "text": "Price is up eight percent.",
@@ -375,7 +373,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
     got = client.get(f"/api/v1/briefings/{briefing}").json()
     assert got["status"] == "ready" and got["prompt_version"] == "briefing@v1"
     assert [s["id"] for s in got["segments"]] == ["s1", "s2", "s3", "s4", "s5"]
-    assert got["segments"][0]["text"] == "Hi Sam, it's your agent."
+    assert got["segments"][0]["text"] == "Hi Sam, it's your Myte."
     assert got["segments"][1]["link"] == {
         "type": "decision",
         "meeting_id": str(m),
@@ -390,7 +388,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
     sent = notifications_for(briefing)
     assert len(sent) == 1
     assert sent[0]["payload"]["link"] == f"/briefings/{briefing}"
-    assert sent[0]["payload"]["title"] == "Sam's agent has your briefing"
+    assert sent[0]["payload"]["title"] == "Sam's Myte has your briefing"
     # A second answer is ignored; the first one stands.
     res = client.post(f"{url}/result", json=script(), headers=_agent_headers(host.org_id))
     assert res.json() == {"accepted": False, "status": "ready"}
@@ -412,7 +410,7 @@ async def test_claim_answers_the_source_and_result_is_validated(client):
 
 async def test_the_briefing_greets_by_the_real_name_not_the_email(client):
     """A person whose email is `nnm23ad071@nmamit.in` and whose name is Samar is greeted as
-    Samar, and their agent is "Samar's agent"; whoever waits on them is named the same way."""
+    Samar, and their agent is "Samar's Myte"; whoever waits on them is named the same way."""
     host, member, m = meeting()
     _sql(
         "UPDATE users SET email = 'nnm23ad071@nmamit.in', display_name = 'Samar Rao' "
@@ -428,7 +426,7 @@ async def test_the_briefing_greets_by_the_real_name_not_the_email(client):
     assert res.status_code == 200, res.text
     src = res.json()
     assert src["person"] == {"name": "Samar Rao", "first_name": "Samar"}
-    assert src["agent"]["name"] == "Samar's agent"
+    assert src["agent"]["name"] == "Samar's Myte"
     assert src["waiting"][0]["who"] == "Maya P."
 
 

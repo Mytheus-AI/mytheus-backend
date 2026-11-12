@@ -57,6 +57,13 @@ _NOTES = Clause(
     "Your agent's notes are yours",
     "Only you can see the notes your agent takes for you.",
 )
+# 2026-11-12 (ADR-0042): the personal agent is called a Myte in every user-facing word. The older
+# clauses above stay verbatim for the receipts that name them.
+_NOTES_MYTE = Clause(
+    "agent_notes",
+    "Your Myte's notes are yours",
+    "Only you can see the notes your Myte takes for you.",
+)
 _DECISIONS = Clause(
     "decisions",
     "Nothing is decided for you",
@@ -81,6 +88,13 @@ _OFF_RECORD = Clause(
     "kept and every agent pauses; the transcript shows only that a gap happened.",
 )
 
+_OFF_RECORD_MYTE = Clause(
+    "off_record",
+    "You can go off the record",
+    "Anyone can ask the host to go off the record. Until it ends, nothing said is transcribed or "
+    "kept and every Myte pauses; the transcript shows only that a gap happened.",
+)
+
 NOTICES: dict[str, Notice] = {
     "room-notice-2026-11-11": Notice(
         "room-notice-2026-11-11",
@@ -92,9 +106,21 @@ NOTICES: dict[str, Notice] = {
         (_TRANSCRIPT, _NOTES, _DECISIONS, _CHAT, _OFF_RECORD, _AGREEMENT),
         (_RECORDED, _NOT_RECORDED),
     ),
+    # The web notice (mytheus-ui `CONSENT_VERSION`).
+    "room-notice-2026-11-12": Notice(
+        "room-notice-2026-11-12",
+        (_TRANSCRIPT, _NOTES_MYTE, _DECISIONS, _CHAT, _OFF_RECORD_MYTE, _AGREEMENT),
+        (_RECORDED, _NOT_RECORDED),
+    ),
+    # The mobile notice (mytheus-mobile `CONSENT_VERSION`), which has no off-the-record clause.
+    "room-notice-2026-11-12-mobile": Notice(
+        "room-notice-2026-11-12-mobile",
+        (_TRANSCRIPT, _NOTES_MYTE, _DECISIONS, _CHAT, _AGREEMENT),
+        (_RECORDED, _NOT_RECORDED),
+    ),
 }
 
-CURRENT_VERSION = "room-notice-2026-11-11.2"
+CURRENT_VERSION = "room-notice-2026-11-12"
 
 
 def clauses_for(version: str | None, recording: bool) -> list[Clause] | None:

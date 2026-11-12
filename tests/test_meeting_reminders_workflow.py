@@ -211,7 +211,7 @@ async def test_the_three_timers_fire_and_deliver_in_app_with_links(app):
     assert by_kind["meetingbrief"]["title"] == "Your brief for Planning"
     assert by_kind["meetingbrief"]["link"] == f"/meetings/{s.id}#brief"
     catch_up = by_kind["meetingcatchup"]
-    assert catch_up["title"] == "Your agent's catch-up from Planning"
+    assert catch_up["title"] == "Your Myte's catch-up from Planning"
     assert catch_up["link"] == f"/meetings/{s.id}/catch-up"
     assert catch_up["user_id"] == str(s.carol.user_id)
     assert len(s.notifications()) == 4
@@ -233,7 +233,7 @@ async def test_the_three_timers_fire_and_deliver_in_app_with_links(app):
         {"o": s.org},
     )
     assert [(r["title"], r["link"]) for r in rows if r["user_id"] == str(s.carol.user_id)] == [
-        ("Your agent's catch-up from Planning", f"/meetings/{s.id}/catch-up")
+        ("Your Myte's catch-up from Planning", f"/meetings/{s.id}/catch-up")
     ]
     assert {r["link"] for r in rows} == {
         "/status-requests",

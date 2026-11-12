@@ -443,7 +443,7 @@ async def evening_run(
                         "channel": "in_app",
                         "user_id": str(user_id),
                         "priority": 3,
-                        "title": "What your agent heard today",
+                        "title": "What your Myte heard today",
                         "body": (
                             f"{listened} meeting{'s' if listened != 1 else ''} covered for you, "
                             f"{_hours(hours)} back."

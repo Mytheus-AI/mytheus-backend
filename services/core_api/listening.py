@@ -635,7 +635,7 @@ async def build_evening(
         return EveningDigest(
             day=day,
             status="quiet",
-            paragraph=[DigestSegment(text="Your agent had nothing to listen to for you today.")],
+            paragraph=[DigestSegment(text="Your Myte had nothing to listen to for you today.")],
             meetings=[],
             meeting_count=0,
             minutes_saved=0,
@@ -644,7 +644,7 @@ async def build_evening(
     if n:
         segments.append(
             DigestSegment(
-                text=f"Your agent sat in on {n} meeting{'s' if n != 1 else ''} for you today. "
+                text=f"Your Myte sat in on {n} meeting{'s' if n != 1 else ''} for you today. "
             )
         )
     for m in listened:

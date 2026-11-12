@@ -408,7 +408,7 @@ def _line_promise(c: dict[str, Any]) -> str:
     source = c.get("source") or {}
     where = f" [{source.get('label')}]" if source.get("label") else ""
     review = (
-        " (found by your agent, not confirmed yet)" if c.get("review_state") == "pending" else ""
+        " (found by your Myte, not confirmed yet)" if c.get("review_state") == "pending" else ""
     )
     return f"- {c['content']}{to}{due}{where}{review} `{c['id']}`"
 

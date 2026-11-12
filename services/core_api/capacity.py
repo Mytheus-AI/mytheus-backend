@@ -324,7 +324,7 @@ async def warn_on_landing(
                 "user_id": str(user_id),
                 "priority": 2,
                 "title": result.message[:200],
-                "body": f"{short}\n\nOnly you see this. Your agent can offer the new date for you."[
+                "body": f"{short}\n\nOnly you see this. Your Myte can offer the new date for you."[
                     :2000
                 ],
                 "link": link,
