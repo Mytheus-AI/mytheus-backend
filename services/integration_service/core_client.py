@@ -94,13 +94,20 @@ class CoreApiClient:
         return body
 
     async def external_status(
-        self, org_id: uuid.UUID, action_id: uuid.UUID, status: str, external_key: str
+        self,
+        org_id: uuid.UUID,
+        action_id: uuid.UUID,
+        status: str,
+        external_key: str,
+        *,
+        source: str = "jira",
     ) -> dict[str, Any]:
+        """`source` is the tracker the status came from: `jira` or `linear` (ADR-0044)."""
         return await self._call(
             "POST",
             f"/internal/actions/{action_id}/external-status",
             org_id,
-            {"status": status, "source": "jira", "external_key": external_key},
+            {"status": status, "source": source, "external_key": external_key},
         )
 
     async def slack_digest(self, org_id: uuid.UUID, meeting_id: uuid.UUID) -> dict[str, Any]:

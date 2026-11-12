@@ -25,7 +25,7 @@ watermark. An issue that is in no id map of this tenant is ignored, whatever its
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.integration_service import config, store
 from services.integration_service.clients import Clients, ProviderError
+from services.integration_service.connectors._tracker_common import due_iso, source_url
 from services.integration_service.core_client import CoreApiClient
 from services.integration_service.redaction import get_logger
 
@@ -42,7 +43,6 @@ PROVIDER = config.JIRA
 SITE_KIND = "jira_site"
 WEBHOOK_LIFETIME = timedelta(days=30)
 LABEL_PREFIX = "nexus:"
-_EPOCH = date(1970, 1, 1)
 
 
 def label_for(action_id: uuid.UUID) -> str:
@@ -116,21 +116,6 @@ async def remove_webhooks(
         await clients.jira.delete_webhooks(token, str(site["cloud_id"]), ids)
 
 
-def _due(raw: Any) -> str | None:
-    if raw is None:
-        return None
-    if isinstance(raw, datetime):
-        return raw.date().isoformat()
-    if isinstance(raw, date):
-        return raw.isoformat()
-    if isinstance(raw, int):
-        return (_EPOCH + timedelta(days=raw)).isoformat()
-    try:
-        return date.fromisoformat(str(raw)).isoformat()
-    except ValueError:
-        return None
-
-
 def _description(content: str, meeting_url: str) -> dict[str, Any]:
     return {
         "type": "doc",
@@ -155,17 +140,6 @@ def _description(content: str, meeting_url: str) -> dict[str, Any]:
 def _browse_url(site: dict[str, Any], key: str) -> str | None:
     base = site.get("site_url")
     return f"{str(base).rstrip('/')}/browse/{key}" if base else None
-
-
-# The `actions` event's `meeting_id` for a task created directly (`POST /api/v1/actions`): the
-# schema requires a uuid, and core-api sends the nil uuid when there is no meeting.
-_NO_MEETING = "00000000-0000-0000-0000-000000000000"
-
-
-def _source_url(meeting_id: Any) -> str:
-    if not meeting_id or str(meeting_id) == _NO_MEETING:
-        return f"{config.app_base_url()}/tasks"
-    return f"{config.app_base_url()}/meetings/{meeting_id}"
 
 
 async def push_action(
@@ -204,10 +178,10 @@ async def push_action(
         "project": {"key": site.get("project_key")},
         "issuetype": {"name": "Task"},
         "summary": content[:250],
-        "description": _description(content, _source_url(action.get("meeting_id"))),
+        "description": _description(content, source_url(action.get("meeting_id"))),
         "labels": [label],
     }
-    due = _due(action.get("due_date"))
+    due = due_iso(action.get("due_date"))
     if due:
         fields["duedate"] = due
     assignee = action.get("assignee_id")

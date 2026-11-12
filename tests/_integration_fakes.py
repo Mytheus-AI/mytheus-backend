@@ -308,12 +308,20 @@ def fake_clients() -> Clients:
 class FakeCore:
     def __init__(self, digest: dict[str, Any] | None = None) -> None:
         self.status_calls: list[tuple[uuid.UUID, uuid.UUID, str, str]] = []
+        self.sources: list[str] = []
         self.digest = digest
 
     async def external_status(
-        self, org_id: uuid.UUID, action_id: uuid.UUID, status: str, external_key: str
+        self,
+        org_id: uuid.UUID,
+        action_id: uuid.UUID,
+        status: str,
+        external_key: str,
+        *,
+        source: str = "jira",
     ) -> dict[str, Any]:
         self.status_calls.append((org_id, action_id, status, external_key))
+        self.sources.append(source)
         return {"action_id": str(action_id), "status": status, "changed": True}
 
     async def slack_digest(self, org_id: uuid.UUID, meeting_id: uuid.UUID) -> dict[str, Any]:
