@@ -222,3 +222,57 @@ async def org_for_admin(clerk_org_id: str, clerk_user_id: str) -> ClerkOrgForAdm
     return ClerkOrgForAdmin(
         name=str(o["name"]), slug=str(o.get("slug") or ""), owner_email=membership.email
     )
+
+
+@dataclass(frozen=True)
+class ActorToken:
+    """A Clerk impersonation (actor) token: a one-time sign-in link as `user_id`, with the
+    staff member recorded as the actor in the resulting session's `act` claim."""
+
+    id: str
+    url: str
+
+
+async def create_actor_token(
+    clerk_user_id: str, actor_clerk_user_id: str, *, expires_in_seconds: int
+) -> ActorToken:
+    """Ask Clerk for an actor token (ADR-0046 D4). The link and the session it opens are both
+    bounded by `expires_in_seconds`; the server-side `support_sessions` check is what actually
+    enforces the time box. Raises `ClerkUnavailable` when Clerk cannot be asked or refuses."""
+    key = _secret_key()
+    if key is None:
+        raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
+    body = {
+        "user_id": clerk_user_id,
+        "actor": {"sub": actor_clerk_user_id},
+        "expires_in_seconds": expires_in_seconds,
+        "session_max_duration_in_seconds": expires_in_seconds,
+    }
+    try:
+        async with _client(key) as client:
+            response = await client.post(f"{_API_BASE}/actor_tokens", json=body)
+    except httpx.HTTPError as exc:
+        raise ClerkUnavailable("Clerk request failed") from exc
+    if response.status_code >= 300:
+        raise ClerkUnavailable(f"Clerk refused the actor token (HTTP {response.status_code})")
+    data = response.json()
+    token_id, url = data.get("id"), data.get("url")
+    if not isinstance(token_id, str) or not isinstance(url, str) or not url:
+        raise ClerkUnavailable("Clerk returned an actor token without a sign-in link")
+    return ActorToken(id=token_id, url=url)
+
+
+async def revoke_actor_token(token_id: str) -> bool:
+    """Revoke an unused actor token. Best effort: True when Clerk accepted it. A token that was
+    already used cannot be revoked, which is fine, since the server-side session check ends
+    access regardless."""
+    key = _secret_key()
+    if key is None:
+        return False
+    try:
+        async with _client(key) as client:
+            response = await client.post(f"{_API_BASE}/actor_tokens/{token_id}/revoke")
+    except httpx.HTTPError:
+        logger.warning("could not revoke actor token %s", token_id)
+        return False
+    return response.status_code < 300
