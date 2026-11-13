@@ -140,7 +140,7 @@ async def _org_page(
     return page, _encode_org_cursor(page[-1]["created_at"], page[-1]["id"]) if more else None
 
 
-@router.get("/whoami", response_model=Whoami)
+@router.get("/whoami", response_model=Whoami, response_model_exclude_none=True)
 async def whoami(
     caller: Annotated[StaffPrincipal, Depends(ops_caller)],
     session: Annotated[AsyncSession, Depends(ops_session)],
