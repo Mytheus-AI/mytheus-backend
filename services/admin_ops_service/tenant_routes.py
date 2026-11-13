@@ -84,6 +84,8 @@ from services.admin_ops_service.schemas import (
     SupportGrant,
     SupportGrantCreate,
     SupportGrantList,
+    SupportSessionList,
+    SupportSessionView,
 )
 from services.identity_tenant_service.routes.tenant_settings import (
     TenantSettings,
@@ -223,7 +225,12 @@ async def create_support_grant(
     ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> SupportGrant:
-    """authz: admin. A time-boxed grant to one Mytheus staff user (at most 30 days)."""
+    """authz: admin. A time-boxed grant to one Mytheus staff user (at most 30 days). Refused
+    inside a staff support session: support access is never granted by the support itself."""
+    if ctx.support_session_id is not None:
+        raise ProblemDetail(
+            403, ErrorCode.FORBIDDEN_ROLE, "Support grants cannot be created in a support session"
+        )
     if ctx.user_id is None:
         raise ProblemDetail(403, ErrorCode.FORBIDDEN_ROLE, "No local user for this caller")
     if body.staff_user_id not in staff_user_ids():
@@ -305,6 +312,34 @@ async def revoke_support_grant(
             ip=ctx.ip,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/support-sessions",
+    response_model=SupportSessionList,
+)
+async def list_support_sessions(
+    ctx: Annotated[RequestContext, Depends(require_tier("admin"))],
+    session: Annotated[AsyncSession, Depends(tenant_session)],
+) -> SupportSessionList:
+    """authz: admin. Every staff support session in this workspace, newest first (ADR-0046):
+    who acted as whom, why, and for how long."""
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT s.id, s.staff_user_id, s.user_id, u.email AS user_email, s.reason, "
+                    "s.started_at, s.expires_at, s.ended_at, s.end_reason, "
+                    "(s.ended_at IS NULL AND s.expires_at > now()) AS open "
+                    "FROM support_sessions s LEFT JOIN users u ON u.id = s.user_id "
+                    "ORDER BY s.started_at DESC LIMIT 200"
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return SupportSessionList(items=[SupportSessionView(**dict(r)) for r in rows])
 
 
 @router.post(
