@@ -256,3 +256,221 @@ class AuditEntry(BaseModel):
 class AuditPage(BaseModel):
     items: list[AuditEntry]
     next_cursor: str | None
+
+
+# --- superadmin console (ADR-0046) -------------------------------------------------------------
+
+
+class WeekCount(BaseModel):
+    week: str  # ISO date of the week's Monday
+    count: int
+
+
+class DayCount(BaseModel):
+    day: str
+    count: int
+
+
+class PlanCount(BaseModel):
+    plan: str
+    count: int
+
+
+class TokenLeader(BaseModel):
+    org_id: uuid.UUID
+    name: str
+    tokens: int
+    token_quota: int | None
+
+
+class OverviewTotals(BaseModel):
+    tenants: int
+    active: int
+    suspended: int
+    members: int
+    meetings_7d: int
+    meetings_total: int
+    tokens_period: int
+
+
+class Overview(BaseModel):
+    period: str
+    totals: OverviewTotals
+    signups_by_week: list[WeekCount]
+    meetings_by_week: list[WeekCount]
+    plans: list[PlanCount]
+    token_leaders: list[TokenLeader]
+    ops_activity_by_day: list[DayCount]
+
+
+class TenantTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+
+
+class Residency(BaseModel):
+    region: str
+    db_cell: str
+    qdrant_region: str
+    object_bucket_region: str
+    locked_at: datetime | None
+
+
+class GrantView(BaseModel):
+    id: uuid.UUID
+    staff_user_id: uuid.UUID
+    scope: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    created_at: datetime
+    active: bool
+
+
+class SupportSessionView(BaseModel):
+    id: uuid.UUID
+    staff_user_id: uuid.UUID
+    user_id: uuid.UUID
+    user_email: str | None = None
+    reason: str
+    started_at: datetime
+    expires_at: datetime
+    ended_at: datetime | None
+    end_reason: str | None
+    open: bool
+
+
+class SupportSessionList(BaseModel):
+    items: list[SupportSessionView]
+
+
+class MigrationView(BaseModel):
+    id: uuid.UUID
+    from_region: str
+    from_cell: str
+    to_region: str
+    to_cell: str
+    status: str
+    reason: str
+    requested_by: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpsAction(BaseModel):
+    id: uuid.UUID
+    staff_user_id: uuid.UUID | None
+    action: str
+    target_org_id: uuid.UUID | None
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class TenantDetail(BaseModel):
+    org_id: uuid.UUID
+    name: str
+    status: str
+    plan: str | None
+    created_at: datetime
+    residency: Residency | None
+    members: int
+    meetings_total: int
+    meetings_by_week: list[WeekCount]
+    tokens_period: int
+    token_quota: int | None
+    period: str
+    flags: list[Flag]
+    grants: list[GrantView]
+    sessions: list[SupportSessionView]
+    migrations: list[MigrationView]
+    recent_ops: list[OpsAction]
+
+
+class ServiceProbe(BaseModel):
+    service: str
+    status: Literal["up", "down"]
+    latency_ms: int | None
+    detail: str | None = None
+
+
+class OutboxTenant(BaseModel):
+    org_id: uuid.UUID
+    name: str
+    pending: int
+    oldest_pending_at: datetime | None
+    max_attempts: int
+
+
+class Health(BaseModel):
+    checked_at: datetime
+    services: list[ServiceProbe]
+    outbox_pending: int
+    outbox_oldest_pending_at: datetime | None
+    outbox_max_attempts: int
+    outbox_tenants: list[OutboxTenant]
+    dlq: list[DlqCount] | None = None
+    consumer_lag: list[ConsumerLag] | None = None
+
+
+class StaffMember(BaseModel):
+    user_id: uuid.UUID
+    email: str | None
+    org_id: uuid.UUID | None
+    org_name: str | None
+    last_seen_at: datetime | None
+    actions_30d: int
+
+
+class StaffReport(BaseModel):
+    staff: list[StaffMember]
+    activity_by_day: list[DayCount]
+    recent: list[OpsAction]
+
+
+class MigrateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    to_region: Literal["us", "eu", "ap"]
+    to_cell: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{1,40}$")
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class MigrationCancel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    migration_id: uuid.UUID
+
+
+class SupportMember(BaseModel):
+    user_id: uuid.UUID
+    email: str
+    tier: str | None
+    is_staff: bool
+
+
+class SupportMemberList(BaseModel):
+    items: list[SupportMember]
+    grant_expires_at: datetime
+
+
+class SupportSessionStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    user_id: uuid.UUID
+    reason: str = Field(min_length=5, max_length=500)
+    minutes: int = Field(default=30, ge=15, le=60)
+
+
+class SupportSessionStarted(BaseModel):
+    session: SupportSessionView
+    sign_in_url: str
+
+
+class SupportSessionEnd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    session_id: uuid.UUID

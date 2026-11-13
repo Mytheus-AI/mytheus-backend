@@ -6,8 +6,9 @@ audit write fails. Owns `feature_flags`, `ops_audit_log` and `support_grants` (P
 """
 
 from libs.shared.app_factory import create_app
-from services.admin_ops_service import ops_routes, tenant_routes
+from services.admin_ops_service import console_routes, ops_routes, tenant_routes
 
 app = create_app("admin-ops-service")
 app.include_router(tenant_routes.router)  # /admin/tenant/* (owner/admin, audited)
 app.include_router(ops_routes.router)  # /admin/ops/* (Mytheus staff only, ops_audit_log)
+app.include_router(console_routes.router)  # /admin/ops/* superadmin console (ADR-0046)
