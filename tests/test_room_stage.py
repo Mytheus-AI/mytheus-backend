@@ -249,6 +249,8 @@ def test_close_ends_the_meeting_and_hands_leftovers_to_a_named_owner(client):
     m = hosted_meeting(host, guest)
     d = seed_decision(host, m)
     act = seed_action(host, m)
+    hosts_task = seed_action(host, m, assignee=host.user_id)
+    strangers_task = seed_action(host, m, assignee=stranger.user_id)
     kept = seed_decision(host, m, status="confirmed")
 
     sign_in(host)
@@ -269,7 +271,7 @@ def test_close_ends_the_meeting_and_hands_leftovers_to_a_named_owner(client):
     body = closed.json()
     assert body["status"] == "ended" and body["closed_by"] == str(host.user_id)
     assert body["review_owner_id"] == str(guest.user_id)
-    assert (body["moved_decisions"], body["moved_actions"]) == (1, 1)
+    assert (body["moved_decisions"], body["moved_actions"]) == (1, 3)
     owners = _sql(
         "SELECT id, review_owner_id FROM decisions WHERE meeting_id = %(m)s", {"m": str(m)}
     )
@@ -279,6 +281,17 @@ def test_close_ends_the_meeting_and_hands_leftovers_to_a_named_owner(client):
     assert _sql("SELECT review_owner_id FROM action_items WHERE id = %(i)s", {"i": str(act)})[0][
         "review_owner_id"
     ] == str(guest.user_id)
+    # A task stays with the person it is for; one whose owner is not in the meeting goes to
+    # the named owner like a task with no owner.
+    task_owner = {
+        str(r["id"]): str(r["review_owner_id"])
+        for r in _sql(
+            "SELECT id, review_owner_id FROM action_items WHERE meeting_id = %(m)s",
+            {"m": str(m)},
+        )
+    }
+    assert task_owner[str(hosts_task)] == str(host.user_id)
+    assert task_owner[str(strangers_task)] == str(guest.user_id)
 
     ended = [
         r for r in outbox_for(host.org_id, "meeting-events") if r["payload"]["meeting_id"] == str(m)

@@ -51,6 +51,7 @@ from tests.test_chat_api import (
     _create_test_app,
     _sql,
     add_participant,
+    make_creator,
     seed_meeting,
     seed_tenant,
     sign_in,
@@ -147,6 +148,7 @@ def _reversal_world() -> tuple[Tenant, Tenant, uuid.UUID, uuid.UUID, uuid.UUID]:
     m1, m2 = seed_meeting(host.org_id), seed_meeting(host.org_id)
     for m in (m1, m2):
         add_participant(m, host.org_id, host.user_id)
+        make_creator(m, host.user_id)
         add_participant(m, host.org_id, owner.user_id)
     _sql("UPDATE meetings SET title = 'Vendor review' WHERE id = %(m)s", {"m": str(m1)})
     old = decision(host, m1, "Go with vendor A")

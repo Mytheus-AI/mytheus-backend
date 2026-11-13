@@ -334,8 +334,10 @@ async def dashboard(
     async def needs_review() -> list[DashboardReviewItem]:
         """Proposed candidates in the caller's meetings that `GET /meetings/:id/candidates`
         would surface (above the tenant's per-agent threshold), newest first. The 0.4 to 0.7
-        silent band is stored but never served, here as there. A card handed to a named owner
-        at the room's close-out (`review_owner_id`, polish program) is that person's alone."""
+        silent band is stored but never served, here as there. Only the cards the caller may
+        settle (core-api `candidates._require_card_owner`): a task that is theirs; a decision or
+        a task with no owner in the meeting when they host or created it, or when the room's
+        close-out handed it to them (`review_owner_id`, polish program)."""
         if me is None:
             return []
         async with db:
@@ -347,14 +349,20 @@ async def dashboard(
             " SELECT 'decision' AS kind, d.id, d.meeting_id, m.title AS meeting_title, "
             " d.content, d.created_at FROM decisions d JOIN meetings m ON m.id = d.meeting_id "
             " WHERE d.status = 'proposed' AND d.confidence > :ds AND d.deleted_at IS NULL "
-            " AND (d.review_owner_id IS NULL OR d.review_owner_id = :u) "
+            " AND (CASE WHEN d.review_owner_id IS NOT NULL THEN d.review_owner_id = :u "
+            "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
+            "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
             " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
             "  WHERE p.meeting_id = d.meeting_id AND p.user_id = :u) "
             " UNION ALL "
             " SELECT 'action' AS kind, a.id, a.meeting_id, m.title AS meeting_title, "
             " a.content, a.created_at FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
             " WHERE a.status = 'proposed' AND a.confidence > :as AND a.deleted_at IS NULL "
-            " AND (a.review_owner_id IS NULL OR a.review_owner_id = :u) "
+            " AND (CASE WHEN EXISTS (SELECT 1 FROM meeting_participants o "
+            "   WHERE o.meeting_id = m.id AND o.user_id = a.assignee_id) THEN a.assignee_id = :u "
+            "  WHEN a.review_owner_id IS NOT NULL THEN a.review_owner_id = :u "
+            "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
+            "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
             " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
             "  WHERE p.meeting_id = a.meeting_id AND p.user_id = :u) "
             ") c ORDER BY created_at DESC, id DESC LIMIT :limit",

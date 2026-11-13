@@ -32,6 +32,7 @@ from tests.test_chat_api import (
     _create_test_app,
     _sql,
     add_participant,
+    make_creator,
     seed_meeting,
     seed_tenant,
     sign_in,
@@ -191,9 +192,22 @@ def seed_action(
 
 
 def participant_meeting(t: Tenant) -> uuid.UUID:
+    """A meeting the tenant's user created and takes part in, so they may settle its cards."""
     m = seed_meeting(t.org_id)
     add_participant(m, t.org_id, t.user_id)
+    make_creator(m, t.user_id)
     return m
+
+
+def seed_member(t: Tenant) -> uuid.UUID:
+    """Another user of the same organization."""
+    uid = uuid.uuid4()
+    _sql(
+        "INSERT INTO users (id, org_id, clerk_user_id, email) "
+        "VALUES (%(u)s, %(o)s, %(c)s, 'other@example.com')",
+        {"u": str(uid), "o": str(t.org_id), "c": f"user_{uid.hex[:16]}"},
+    )
+    return uid
 
 
 # --- consumer ------------------------------------------------------------------------------
@@ -559,6 +573,77 @@ def test_a_non_participant_cannot_act_on_a_candidate(client, migrated_db):
         assert resp.status_code == 403, (path, resp.text)
         assert resp.json()["code"] == "NOT_A_PARTICIPANT"
     assert all_outbox(t.org_id) == []
+
+
+def test_a_card_is_settled_only_by_the_person_it_belongs_to(client, migrated_db):
+    t = seed_tenant()
+    other = seed_member(t)
+    sign_in(t)
+
+    # A plain participant: not the host, not the creator.
+    m = seed_meeting(t.org_id)
+    add_participant(m, t.org_id, t.user_id)
+    add_participant(m, t.org_id, other)
+    d = seed_decision(t, m)
+    unowned = seed_action(t, m)
+    theirs = seed_action(t, m, assignee=other)
+    mine = seed_action(t, m, assignee=t.user_id)
+    for method, path, body in (
+        ("patch", f"/api/v1/decisions/{d}", {"content": "x"}),
+        ("post", f"/api/v1/decisions/{d}/confirm", None),
+        ("post", f"/api/v1/decisions/{d}/dismiss", None),
+        ("patch", f"/api/v1/actions/{unowned}", {"content": "x"}),
+        ("post", f"/api/v1/actions/{unowned}/confirm", None),
+        ("post", f"/api/v1/actions/{unowned}/dismiss", None),
+        ("patch", f"/api/v1/actions/{theirs}", {"content": "x"}),
+        ("patch", f"/api/v1/actions/{theirs}", {"assignee_id": str(t.user_id)}),
+        ("post", f"/api/v1/actions/{theirs}/confirm", None),
+        ("post", f"/api/v1/actions/{theirs}/dismiss", None),
+    ):
+        resp = getattr(client, method)(path, json=body) if body else getattr(client, method)(path)
+        assert resp.status_code == 403, (path, resp.text)
+        assert resp.json()["code"] == "FORBIDDEN_ROLE"
+    assert all_outbox(t.org_id) == []
+    # Their own task is theirs to edit and accept.
+    assert client.patch(f"/api/v1/actions/{mine}", json={"content": "Mine"}).status_code == 200
+    assert client.post(f"/api/v1/actions/{mine}/confirm").status_code == 200
+
+    # The host (here: the creator) settles decisions and tasks with no owner, never a task
+    # that is someone else's; they may only hand such a task to another person.
+    make_creator(m, t.user_id)
+    assert client.post(f"/api/v1/decisions/{d}/confirm").status_code == 200
+    assert client.post(f"/api/v1/actions/{unowned}/dismiss").status_code == 200
+    for path in (f"/api/v1/actions/{theirs}/confirm", f"/api/v1/actions/{theirs}/dismiss"):
+        resp = client.post(path)
+        assert resp.status_code == 403, (path, resp.text)
+        assert resp.json()["code"] == "FORBIDDEN_ROLE"
+    assert client.patch(f"/api/v1/actions/{theirs}", json={"content": "x"}).status_code == 403
+    resp = client.patch(f"/api/v1/actions/{theirs}", json={"assignee_id": str(t.user_id)})
+    assert resp.status_code == 200, resp.text
+    assert client.post(f"/api/v1/actions/{theirs}/confirm").status_code == 200
+
+
+def test_a_task_whose_owner_is_not_in_the_meeting_falls_to_the_host(client, migrated_db):
+    t = seed_tenant()
+    absent = seed_member(t)
+    m = participant_meeting(t)
+    a = seed_action(t, m, assignee=absent)
+    sign_in(t)
+    assert client.post(f"/api/v1/actions/{a}/confirm").status_code == 200
+
+
+def test_the_close_outs_review_owner_may_settle_what_was_handed_to_them(client, migrated_db):
+    t = seed_tenant()
+    m = seed_meeting(t.org_id)
+    add_participant(m, t.org_id, t.user_id)
+    d = seed_decision(t, m)
+    sign_in(t)
+    assert client.post(f"/api/v1/decisions/{d}/confirm").status_code == 403
+    _sql(
+        "UPDATE decisions SET review_owner_id = %(u)s WHERE id = %(id)s",
+        {"u": str(t.user_id), "id": str(d)},
+    )
+    assert client.post(f"/api/v1/decisions/{d}/confirm").status_code == 200
 
 
 def test_another_tenants_candidate_is_404_on_every_route(client, migrated_db):

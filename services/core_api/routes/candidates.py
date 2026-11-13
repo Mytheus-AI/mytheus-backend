@@ -11,7 +11,10 @@ fails the build if any other file starts producing them.
 
 Access: `require_tier("member")`, and the caller must be a participant of the row's meeting
 (403 `NOT_A_PARTICIPANT`). Another tenant's row or meeting is invisible to RLS, so it is a 404,
-never a 403. Every caller-supplied id that becomes a foreign key (`assignee_id`, `supersedes`)
+never a 403. A card is then settled (edited, confirmed, dismissed) only by the person it
+belongs to, 403 `FORBIDDEN_ROLE` otherwise (`_require_card_owner`): a task by the person it is
+for; a decision, or a task with no owner in the meeting, by the meeting's host or creator.
+Every caller-supplied id that becomes a foreign key (`assignee_id`, `supersedes`)
 is first checked through the tenant session, because a foreign key resolves rows across
 tenants (gap 31, `services/core_api/visibility.py`).
 
@@ -124,6 +127,70 @@ async def _locked_row(
         raise not_found()
     user_id = await _require_meeting_participant(session, ctx, row["meeting_id"])
     return dict(row), user_id
+
+
+# --- who may settle a card -----------------------------------------------------------------
+
+_TABLE_OF = {"decision": "decisions", "action": "action_items"}
+
+
+async def _require_card_owner(
+    session: AsyncSession,
+    kind: str,
+    row: dict[str, Any],
+    user_id: uuid.UUID,
+    verb: str,
+    *,
+    assigning: bool = False,
+) -> None:
+    """A card is settled only by the person it belongs to (403 `FORBIDDEN_ROLE` otherwise).
+
+    - A task with an owner who is in the meeting: that owner, nobody else (not even the host).
+    - A decision, or a task with no owner in the meeting: the meeting's host or creator
+      (ADR-0038 D6), or the person the close-out handed it to (`review_owner_id`).
+
+    `assigning`: the request only changes who a task is for. The host or creator may do that
+    for any proposed task, so a task the agent gave to the wrong person is not stuck with them.
+    """
+    assignee = row.get("assignee_id") if kind == "action" else None
+    facts = (
+        await session.execute(
+            text(
+                "SELECT (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants p "
+                "  WHERE p.meeting_id = m.id AND p.user_id = :u AND p.role_in_meeting = 'host')), "
+                "(CAST(:a AS uuid) IS NOT NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
+                "  WHERE p.meeting_id = m.id AND p.user_id = CAST(:a AS uuid))), "
+                f"(SELECT c.review_owner_id FROM {_TABLE_OF[kind]} c "  # noqa: S608 - closed set
+                " WHERE c.id = :id) "
+                "FROM meetings m WHERE m.id = :m"
+            ),
+            {
+                "u": str(user_id),
+                "a": str(assignee) if assignee else None,
+                "id": str(row["id"]),
+                "m": str(row["meeting_id"]),
+            },
+        )
+    ).first()
+    steers, owner_in_meeting, review_owner = facts if facts else (False, False, None)
+    if assigning and steers:
+        return
+    if owner_in_meeting:
+        if assignee == user_id:
+            return
+        raise ProblemDetail(
+            status.HTTP_403_FORBIDDEN,
+            ErrorCode.FORBIDDEN_ROLE,
+            f"Only the person this task is for can {verb} it",
+        )
+    if steers or review_owner == user_id:
+        return
+    noun = "decision" if kind == "decision" else "task with no owner"
+    raise ProblemDetail(
+        status.HTTP_403_FORBIDDEN,
+        ErrorCode.FORBIDDEN_ROLE,
+        f"Only the meeting's host can {verb} a {noun}",
+    )
 
 
 # --- read ----------------------------------------------------------------------------------
@@ -316,6 +383,7 @@ async def update_decision(
     row, user_id = await _locked_row(session, ctx, "decisions", _DECISION_COLS, decision_id)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} decision can no longer be edited")
+    await _require_card_owner(session, "decision", row, user_id, "edit")
     fields = body.model_dump(exclude_unset=True)
     sets = ", ".join(f"{k} = :{k}" for k in fields)  # keys are the model's closed field set
     updated = (
@@ -357,6 +425,7 @@ async def confirm_decision(
         return Decision(**row)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} decision cannot be confirmed")
+    await _require_card_owner(session, "decision", row, user_id, "confirm")
 
     supersedes = body.supersedes if body is not None else None
     if supersedes is not None:
@@ -458,6 +527,7 @@ async def dismiss_decision(
         return Decision(**row)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} decision cannot be dismissed")
+    await _require_card_owner(session, "decision", row, user_id, "dismiss")
     dismissed = (
         (
             await session.execute(
@@ -502,6 +572,9 @@ async def update_action(
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} action can no longer be edited")
     fields = body.model_dump(exclude_unset=True)
+    await _require_card_owner(
+        session, "action", row, user_id, "edit", assigning=set(fields) == {"assignee_id"}
+    )
     assignee = fields.get("assignee_id")
     if assignee is not None:
         if not await is_visible(session, "users", assignee):
@@ -550,6 +623,7 @@ async def confirm_action(
         return ActionItem(**row)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} action cannot be confirmed")
+    await _require_card_owner(session, "action", row, user_id, "confirm")
     confirmed = dict(
         (
             await session.execute(
@@ -651,6 +725,7 @@ async def dismiss_action(
         return ActionItem(**row)
     if row["status"] != "proposed":
         raise _conflict(f"A {row['status']} action cannot be dismissed")
+    await _require_card_owner(session, "action", row, user_id, "dismiss")
     dismissed = (
         (
             await session.execute(

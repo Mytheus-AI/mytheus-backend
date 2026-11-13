@@ -10,7 +10,8 @@ confirmed drifted into a queue nobody owned. Now the host opens a 60-second wrap
   the agenda items still open, which proposed actions have no owner, and the deadline. Any
   participant may read it (each piece is already visible to participants elsewhere).
 - `POST /api/v1/meetings/{id}/wrap-up/close`  the host closes: every card still `proposed`
-  gets `review_owner_id` (the named owner, by default the host), the meeting becomes `ended`
+  gets `review_owner_id` (a task: the person it is for, when they are in the meeting;
+  everything else: the named owner, by default the host), the meeting becomes `ended`
   with `closed_by`/`closed_at`, pending status requests expire, and the ONE `meeting-events`
   `ended` outbox row is written, all in one transaction. The same event an ordinary end emits,
   so nothing downstream changes. Repeating a close returns the stored result (idempotent);
@@ -354,13 +355,24 @@ async def close_meeting(
     if owner is None or owner not in await _participant_ids(session, meeting_id):
         raise _field_error(["owner_user_id"], "The owner must be a participant of the meeting")
 
+    # A task stays with the person it is for (only they may accept or decline it,
+    # `candidates._require_card_owner`); decisions and tasks with no owner in the meeting go to
+    # the named owner.
+    review_owner_sql = {
+        "decisions": ":o",
+        "action_items": (
+            "COALESCE((SELECT p.user_id FROM meeting_participants p "
+            "WHERE p.meeting_id = action_items.meeting_id "
+            "AND p.user_id = action_items.assignee_id), :o)"
+        ),
+    }
     moved: dict[str, int] = {}
-    for table in ("decisions", "action_items"):
+    for table, review_owner_expr in review_owner_sql.items():
         moved[table] = len(
             (
                 await session.execute(
                     text(
-                        f"UPDATE {table} SET review_owner_id = :o "  # noqa: S608 - closed set
+                        f"UPDATE {table} SET review_owner_id = {review_owner_expr} "  # noqa: S608
                         "WHERE meeting_id = :m AND status = 'proposed' AND deleted_at IS NULL "
                         "RETURNING id"
                     ),

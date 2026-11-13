@@ -51,6 +51,7 @@ from tests.test_chat_api import (
     _create_test_app,
     _sql,
     add_participant,
+    make_creator,
     seed_meeting,
     seed_tenant,
     sign_in,
@@ -145,6 +146,7 @@ def internal(org_id: uuid.UUID) -> dict[str, str]:
 def meeting_with(t: Tenant, *people: Tenant) -> uuid.UUID:
     m = seed_meeting(t.org_id)
     add_participant(m, t.org_id, t.user_id)
+    make_creator(m, t.user_id)  # `t` steers the meeting, so `t` may settle its cards
     for p in people:
         add_participant(m, t.org_id, p.user_id)
     return m

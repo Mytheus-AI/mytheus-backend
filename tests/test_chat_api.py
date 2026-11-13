@@ -154,6 +154,15 @@ def add_participant(meeting_id: uuid.UUID, org_id: uuid.UUID, user_id: uuid.UUID
     )
 
 
+def make_creator(meeting_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """The user created the meeting, so they steer it (ADR-0038 D6): they may settle its
+    decisions and its tasks that have no owner."""
+    _sql(
+        "UPDATE meetings SET created_by = %(u)s WHERE id = %(m)s",
+        {"m": str(meeting_id), "u": str(user_id)},
+    )
+
+
 @pytest.fixture
 def tenant_a():
     t = seed_tenant()
