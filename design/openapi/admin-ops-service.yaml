@@ -1040,6 +1040,11 @@ components:
             type: string
           - type: 'null'
           title: Last Seen At
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
         org_id:
           anyOf:
           - format: uuid
@@ -1174,6 +1179,11 @@ components:
         is_staff:
           title: Is Staff
           type: boolean
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
         tier:
           anyOf:
           - type: string
