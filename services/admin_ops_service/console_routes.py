@@ -83,9 +83,6 @@ from services.admin_ops_service.schemas import (
 
 router = APIRouter(prefix="/admin/ops", tags=["admin-ops"])
 
-Staff = Annotated[RequestContext, Depends(require_staff)]
-Session = Annotated[AsyncSession, Depends(ops_session)]
-
 WEEKS = 12
 DAYS = 14
 ACTION_SUPPORT_SESSION_STARTED = "support_session.started"
@@ -153,7 +150,10 @@ _OPS_ACTION_COLUMNS = "id, staff_user_id, action, target_org_id, details, create
 
 
 @router.get("/overview", response_model=Overview)
-async def overview(ctx: Staff, session: Session) -> Overview:
+async def overview(
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> Overview:
     """authz: staff. Platform totals and series. Aggregates only."""
     now = datetime.now(UTC)
     period = current_period(now)
@@ -255,7 +255,11 @@ _MIGRATION_COLUMNS = (
 
 
 @router.post("/tenants/detail", response_model=TenantDetail)
-async def tenant_detail(body: TenantTarget, ctx: Staff, session: Session) -> TenantDetail:
+async def tenant_detail(
+    body: TenantTarget,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> TenantDetail:
     """authz: staff. One workspace's control-plane picture. No meeting, transcript, decision
     or action content: meetings are counted by week, nothing else is read from them."""
     org = await _live_org(session, ctx, body.org_id, "tenant.detail")
@@ -429,8 +433,8 @@ def probe_transport() -> httpx.AsyncBaseTransport | None:
 
 @router.get("/health", response_model=Health)
 async def health(
-    ctx: Staff,
-    session: Session,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(probe_transport)],
 ) -> Health:
     """authz: staff. Service probes and the outbox backlog (counts per workspace only)."""
@@ -474,7 +478,10 @@ async def health(
 
 
 @router.get("/staff", response_model=StaffReport)
-async def staff_report(ctx: Staff, session: Session) -> StaffReport:
+async def staff_report(
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> StaffReport:
     """authz: staff. The allowlist and its activity. A staff member's email is read from their
     own workspace, found through their own `ops.whoami` rows; someone who has never opened the
     console has none yet."""
@@ -572,7 +579,11 @@ async def staff_report(ctx: Staff, session: Session) -> StaffReport:
 
 
 @router.post("/tenants/migrate", response_model=MigrationView, status_code=201)
-async def request_migration(body: MigrateRequest, ctx: Staff, session: Session) -> MigrationView:
+async def request_migration(
+    body: MigrateRequest,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> MigrationView:
     """authz: staff. Record a move request (ADR-0046 D5). One open request per workspace."""
     await _live_org(session, ctx, body.org_id, "tenant.migrate")
     await set_rls(session, body.org_id)
@@ -643,7 +654,11 @@ async def request_migration(body: MigrateRequest, ctx: Staff, session: Session) 
 
 
 @router.post("/tenants/migrations/cancel", response_model=MigrationView)
-async def cancel_migration(body: MigrationCancel, ctx: Staff, session: Session) -> MigrationView:
+async def cancel_migration(
+    body: MigrationCancel,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> MigrationView:
     """authz: staff. Cancel an open move request."""
     await set_rls(session, body.org_id)
     row = (
@@ -708,7 +723,11 @@ async def _impersonate_grant(
 
 
 @router.post("/support/members", response_model=SupportMemberList)
-async def support_members(body: TenantTarget, ctx: Staff, session: Session) -> SupportMemberList:
+async def support_members(
+    body: TenantTarget,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> SupportMemberList:
     """authz: staff with an active `impersonate` grant from that workspace."""
     grant = await _impersonate_grant(session, ctx, body.org_id, "support.members")
     staff = staff_user_ids()
@@ -745,7 +764,9 @@ async def support_members(body: TenantTarget, ctx: Staff, session: Session) -> S
 
 @router.post("/support/sessions", response_model=SupportSessionStarted, status_code=201)
 async def start_support_session(
-    body: SupportSessionStart, ctx: Staff, session: Session
+    body: SupportSessionStart,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> SupportSessionStarted:
     """authz: staff with an active `impersonate` grant. Opens a time-boxed session as one
     member through a Clerk actor token. The workspace's own audit log records it."""
@@ -870,7 +891,9 @@ async def start_support_session(
 
 @router.post("/support/sessions/end", response_model=SupportSessionView)
 async def end_support_session(
-    body: SupportSessionEnd, ctx: Staff, session: Session
+    body: SupportSessionEnd,
+    ctx: Annotated[RequestContext, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> SupportSessionView:
     """authz: staff, their own session. Access ends on the member's next request."""
     action = "support.session.end"
