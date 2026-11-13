@@ -71,7 +71,9 @@ PRINCIPAL = Principal()
 
 
 def _claims() -> dict[str, Any]:
-    claims: dict[str, Any] = {"sub": PRINCIPAL.clerk_user, "org_id": PRINCIPAL.clerk_org}
+    claims: dict[str, Any] = {"sub": PRINCIPAL.clerk_user}
+    if PRINCIPAL.clerk_org:  # a staff account has no organization (ADR-0046 D1)
+        claims["org_id"] = PRINCIPAL.clerk_org
     if PRINCIPAL.act:
         claims["act"] = {"sub": PRINCIPAL.act}
     return claims
@@ -207,6 +209,7 @@ def apps(migrated_db):
     admin.include_router(feedback_routes.tenant_router)
     admin.include_router(feedback_routes.ops_router)
     admin.dependency_overrides[auth_mod.verify_token] = _claims
+    admin.dependency_overrides[auth_mod.verify_token_without_org] = _claims
     admin.dependency_overrides[common.identity_transport] = lambda: httpx.ASGITransport(
         app=identity
     )
@@ -231,12 +234,26 @@ def client(apps):
     return apps
 
 
+class Staff:
+    """A Mytheus staff account: a Clerk account in no workspace (ADR-0046 D1)."""
+
+    def __init__(self, clerk_user: str) -> None:
+        self.clerk_user = clerk_user
+        self.user_id = common.staff_id_for(clerk_user)  # the Staff ID
+
+    def sign_in(self) -> Staff:
+        PRINCIPAL.clerk_org = ""
+        PRINCIPAL.clerk_user = self.clerk_user
+        PRINCIPAL.act = None
+        return self
+
+
 @pytest.fixture
 def staff(monkeypatch):
-    """A Mytheus staff member in the Mytheus org, configured in MYTHEUS_STAFF_USER_IDS."""
-    user = new_tenant("Mytheus").add_user("member")
-    monkeypatch.setenv(common.STAFF_ENV, f"{uuid.uuid4()}, not-a-uuid, {user.user_id}")
-    return user.sign_in()
+    """A staff account listed in MYTHEUS_STAFF_CLERK_USER_IDS, among malformed entries."""
+    clerk_user = f"user_staff{uuid.uuid4().hex[:12]}"
+    monkeypatch.setenv(common.STAFF_ENV, f"user_someoneelse, not-a-user, {clerk_user}")
+    return Staff(clerk_user).sign_in()
 
 
 # --- tenant admin ------------------------------------------------------------------------------
@@ -342,8 +359,8 @@ def test_settings_go_through_identity_and_are_audited(client):
 
 
 def test_support_grants_are_time_boxed_staff_only_and_audited(client, monkeypatch):
-    staff_id = uuid.uuid4()
-    monkeypatch.setenv(common.STAFF_ENV, str(staff_id))
+    monkeypatch.setenv(common.STAFF_ENV, "user_staffgrants")
+    staff_id = common.staff_id_for("user_staffgrants")
     t = new_tenant()
     admin = t.add_user("admin").sign_in()
     soon = (datetime.now(UTC) + timedelta(days=2)).isoformat()
@@ -505,11 +522,14 @@ def test_ops_routes_deny_non_staff_and_log_every_denial(client, monkeypatch):
         kwargs = {"json": body} if body is not None else {}
         resp = client.request(method, path, **kwargs)
         assert resp.status_code == 403, (path, resp.text)
-    denied = ops_rows(owner.user_id, "ops.denied")
+    denied = ops_rows(common.staff_id_for(owner.clerk_user), "ops.denied")
     assert [d["details"]["path"] for d in denied] == [p for _, p, _ in OPS_CALLS]
 
     assert client.get("/admin/ops/whoami").json() == {"staff": False}
-    assert ops_rows(owner.user_id, "ops.whoami")[0]["details"]["staff"] is False
+    assert (
+        ops_rows(common.staff_id_for(owner.clerk_user), "ops.whoami")[0]["details"]["staff"]
+        is False
+    )
 
     # deny by default: configured staff of someone else does not make this caller staff
     monkeypatch.setenv(common.STAFF_ENV, str(uuid.uuid4()))
@@ -520,7 +540,7 @@ def test_staff_reads_are_logged_too(client, staff):
     target = new_tenant("Target")
     target.add_user("owner")
     target.add_user("member")
-    assert client.get("/admin/ops/whoami").json() == {"staff": True}
+    assert client.get("/admin/ops/whoami").json() == {"staff": True, "staff_id": str(staff.user_id)}
 
     tenants = client.get("/admin/ops/tenants")
     assert tenants.status_code == 200, tenants.text
@@ -595,12 +615,10 @@ def test_suspend_flips_status_through_identity_and_emits_admin_events(client, st
     assert len(audit_rows(target.org_id, internal_status.ACTION_TENANT_REINSTATED)) == 1
     assert ops_rows(staff.user_id, "tenant.reinstate")[0]["details"]["outcome"] == "changed"
 
-    own = {"org_id": str(staff.org_id), "reason": "oops"}
-    assert client.post("/admin/ops/tenants/suspend", json=own).status_code == 409
     unknown = {"org_id": str(uuid.uuid4()), "reason": "x"}
     assert client.post("/admin/ops/tenants/suspend", json=unknown).status_code == 404
     outcomes = [r["details"]["outcome"] for r in ops_rows(staff.user_id, "tenant.suspend")]
-    assert outcomes == ["changed", "unchanged", "refused_own_org", "failed"]
+    assert outcomes == ["changed", "unchanged", "failed"]
 
 
 def test_identity_tenant_status_route_requires_the_admin_ops_token(client):
@@ -647,9 +665,12 @@ def test_flag_changes_emit_admin_events(client, staff):
     ops = [e["payload"]["detail_json"] for e in scoped_events]
     assert '"op": "created"' in ops[0] and '"op": "updated"' in ops[1]
     assert '"op": "deleted"' in ops[2]
-    # a global flag's event is keyed to the staff member's own org (no org of its own)
-    global_events = outbox_rows(staff.org_id, "admin-events")
-    assert len(global_events) == 1 and global_events[0]["payload"]["target_id"] == glob.json()["id"]
+    # a global flag has no org_id to partition by, and nor does a staff account: no event
+    global_events = _sql(
+        "SELECT 1 FROM outbox WHERE topic = 'admin-events' AND payload->>'target_id' = %(t)s",
+        {"t": glob.json()["id"]},
+    )
+    assert global_events == []
     listed = {f["id"] for f in client.get("/admin/ops/flags").json()["items"]}
     assert glob.json()["id"] in listed and flag_id not in listed
     actions = [r["action"] for r in ops_rows(staff.user_id) if r["action"].startswith("flag.")]
@@ -703,7 +724,9 @@ def test_cost_dashboard_reads_only_aggregate_tables(client, staff):
     # The request's own authentication (who is calling: the staff member's own org and user
     # row) is the same for every route; everything else is what the dashboard read.
     def auth_chain(statement: str) -> bool:
-        return "clerk_user_id" in statement or "clerk_org_id" in statement
+        return any(
+            k in statement for k in ("clerk_user_id", "clerk_org_id", "clerk_user_in_any_tenant")
+        )
 
     touched = {
         table.lower()
@@ -711,7 +734,7 @@ def test_cost_dashboard_reads_only_aggregate_tables(client, staff):
         if not auth_chain(statement)
         for table in _TABLE_REF.findall(statement)
     }
-    assert any("clerk_user_id" in s for s in statements)
+    assert any("clerk_user_in_any_tenant" in s for s in statements)
     assert statements, "the listener saw nothing; the assertion below would be vacuous"
     assert touched <= ops_routes.COST_TABLES | {"ops_audit_log"}, touched
     assert {"usage_aggregates", "agent_budgets"} <= touched

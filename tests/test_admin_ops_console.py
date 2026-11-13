@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from libs.shared import clerk_admin
-from services.admin_ops_service import console_routes, ops_routes
+from services.admin_ops_service import common, console_routes, ops_routes
 from tests.test_admin_ops_api import (  # noqa: F401  (fixtures are used by name)
     PRINCIPAL,
     _sql,
@@ -69,7 +69,7 @@ def test_console_routes_deny_non_staff(client, monkeypatch):
         ("POST", "/admin/ops/support/members", {"org_id": target}),
     ):
         assert client.request(method, path, json=body).status_code == 403, path
-    assert len(ops_rows(outsider.user_id, "ops.denied")) == 5
+    assert len(ops_rows(common.staff_id_for(outsider.clerk_user), "ops.denied")) == 5
 
 
 def test_overview_counts_every_workspace_and_is_logged(client, staff):
@@ -211,16 +211,61 @@ def test_health_probes_services_and_reports_the_outbox(client, staff):
     assert ops_rows(staff.user_id, "health.read")[-1]["details"]["down"] == ["core-api"]
 
 
-def test_staff_report_resolves_emails_from_whoami(client, staff):
-    assert client.get("/admin/ops/whoami").json() == {"staff": True}
+def test_staff_report_reads_names_from_clerk(client, staff, monkeypatch):
+    async def summary(clerk_id: str):
+        if clerk_id == staff.clerk_user:
+            return clerk_admin.ClerkUserSummary(
+                id=clerk_id, email="ops@mytheus.example", name="Ops One", organization_count=0
+            )
+        raise clerk_admin.ClerkUnavailable("down")
+
+    monkeypatch.setattr(clerk_admin, "user_summary", summary)
+    assert client.get("/admin/ops/whoami").json()["staff"] is True
     resp = client.get("/admin/ops/staff")
     assert resp.status_code == 200, resp.text
     report = resp.json()
-    me = next(s for s in report["staff"] if s["user_id"] == str(staff.user_id))
-    assert me["email"] and me["org_name"] == "Mytheus" and me["actions_30d"] >= 1
-    # the random allowlisted id that never signed in has no email yet
-    assert any(s["email"] is None for s in report["staff"])
+    me = next(s for s in report["staff"] if s["clerk_user_id"] == staff.clerk_user)
+    assert me["user_id"] == str(staff.user_id)
+    assert (me["name"], me["email"], me["in_workspace"]) == (
+        "Ops One",
+        "ops@mytheus.example",
+        False,
+    )
+    assert me["actions_30d"] >= 1
+    # Clerk could not be asked about the other listed account: still listed, ids only
+    other = next(s for s in report["staff"] if s["clerk_user_id"] == "user_someoneelse")
+    assert other["email"] is None and other["actions_30d"] == 0
     assert len(report["activity_by_day"]) == 14 and report["recent"]
+
+
+def test_a_workspace_member_is_never_staff_even_when_listed(client, monkeypatch):
+    """ADR-0046 D1: superadmins are separate, workspace-less accounts."""
+    member = new_tenant("Customer").add_user("owner")
+    monkeypatch.setenv(common.STAFF_ENV, member.clerk_user)
+
+    # signed in to their workspace: refused
+    member.sign_in()
+    assert client.get("/admin/ops/whoami").json() == {"staff": False}
+    assert client.get("/admin/ops/overview").status_code == 403
+    # the same account with no workspace in the session: still refused (it has a users row)
+    PRINCIPAL.clerk_org = ""
+    assert client.get("/admin/ops/whoami").json() == {"staff": False}
+    assert client.get("/admin/ops/overview").status_code == 403
+    reasons = [
+        r["details"]["reason"]
+        for r in ops_rows(common.staff_id_for(member.clerk_user))
+        if r["action"] == "ops.denied"
+    ]
+    assert reasons == ["workspace_session", "workspace_member"]
+
+
+def test_staff_ids_ignore_malformed_entries(monkeypatch):
+    monkeypatch.setenv(common.STAFF_ENV, " user_a , 123, not-a-user,user_, user b, user_c")
+    assert common.staff_clerk_ids() == {"user_a", "user_c"}
+    assert common.staff_id_for("user_a") == common.staff_id_for("user_a")
+    assert common.staff_id_for("user_a") != common.staff_id_for("user_c")
+    monkeypatch.delenv(common.STAFF_ENV)
+    assert common.staff_clerk_ids() == frozenset()
 
 
 def test_move_requests_one_open_at_a_time_and_cancel(client, staff):

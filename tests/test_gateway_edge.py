@@ -106,6 +106,15 @@ def client(migrated_db, keys):
             "sig": request.headers.get(edge.SIGNATURE_HEADER),
         }
 
+    @app.get("/admin/ops/whoami")
+    async def ops_echo(request: Request) -> dict[str, str | None]:
+        # authz: public - observes what the edge forwards for the superadmin console.
+        return {
+            "org": request.headers.get(edge.ORG_HEADER),
+            "user": request.headers.get(edge.USER_HEADER),
+            "sig": request.headers.get(edge.SIGNATURE_HEADER),
+        }
+
     with TestClient(app) as c:
         yield c
 
@@ -342,6 +351,40 @@ def test_self_serve_still_requires_an_org_claim(client, keys):
         algorithm="RS256",
     )
     resp = client.post(edge.SELF_SERVE_ORG_PATH, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
+
+
+def _orgless_token(priv, **overrides) -> str:
+    now = int(time.time())
+    claims = {"sub": "user_staff", "iss": _ISSUER, "iat": now, "nbf": now, "exp": now + 600}
+    claims.update(overrides)
+    return pyjwt.encode(claims, priv, algorithm="RS256")
+
+
+def test_ops_console_passes_a_workspace_less_session_without_tenant_headers(client, keys):
+    """ADR-0046 D1: superadmins belong to no workspace, so /admin/ops/* is verified without an
+    organization and nothing tenant-shaped is attached (a client-sent copy is stripped)."""
+    priv, _pub = keys
+    resp = client.get(
+        "/admin/ops/whoami",
+        headers={"Authorization": f"Bearer {_orgless_token(priv)}", edge.ORG_HEADER: "x"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"org": None, "user": None, "sig": None}
+
+
+def test_a_workspace_less_session_reaches_nothing_but_the_ops_console(client, keys):
+    priv, _pub = keys
+    auth = {"Authorization": f"Bearer {_orgless_token(priv)}"}
+    for path in ("/admin/tenant/members", "/admin/opsx", "/api/v1/meetings", "/bff/dashboard"):
+        assert client.get(path, headers=auth).status_code == 401, path
+
+
+def test_the_ops_console_still_requires_a_valid_token(client, keys):
+    priv, _pub = keys
+    assert client.get("/admin/ops/whoami").status_code == 401
+    expired = _orgless_token(priv, exp=int(time.time()) - 10)
+    resp = client.get("/admin/ops/whoami", headers={"Authorization": f"Bearer {expired}"})
     assert resp.status_code == 401
 
 
