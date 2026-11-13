@@ -25,6 +25,7 @@ from libs.shared.audit import audit
 from libs.shared.authz import RequestContext, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.admin_ops_service.common import (
+    StaffPrincipal,
     enable_ops_console,
     ops_log,
     ops_log_now,
@@ -140,7 +141,7 @@ async def my_feedback(
 
 @ops_router.get("/feedback", response_model=OpsFeedbackList)
 async def feedback_inbox(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     state: Annotated[Literal["new", "seen", "resolved", "all"], Query()] = "all",
 ) -> OpsFeedbackList:
@@ -185,7 +186,7 @@ async def feedback_inbox(
 @ops_router.post("/feedback/status", response_model=OpsFeedback)
 async def set_feedback_status(
     body: FeedbackStatusUpdate,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> OpsFeedback:
     """authz: staff. Mark a report new, seen or resolved."""

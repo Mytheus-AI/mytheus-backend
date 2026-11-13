@@ -142,6 +142,7 @@ class ErasureList(BaseModel):
 
 class Whoami(BaseModel):
     staff: bool
+    staff_id: uuid.UUID | None = None
 
 
 class TenantSummary(BaseModel):
@@ -414,11 +415,12 @@ class Health(BaseModel):
 
 
 class StaffMember(BaseModel):
-    user_id: uuid.UUID
+    user_id: uuid.UUID  # the Staff ID
+    clerk_user_id: str
     name: str | None = None
     email: str | None
-    org_id: uuid.UUID | None
-    org_name: str | None
+    # True when Clerk says the account belongs to an organization: it is listed but refused.
+    in_workspace: bool = False
     last_seen_at: datetime | None
     actions_30d: int
 

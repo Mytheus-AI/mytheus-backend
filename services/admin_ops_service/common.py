@@ -10,10 +10,14 @@ and its own audit rows; nothing is duplicated here. Suspend/reinstate calls iden
 `UPSTREAM_IDENTITY_TENANT_SERVICE` (default `http://identity-tenant-service:8000`, the gateway's
 convention).
 
-Staff. `MYTHEUS_STAFF_USER_IDS` is a comma-separated list of internal `users.id` values, read on
-every request. Unset or empty means nobody is staff (deny by default). A staff member signs in
-with their own Clerk session in their own org; the token is verified and resolved exactly like
-any tenant request (`tenant_context`), then the resolved `users.id` is checked against the list.
+Staff (ADR-0046 D1). A superadmin is a dedicated Clerk account that belongs to NO workspace.
+`MYTHEUS_STAFF_CLERK_USER_IDS` is a comma-separated list of their Clerk user ids, read on every
+request; unset or empty means nobody is staff (deny by default). The token is verified without
+an organization claim (`verify_token_without_org`), and a listed account is still refused when
+its session carries an organization or it has a live `users` row in any workspace
+(`clerk_user_in_any_tenant`): a workspace member can never be staff. A staff account's Staff ID
+is a UUIDv5 of its Clerk user id; it is what support grants name and what `ops_audit_log`
+records.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import httpx
@@ -28,7 +33,7 @@ from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.authz import RequestContext, tenant_context
+from libs.shared.auth import org_claim_name, verify_token_without_org
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
@@ -36,7 +41,9 @@ from libs.shared.outbox import enqueue
 from libs.shared.tenancy import set_rls
 
 SERVICE_NAME = "admin-ops-service"
-STAFF_ENV = "MYTHEUS_STAFF_USER_IDS"
+STAFF_ENV = "MYTHEUS_STAFF_CLERK_USER_IDS"
+# Fixed forever: changing it would change every staff member's Staff ID.
+STAFF_ID_NAMESPACE = uuid.UUID("8f4c2a6e-0d3b-5c1e-9a7f-6b2e4d8c1a30")
 IDENTITY_TOKENS_ENV = "MYTHEUS_IDENTITY_CALLER_TOKENS"
 IDENTITY_URL_ENV = "UPSTREAM_IDENTITY_TENANT_SERVICE"
 CORE_URL_ENV = "CORE_API_URL"
@@ -238,21 +245,58 @@ async def emit_admin_event(
 # --- staff and ops_audit_log -----------------------------------------------------------------
 
 
-def staff_user_ids() -> frozenset[uuid.UUID]:
-    out: set[uuid.UUID] = set()
+def staff_id_for(clerk_user_id: str) -> uuid.UUID:
+    """A staff account's Staff ID: stable, derived from its Clerk user id."""
+    return uuid.uuid5(STAFF_ID_NAMESPACE, clerk_user_id)
+
+
+def staff_clerk_ids() -> frozenset[str]:
+    out: set[str] = set()
     for raw in os.environ.get(STAFF_ENV, "").split(","):
         raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            out.add(uuid.UUID(raw))
-        except ValueError:
-            continue  # a malformed entry grants nothing
+        if raw.startswith("user_") and len(raw) > 5 and raw.isascii() and " " not in raw:
+            out.add(raw)  # anything else is malformed and grants nothing
     return frozenset(out)
 
 
-def is_staff(ctx: RequestContext) -> bool:
-    return ctx.user_id is not None and ctx.user_id in staff_user_ids()
+def staff_user_ids() -> frozenset[uuid.UUID]:
+    """The Staff IDs of every listed account (what a support grant may name)."""
+    return frozenset(staff_id_for(c) for c in staff_clerk_ids())
+
+
+@dataclass(frozen=True)
+class StaffPrincipal:
+    """Whoever is calling `/admin/ops/*`: a verified Clerk session, workspace or not."""
+
+    clerk_user_id: str
+    user_id: uuid.UUID  # the Staff ID this account has, or would have
+    has_org: bool  # the session carries an organization
+
+
+async def ops_caller(
+    claims: Annotated[dict[str, Any], Depends(verify_token_without_org)],
+) -> StaffPrincipal:
+    clerk_user_id = str(claims["sub"])
+    org = claims.get(org_claim_name())
+    return StaffPrincipal(
+        clerk_user_id=clerk_user_id,
+        user_id=staff_id_for(clerk_user_id),
+        has_org=isinstance(org, str) and bool(org),
+    )
+
+
+_IN_ANY_TENANT = text("SELECT clerk_user_in_any_tenant(:c)")
+
+
+async def staff_refusal(caller: StaffPrincipal) -> str | None:
+    """None when the caller is staff, else why not. Listed is necessary, not sufficient."""
+    if caller.clerk_user_id not in staff_clerk_ids():
+        return "not_listed"
+    if caller.has_org:
+        return "workspace_session"
+    async with get_sessionmaker()() as session, session.begin():
+        member = (await session.execute(_IN_ANY_TENANT, {"c": caller.clerk_user_id})).scalar()
+    return "workspace_member" if member else None
 
 
 _OPS_LOG = text(
@@ -290,26 +334,27 @@ async def ops_log_now(**kwargs: Any) -> None:
 
 
 async def require_staff(
-    request: Request, ctx: Annotated[RequestContext, Depends(tenant_context)]
-) -> RequestContext:
-    """Deny by default: 403 unless the caller's `users.id` is in `MYTHEUS_STAFF_USER_IDS`. The
-    denial itself is logged in `ops_audit_log`."""
-    if is_staff(ctx):
-        return ctx
+    request: Request, caller: Annotated[StaffPrincipal, Depends(ops_caller)]
+) -> StaffPrincipal:
+    """Deny by default: 403 unless the caller is a listed, workspace-less staff account. The
+    denial itself is logged in `ops_audit_log`, with the reason."""
+    reason = await staff_refusal(caller)
+    if reason is None:
+        return caller
     await ops_log_now(
-        staff_user_id=ctx.user_id,
+        staff_user_id=caller.user_id,
         action="ops.denied",
         details={
             "method": request.method,
             "path": request.url.path,
-            "caller_org_id": str(ctx.org_id),
-            "clerk_user_id": ctx.clerk_user_id,
+            "clerk_user_id": caller.clerk_user_id,
+            "reason": reason,
         },
     )
     raise ProblemDetail(403, ErrorCode.FORBIDDEN_ROLE, "Mytheus staff only")
 
 
-StaffContext = Annotated[RequestContext, Depends(require_staff)]
+StaffContext = Annotated[StaffPrincipal, Depends(require_staff)]
 
 
 async def ops_session() -> Any:

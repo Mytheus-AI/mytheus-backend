@@ -1,9 +1,10 @@
 """`/admin/ops/*`: the internal-ops console API (P12, plan 3.13). Mytheus staff only.
 
-Deny by default (`common.require_staff`: the caller's `users.id` must be in
-`MYTHEUS_STAFF_USER_IDS`), and every call is written to `ops_audit_log`: reads included, inside
-the same transaction as the work (so a call whose log cannot be written returns nothing), and
-denials in their own transaction. `whoami` answers any signed-in user (and is logged too).
+Deny by default (`common.require_staff`: a workspace-less Clerk account listed in
+`MYTHEUS_STAFF_CLERK_USER_IDS`, ADR-0046 D1), and every call is written to `ops_audit_log`:
+reads included, inside the same transaction as the work (so a call whose log cannot be written
+returns nothing), and denials in their own transaction. `whoami` answers any signed-in session
+(and is logged too).
 
 No standing cross-tenant row access. The directory and the cost view are aggregates over
 control-plane tables, read one tenant at a time with `app.current_org` bound to that tenant
@@ -20,13 +21,13 @@ Suspend/reinstate: identity-tenant-service flips `organizations.status` (it is t
 `tenant-events` producer); this service then logs the call and, for a suspension that changed
 something, emits `admin-events` `tenant_suspended`. `AdminEventType` has no reinstated symbol
 and this band may not change a schema, so a reinstatement emits no `admin-events` record (it is
-still in `ops_audit_log`, and identity writes the tenant's `audit_logs` row). A staff member
-cannot suspend their own organization (409), which would lock the console out.
+still in `ops_audit_log`, and identity writes the tenant's `audit_logs` row). Staff accounts
+belong to no workspace, so suspending one can never lock the console out.
 
 Feature flags: CRUD with `app.ops_console` set transaction-locally (the `ops_console` policy);
-every change emits `admin-events` `flag_changed`, keyed to the flag's tenant, or to the staff
-member's own org for a global flag (the topic is partitioned by `org_id`, which a global flag
-does not have).
+a change to a workspace's flag emits `admin-events` `flag_changed` keyed to that workspace; a
+global flag's change is in `ops_audit_log` only (the topic is partitioned by `org_id`, which
+neither a global flag nor a staff account has).
 
 DLQ counts and consumer lag are not readable from this service (they live in Redpanda and
 Prometheus, neither of which it can reach), so the cost report returns `null` for both.
@@ -46,19 +47,20 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared.authz import RequestContext, tenant_context
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.admin_ops_service.common import (
     IdentityTransport,
+    StaffPrincipal,
     emit_admin_event,
     enable_ops_console,
-    is_staff,
+    ops_caller,
     ops_log,
     ops_log_now,
     ops_session,
     require_staff,
     set_tenant_status,
+    staff_refusal,
 )
 from services.admin_ops_service.schemas import (
     AuditEntry,
@@ -116,7 +118,7 @@ def _encode_org_cursor(created_at: datetime, org_id: uuid.UUID) -> str:
 
 
 async def _org_page(
-    session: AsyncSession, ctx: RequestContext, action: str, cursor: str | None, limit: int
+    session: AsyncSession, ctx: StaffPrincipal, action: str, cursor: str | None, limit: int
 ) -> tuple[list[Any], str | None]:
     params: dict[str, Any] = {"n": limit + 1}
     after = ""
@@ -140,23 +142,31 @@ async def _org_page(
 
 @router.get("/whoami", response_model=Whoami)
 async def whoami(
-    ctx: Annotated[RequestContext, Depends(tenant_context)],
+    caller: Annotated[StaffPrincipal, Depends(ops_caller)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> Whoami:
-    """authz: any signed-in user; answers whether they are Mytheus staff. Logged."""
-    staff = is_staff(ctx)
+    """authz: any signed-in session, with or without a workspace; answers whether it is a
+    Mytheus staff account (ADR-0046 D1), and its Staff ID when it is. Logged, with the reason
+    when it is not."""
+    reason = await staff_refusal(caller)
     await ops_log(
         session,
-        staff_user_id=ctx.user_id,
+        staff_user_id=caller.user_id,
         action="ops.whoami",
-        details={"staff": staff, "caller_org_id": str(ctx.org_id)},
+        details={
+            "staff": reason is None,
+            "reason": reason,
+            "clerk_user_id": caller.clerk_user_id,
+        },
     )
-    return Whoami(staff=staff)
+    if reason is None:
+        return Whoami(staff=True, staff_id=caller.user_id)
+    return Whoami(staff=False)
 
 
 @router.get("/tenants", response_model=TenantList)
 async def list_tenants(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = DEFAULT_PAGE,
     cursor: str | None = None,
@@ -185,7 +195,7 @@ async def list_tenants(
 
 
 async def _change_status(
-    ctx: RequestContext,
+    ctx: StaffPrincipal,
     session: AsyncSession,
     transport: Any,
     *,
@@ -194,16 +204,6 @@ async def _change_status(
     reason: str | None,
 ) -> TenantStatus:
     action = "tenant.suspend" if target == "suspended" else "tenant.reinstate"
-    if target == "suspended" and org_id == ctx.org_id:
-        await ops_log_now(
-            staff_user_id=ctx.user_id,
-            action=action,
-            target_org_id=org_id,
-            details={"reason": reason, "outcome": "refused_own_org"},
-        )
-        raise ProblemDetail(
-            409, ErrorCode.VERSION_CONFLICT, "You cannot suspend your own organization"
-        )
     try:
         result = await set_tenant_status(
             org_id, target, reason=reason, staff_user_id=ctx.user_id, transport=transport
@@ -240,7 +240,7 @@ async def _change_status(
 @router.post("/tenants/suspend", response_model=TenantStatus)
 async def suspend_tenant(
     body: SuspendRequest,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     transport: IdentityTransport,
 ) -> TenantStatus:
@@ -253,7 +253,7 @@ async def suspend_tenant(
 @router.post("/tenants/reinstate", response_model=TenantStatus)
 async def reinstate_tenant(
     body: ReinstateRequest,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     transport: IdentityTransport,
 ) -> TenantStatus:
@@ -267,10 +267,14 @@ def _flag(row: Any) -> Flag:
     return Flag(**dict(row))
 
 
-async def _flag_event(session: AsyncSession, ctx: RequestContext, flag: Flag, op: str) -> None:
+async def _flag_event(session: AsyncSession, ctx: StaffPrincipal, flag: Flag, op: str) -> None:
+    # `admin-events` is partitioned by `org_id`, and a global flag has none; nor does a staff
+    # account (ADR-0046 D1). A global flag's change is in `ops_audit_log` only.
+    if flag.org_id is None:
+        return
     await emit_admin_event(
         session,
-        org_id=flag.org_id or ctx.org_id,
+        org_id=flag.org_id,
         event_type="flag_changed",
         actor_id=ctx.user_id,
         target_type="feature_flag",
@@ -287,7 +291,7 @@ async def _flag_event(session: AsyncSession, ctx: RequestContext, flag: Flag, op
 
 @router.get("/flags", response_model=FlagList)
 async def list_flags(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> FlagList:
     """authz: staff. Every flag, global first."""
@@ -317,7 +321,7 @@ async def list_flags(
 )
 async def create_flag(
     body: FlagCreate,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> Flag:
     """authz: staff. 409 if the (key, org) pair exists; 404 for an unknown org."""
@@ -367,7 +371,7 @@ async def create_flag(
 async def update_flag(
     flag_id: uuid.UUID,
     body: FlagUpdate,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> Flag:
     """authz: staff."""
@@ -421,7 +425,7 @@ async def update_flag(
 )
 async def delete_flag(
     flag_id: uuid.UUID,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> Response:
     """authz: staff."""
@@ -461,7 +465,7 @@ def current_period(now: datetime | None = None) -> str:
 
 @router.get("/costs", response_model=CostReport)
 async def cost_report(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = DEFAULT_PAGE,
     cursor: str | None = None,
@@ -510,7 +514,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
 async def search_audit(
     body: AuditSearch,
     request: Request,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> AuditPage:
     """authz: staff with an active support grant from that tenant. Read-only page of one

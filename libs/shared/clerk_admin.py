@@ -276,3 +276,65 @@ async def revoke_actor_token(token_id: str) -> bool:
         logger.warning("could not revoke actor token %s", token_id)
         return False
     return response.status_code < 300
+
+
+@dataclass(frozen=True)
+class ClerkUserSummary:
+    """What the superadmin console needs to know about a Clerk account (ADR-0046 D1)."""
+
+    id: str
+    email: str | None
+    name: str | None
+    organization_count: int
+
+
+async def _summary(client: httpx.AsyncClient, user: dict) -> ClerkUserSummary:  # type: ignore[type-arg]
+    primary = user.get("primary_email_address_id")
+    emails = user.get("email_addresses") or []
+    email = next((e.get("email_address") for e in emails if e.get("id") == primary), None)
+    if email is None and emails:
+        email = emails[0].get("email_address")
+    name = " ".join(p for p in (user.get("first_name"), user.get("last_name")) if p) or None
+    memberships = await client.get(
+        f"{_API_BASE}/users/{user['id']}/organization_memberships", params={"limit": 1}
+    )
+    if memberships.status_code >= 300:
+        raise ClerkUnavailable(f"Clerk answered HTTP {memberships.status_code}")
+    body = memberships.json()
+    count = body.get("total_count") if isinstance(body, dict) else None
+    if not isinstance(count, int):
+        count = len(body.get("data", [])) if isinstance(body, dict) else len(body)
+    return ClerkUserSummary(id=str(user["id"]), email=email, name=name, organization_count=count)
+
+
+async def user_summary(clerk_user_id: str) -> ClerkUserSummary | None:
+    """One Clerk account by id, with how many organizations it belongs to. None if unknown."""
+    key = _secret_key()
+    if key is None:
+        raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
+    try:
+        async with _client(key) as client:
+            user = await client.get(f"{_API_BASE}/users/{clerk_user_id}")
+            if user.status_code == 404:
+                return None
+            if user.status_code >= 300:
+                raise ClerkUnavailable(f"Clerk answered HTTP {user.status_code}")
+            return await _summary(client, user.json())
+    except httpx.HTTPError as exc:
+        raise ClerkUnavailable("Clerk request failed") from exc
+
+
+async def users_by_email(email: str) -> list[ClerkUserSummary]:
+    """Every Clerk account with this email address (normally one)."""
+    key = _secret_key()
+    if key is None:
+        raise ClerkUnavailable("CLERK_SECRET_KEY is unset or a placeholder")
+    try:
+        async with _client(key) as client:
+            found = await client.get(f"{_API_BASE}/users", params={"email_address": email})
+            if found.status_code >= 300:
+                raise ClerkUnavailable(f"Clerk answered HTTP {found.status_code}")
+            users = found.json()
+            return [await _summary(client, u) for u in (users if isinstance(users, list) else [])]
+    except httpx.HTTPError as exc:
+        raise ClerkUnavailable("Clerk request failed") from exc

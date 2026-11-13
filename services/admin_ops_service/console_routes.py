@@ -40,16 +40,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared import clerk_admin
 from libs.shared.audit import audit
-from libs.shared.authz import RequestContext
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
 from services.admin_ops_service.common import (
+    StaffPrincipal,
     enable_ops_console,
     ops_log,
     ops_log_now,
     ops_session,
     require_staff,
-    staff_user_ids,
+    staff_clerk_ids,
+    staff_id_for,
 )
 from services.admin_ops_service.ops_routes import current_period
 from services.admin_ops_service.schemas import (
@@ -151,7 +152,7 @@ _OPS_ACTION_COLUMNS = "id, staff_user_id, action, target_org_id, details, create
 
 @router.get("/overview", response_model=Overview)
 async def overview(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> Overview:
     """authz: staff. Platform totals and series. Aggregates only."""
@@ -225,7 +226,7 @@ async def overview(
 
 
 async def _live_org(
-    session: AsyncSession, ctx: RequestContext, org_id: uuid.UUID, action: str
+    session: AsyncSession, ctx: StaffPrincipal, org_id: uuid.UUID, action: str
 ) -> Any:
     org = (
         (
@@ -265,7 +266,7 @@ _MIGRATION_COLUMNS = (
 @router.post("/tenants/detail", response_model=TenantDetail)
 async def tenant_detail(
     body: TenantTarget,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> TenantDetail:
     """authz: staff. One workspace's control-plane picture. No meeting, transcript, decision
@@ -441,7 +442,7 @@ def probe_transport() -> httpx.AsyncBaseTransport | None:
 
 @router.get("/health", response_model=Health)
 async def health(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(probe_transport)],
 ) -> Health:
@@ -487,31 +488,15 @@ async def health(
 
 @router.get("/staff", response_model=StaffReport)
 async def staff_report(
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> StaffReport:
-    """authz: staff. The allowlist and its activity. A staff member's email is read from their
-    own workspace, found through their own `ops.whoami` rows; someone who has never opened the
-    console has none yet."""
-    ids = sorted(staff_user_ids(), key=str)
+    """authz: staff. The allowlist and its activity. Staff accounts have no `users` row (they
+    belong to no workspace), so each name and email is read from Clerk; if Clerk cannot be
+    asked, the list still shows each account's ids and activity."""
+    clerk_ids = sorted(staff_clerk_ids())
     now = datetime.now(UTC)
-    id_list = [str(i) for i in ids]
-    seen = {
-        r["staff_user_id"]: r
-        for r in (
-            await session.execute(
-                text(
-                    "SELECT DISTINCT ON (staff_user_id) staff_user_id, "
-                    "details->>'caller_org_id' AS org_id FROM ops_audit_log "
-                    "WHERE staff_user_id = ANY(CAST(:ids AS uuid[])) AND action = 'ops.whoami' "
-                    "ORDER BY staff_user_id, created_at DESC"
-                ),
-                {"ids": id_list},
-            )
-        )
-        .mappings()
-        .all()
-    }
+    ids = [staff_id_for(c) for c in clerk_ids]
     activity = {
         r["staff_user_id"]: r
         for r in (
@@ -520,45 +505,32 @@ async def staff_report(
                     "SELECT staff_user_id, max(created_at) AS last_seen_at, "
                     "count(*) FILTER (WHERE created_at >= now() - interval '30 days') AS n "
                     "FROM ops_audit_log WHERE staff_user_id = ANY(CAST(:ids AS uuid[])) "
-                    "GROUP BY staff_user_id"
+                    "AND action <> 'ops.denied' GROUP BY staff_user_id"
                 ),
-                {"ids": id_list},
+                {"ids": [str(i) for i in ids]},
             )
         )
         .mappings()
         .all()
     }
-    members: list[StaffMember] = []
-    for staff_id in ids:
-        org_id: uuid.UUID | None = None
-        email = org_name = name = None
-        raw = seen[staff_id]["org_id"] if staff_id in seen else None
+
+    async def summary(clerk_id: str) -> clerk_admin.ClerkUserSummary | None:
         try:
-            org_id = uuid.UUID(raw) if raw else None
-        except ValueError:
-            org_id = None
-        if org_id is not None:
-            org_name = (
-                await session.execute(
-                    text("SELECT name FROM organizations WHERE id = :o"), {"o": str(org_id)}
-                )
-            ).scalar()
-            await set_rls(session, org_id)
-            who = (
-                await session.execute(
-                    text("SELECT email, display_name FROM users WHERE id = :u"),
-                    {"u": str(staff_id)},
-                )
-            ).first()
-            email, name = (who[0], who[1]) if who else (None, None)
+            return await clerk_admin.user_summary(clerk_id)
+        except clerk_admin.ClerkUnavailable:
+            return None
+
+    summaries = await asyncio.gather(*(summary(c) for c in clerk_ids))
+    members: list[StaffMember] = []
+    for clerk_id, staff_id, who in zip(clerk_ids, ids, summaries, strict=True):
         act = activity.get(staff_id)
         members.append(
             StaffMember(
                 user_id=staff_id,
-                name=name,
-                email=email,
-                org_id=org_id,
-                org_name=org_name,
+                clerk_user_id=clerk_id,
+                name=who.name if who else None,
+                email=who.email if who else None,
+                in_workspace=bool(who and who.organization_count),
                 last_seen_at=act["last_seen_at"] if act else None,
                 actions_30d=int(act["n"]) if act else 0,
             )
@@ -592,7 +564,7 @@ async def staff_report(
 @router.post("/tenants/migrate", response_model=MigrationView, status_code=201)
 async def request_migration(
     body: MigrateRequest,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> MigrationView:
     """authz: staff. Record a move request (ADR-0046 D5). One open request per workspace."""
@@ -667,7 +639,7 @@ async def request_migration(
 @router.post("/tenants/migrations/cancel", response_model=MigrationView)
 async def cancel_migration(
     body: MigrationCancel,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> MigrationView:
     """authz: staff. Cancel an open move request."""
@@ -714,7 +686,7 @@ _IMPERSONATE_GRANT = text(
 
 
 async def _impersonate_grant(
-    session: AsyncSession, ctx: RequestContext, org_id: uuid.UUID, action: str
+    session: AsyncSession, ctx: StaffPrincipal, org_id: uuid.UUID, action: str
 ) -> Any:
     await set_rls(session, org_id)
     grant = (await session.execute(_IMPERSONATE_GRANT, {"s": str(ctx.user_id)})).mappings().first()
@@ -736,17 +708,17 @@ async def _impersonate_grant(
 @router.post("/support/members", response_model=SupportMemberList)
 async def support_members(
     body: TenantTarget,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> SupportMemberList:
     """authz: staff with an active `impersonate` grant from that workspace."""
     grant = await _impersonate_grant(session, ctx, body.org_id, "support.members")
-    staff = staff_user_ids()
+    staff = staff_clerk_ids()
     rows = (
         (
             await session.execute(
                 text(
-                    "SELECT u.id, u.email, u.display_name, g.tier FROM users u "
+                    "SELECT u.id, u.clerk_user_id, u.email, u.display_name, g.tier FROM users u "
                     "LEFT JOIN rbac_grants g ON g.user_id = u.id AND g.org_id = u.org_id "
                     "WHERE u.deleted_at IS NULL ORDER BY u.email LIMIT 500"
                 )
@@ -769,7 +741,7 @@ async def support_members(
                 name=r["display_name"],
                 email=r["email"],
                 tier=r["tier"],
-                is_staff=r["id"] in staff,
+                is_staff=r["clerk_user_id"] in staff,
             )
             for r in rows
         ],
@@ -780,7 +752,7 @@ async def support_members(
 @router.post("/support/sessions", response_model=SupportSessionStarted, status_code=201)
 async def start_support_session(
     body: SupportSessionStart,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> SupportSessionStarted:
     """authz: staff with an active `impersonate` grant. Opens a time-boxed session as one
@@ -808,7 +780,7 @@ async def start_support_session(
             details={"user_id": str(body.user_id), "outcome": "not_found"},
         )
         raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
-    if body.user_id in staff_user_ids():
+    if target["clerk_user_id"] in staff_clerk_ids():
         await ops_log_now(
             staff_user_id=ctx.user_id,
             action=action,
@@ -907,7 +879,7 @@ async def start_support_session(
 @router.post("/support/sessions/end", response_model=SupportSessionView)
 async def end_support_session(
     body: SupportSessionEnd,
-    ctx: Annotated[RequestContext, Depends(require_staff)],
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
     session: Annotated[AsyncSession, Depends(ops_session)],
 ) -> SupportSessionView:
     """authz: staff, their own session. Access ends on the member's next request."""
