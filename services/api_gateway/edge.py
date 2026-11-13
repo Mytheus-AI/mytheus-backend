@@ -31,7 +31,7 @@ from redis.exceptions import RedisError
 from starlette.middleware.base import RequestResponseEndpoint
 
 from libs.shared import oauth_config, pat
-from libs.shared.auth import clerk_org_id_from, verify_token
+from libs.shared.auth import clerk_org_id_from, verify_token, verify_token_without_org
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail, problem_response
 from libs.shared.metrics import came_through_ingress
@@ -99,6 +99,13 @@ METRICS_PATH = "/metrics"
 # attached, so nothing downstream can mistake this request for a tenant-scoped one; the route
 # re-verifies the token and checks with Clerk that the caller administers that org.
 SELF_SERVE_ORG_PATH = "/orgs/self-serve"
+
+# The superadmin console (ADR-0046 D1). Its staff accounts belong to no workspace, so their
+# tokens carry no organization and `resolve_org_id` would refuse every one. For this prefix
+# only, the token is verified without an organization and no tenant is resolved or attached:
+# nothing downstream can mistake the request for a tenant-scoped one. admin-ops-service
+# re-verifies the token and refuses anyone who is not a listed, workspace-less staff account.
+OPS_CONSOLE_PREFIX = "/admin/ops/"
 
 
 # The OAuth paths above, which also answer CORS. Claude calls them server to server, but a
@@ -239,6 +246,13 @@ async def _authenticated(
     token = pat.bearer_of(request.headers)
     if pat.is_pat(token):
         return await _pat_request(request, call_next, str(token))
+
+    if request.url.path.startswith(OPS_CONSOLE_PREFIX):
+        try:
+            verify_token_without_org(_bearer(request))
+        except ProblemDetail as exc:
+            return problem_response(exc.status, exc.code, exc.detail)
+        return await call_next(request)
 
     if request.method == "POST" and request.url.path == SELF_SERVE_ORG_PATH:
         try:
