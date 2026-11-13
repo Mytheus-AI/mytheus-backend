@@ -61,6 +61,16 @@ async def audit(
 
     import json
 
+    from libs.shared import support_session
+
+    # During a staff support session every row says so (ADR-0046 D4): the actor is the member
+    # being acted as, but the actor type is `system` and the staff member is named. A route
+    # never has to remember this; the request context carries it.
+    acting = support_session.current()
+    if acting is not None and actor_type == "user":
+        actor_type = "system"
+        metadata = {**(metadata or {}), "support_session": acting.audit_tag()}
+
     await session.execute(
         _INSERT,
         {

@@ -33,7 +33,7 @@ from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libs.shared import pat
+from libs.shared import pat, support_session
 from libs.shared.audit import ACTION_AUTHZ_DENY, audit
 from libs.shared.auth import clerk_org_id_from, user_id_from, verify_token
 from libs.shared.db import get_sessionmaker
@@ -64,6 +64,9 @@ class RequestContext:
     auth_method: str = "session"
     token_id: UUID | None = None
     token_scope: str | None = None  # "read" | "read_write" for a token, None for a session
+    # Set when Mytheus staff are acting as this user in a support session (ADR-0046 D4).
+    support_session_id: UUID | None = None
+    support_staff_user_id: UUID | None = None
 
     @property
     def can_write(self) -> bool:
@@ -115,16 +118,25 @@ async def tenant_context(
     `PatAuthMiddleware`; it becomes the same context, re-checked against the scope rules here
     as well so a route can never be reached by a token the middleware would have refused.
     """
+    support_session.set_current(None)
     if pat.PAT_CLAIM in claims:
         return _token_context(request, claims)
     clerk_org = clerk_org_id_from(claims)
     clerk_user = user_id_from(claims)
+    actor = support_session.actor_from(claims)
 
     sessionmaker = get_sessionmaker()
+    support: support_session.SupportSession | None = None
     async with sessionmaker() as session, session.begin():
         org_id = await resolve_org_id(session, clerk_org)
         await set_rls(session, org_id)
         row = (await session.execute(_SELECT_PRINCIPAL, {"cuid": clerk_user})).mappings().first()
+        # A token with an `act` claim is a staff support session (Clerk impersonation). It is
+        # honoured only while this workspace holds an open, granted `support_sessions` row
+        # for exactly this staff member and this member (ADR-0046 D4); otherwise 401.
+        if actor is not None:
+            support = await support_session.resolve(session, actor, row["id"] if row else None)
+    support_session.set_current(support)
 
     # A verified Clerk user with no local mirror row is a real state: the webhook may not have
     # arrived yet. They get a context with no tier, so they can be authenticated and still
@@ -136,6 +148,8 @@ async def tenant_context(
         clerk_user_id=clerk_user,
         rbac_tier=(row["tier"] if row and row["tier"] else ""),
         ip=_client_ip(request),
+        support_session_id=support.id if support else None,
+        support_staff_user_id=support.staff_user_id if support else None,
     )
 
 
