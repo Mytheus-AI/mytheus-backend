@@ -64,8 +64,40 @@ def verify_token(
     """Verify a Clerk session token and return its claims. Fails closed on every branch."""
     if not credentials:
         raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Missing bearer token")
+    payload = _verify(credentials, allow_pat=True)
+    if pat.PAT_CLAIM in payload:
+        return payload  # a resolved personal access token: its tenant is already known
+    claim = org_claim_name()
+    value = payload.get(claim)
+    if not isinstance(value, str) or not value:
+        # Claim-absent is an explicit 401 and never a 500 (ADR-0010 D2). A token with no
+        # organization is a personal-account session: authenticated, but with no tenant to
+        # act in, so there is nothing it may reach.
+        raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Token carries no organization")
+    return payload
 
+
+def verify_token_without_org(
+    credentials: HTTPAuthorizationCredentials = Security(_bearer),  # noqa: B008
+) -> dict[str, Any]:
+    """Verify a Clerk session token WITHOUT requiring an organization claim.
+
+    For exactly one caller: the superadmin console (`/admin/ops/*`, ADR-0046 D1), whose staff
+    accounts belong to no workspace. Every check `verify_token` makes on the token itself still
+    applies (signature, issuer, exp/iat/nbf, sub). A personal access token is refused: staff act
+    through a session. What the caller may then do is decided by admin-ops-service's staff
+    rules, never by this function.
+    """
+    if not credentials:
+        raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Missing bearer token")
+    return _verify(credentials, allow_pat=False)
+
+
+def _verify(credentials: HTTPAuthorizationCredentials, *, allow_pat: bool) -> dict[str, Any]:
+    """Every check on the token itself; the organization claim is the callers' business."""
     if pat.is_pat(credentials.credentials):
+        if not allow_pat:
+            raise pat.invalid()
         # A personal access token is never a JWT. It is accepted here only when this request's
         # `PatAuthMiddleware` already resolved THIS token against the database (same hash);
         # called anywhere else (the gateway before resolution, a test, a worker) it is the
@@ -119,13 +151,6 @@ def verify_token(
         # an attacker a free oracle for which check failed.
         raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Invalid token") from exc
 
-    claim = org_claim_name()
-    value = payload.get(claim)
-    if not isinstance(value, str) or not value:
-        # Claim-absent is an explicit 401 and never a 500 (ADR-0010 D2). A token with no
-        # organization is a personal-account session: authenticated, but with no tenant to
-        # act in, so there is nothing it may reach.
-        raise ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Token carries no organization")
     return payload
 
 
