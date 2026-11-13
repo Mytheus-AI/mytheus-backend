@@ -361,3 +361,115 @@ def test_clerk_outage_starts_nothing(client, staff, monkeypatch):
         "SELECT count(*) AS n FROM support_sessions WHERE org_id = %(o)s", {"o": str(t.org_id)}
     )
     assert rows[0]["n"] == 0
+
+
+# --- bug reports and feedback (ADR-0046 D6) ----------------------------------------------------
+
+
+def test_a_member_sends_feedback_and_sees_only_their_own(client, monkeypatch):
+    monkeypatch.delenv("MYTHEUS_STAFF_USER_IDS", raising=False)
+    t = new_tenant("Reporter")
+    alice = t.add_user("member", email="alice@example.com")
+    bob = t.add_user("member")
+
+    alice.sign_in()
+    sent = client.post(
+        "/admin/tenant/feedback",
+        json={
+            "kind": "bug",
+            "message": "  The calendar shows the wrong week  ",
+            "page": "/meetings",
+        },
+    )
+    assert sent.status_code == 201, sent.text
+    assert (
+        sent.json()["status"] == "new"
+        and sent.json()["message"] == "The calendar shows the wrong week"
+    )
+    assert (
+        client.post("/admin/tenant/feedback", json={"kind": "bug", "message": "   "}).status_code
+        == 422
+    )
+    assert (
+        client.post("/admin/tenant/feedback", json={"kind": "rant", "message": "x"}).status_code
+        == 422
+    )
+    assert str(audit_rows(t.org_id, "feedback.submitted")[0]["actor_id"]) == str(alice.user_id)
+
+    bob.sign_in()
+    assert client.get("/admin/tenant/feedback").json()["items"] == []
+    alice.sign_in()
+    mine = client.get("/admin/tenant/feedback").json()["items"]
+    assert [m["id"] for m in mine] == [sent.json()["id"]]
+    # a member cannot use the staff inbox
+    assert client.get("/admin/ops/feedback").status_code == 403
+
+
+def test_feedback_is_rate_limited_per_person(client):
+    t = new_tenant()
+    member = t.add_user("member").sign_in()
+    for _ in range(20):
+        _sql(
+            "INSERT INTO feedback_reports (org_id, user_id, reporter_email, kind, message) "
+            "VALUES (%(o)s, %(u)s, 'x@example.com', 'feedback', 'hello')",
+            {"o": str(t.org_id), "u": str(member.user_id)},
+        )
+    resp = client.post("/admin/tenant/feedback", json={"kind": "feedback", "message": "one more"})
+    assert resp.status_code == 429
+
+
+def test_staff_inbox_lists_every_workspace_and_marks_status(client, staff):
+    a = new_tenant("Alpha")
+    b = new_tenant("Beta")
+    for tenant, text_ in ((a, "alpha bug"), (b, "beta idea")):
+        u = tenant.add_user("member")
+        _sql(
+            "INSERT INTO feedback_reports (org_id, user_id, reporter_email, kind, message) "
+            "VALUES (%(o)s, %(u)s, 'r@example.com', 'bug', %(m)s)",
+            {"o": str(tenant.org_id), "u": str(u.user_id), "m": text_},
+        )
+    staff.sign_in()
+    inbox = client.get("/admin/ops/feedback", params={"state": "new"})
+    assert inbox.status_code == 200, inbox.text
+    items = {i["message"]: i for i in inbox.json()["items"]}
+    assert items["alpha bug"]["org_name"] == "Alpha" and items["beta idea"]["org_name"] == "Beta"
+    assert inbox.json()["counts"]["new"] >= 2
+
+    done = client.post(
+        "/admin/ops/feedback/status", json={"id": items["alpha bug"]["id"], "status": "resolved"}
+    )
+    assert done.status_code == 200 and done.json()["status"] == "resolved"
+    assert done.json()["handled_by"] == str(staff.user_id)
+    missing = client.post(
+        "/admin/ops/feedback/status", json={"id": str(uuid.uuid4()), "status": "seen"}
+    )
+    assert missing.status_code == 404
+    assert client.get("/admin/ops/overview").json()["totals"]["feedback_new"] >= 1
+    actions = [r["action"] for r in ops_rows(staff.user_id)]
+    assert "feedback.list" in actions and actions.count("feedback.status") == 2
+
+
+def test_a_workspace_session_cannot_change_a_report():
+    """Only the ops_console policy may update: as `mytheus_app` bound to the report's own
+    workspace, an UPDATE matches nothing."""
+    import psycopg2
+
+    from tests.conftest import APP_URL
+
+    t = new_tenant()
+    u = t.add_user("member")
+    _sql(
+        "INSERT INTO feedback_reports (org_id, user_id, reporter_email, kind, message) "
+        "VALUES (%(o)s, %(u)s, 'r@example.com', 'bug', 'mine')",
+        {"o": str(t.org_id), "u": str(u.user_id)},
+    )
+    conn = psycopg2.connect(APP_URL.replace("+asyncpg", ""))
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT set_config('app.current_org', %s, true)", (str(t.org_id),))
+            cur.execute("UPDATE feedback_reports SET status = 'resolved'")
+            assert cur.rowcount == 0
+            cur.execute("SELECT count(*) FROM feedback_reports")
+            assert cur.fetchone()[0] == 1
+    finally:
+        conn.close()

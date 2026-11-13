@@ -46,7 +46,13 @@ from libs.shared import authz as authz_mod
 from libs.shared import cache as cache_mod
 from libs.shared import db as db_mod
 from libs.shared.errors import add_exception_handlers
-from services.admin_ops_service import common, console_routes, ops_routes, tenant_routes
+from services.admin_ops_service import (
+    common,
+    console_routes,
+    feedback_routes,
+    ops_routes,
+    tenant_routes,
+)
 from services.identity_tenant_service.routes import internal_status, rbac, tenant_settings
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
@@ -198,6 +204,8 @@ def apps(migrated_db):
     admin.include_router(tenant_routes.router)
     admin.include_router(ops_routes.router)
     admin.include_router(console_routes.router)
+    admin.include_router(feedback_routes.tenant_router)
+    admin.include_router(feedback_routes.ops_router)
     admin.dependency_overrides[auth_mod.verify_token] = _claims
     admin.dependency_overrides[common.identity_transport] = lambda: httpx.ASGITransport(
         app=identity
