@@ -419,6 +419,103 @@ components:
       - PM_ALREADY_CONNECTED
       - ACCOUNT_CONNECTED_ELSEWHERE
       type: string
+    FeedbackCreate:
+      additionalProperties: false
+      properties:
+        kind:
+          enum:
+          - bug
+          - feedback
+          title: Kind
+          type: string
+        message:
+          maxLength: 4000
+          minLength: 1
+          title: Message
+          type: string
+        page:
+          anyOf:
+          - maxLength: 300
+            type: string
+          - type: 'null'
+          title: Page
+      required:
+      - kind
+      - message
+      title: FeedbackCreate
+      type: object
+    FeedbackList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/FeedbackReport'
+          title: Items
+          type: array
+      required:
+      - items
+      title: FeedbackList
+      type: object
+    FeedbackReport:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          title: Kind
+          type: string
+        message:
+          title: Message
+          type: string
+        page:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page
+        status:
+          enum:
+          - new
+          - seen
+          - resolved
+          title: Status
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - kind
+      - message
+      - page
+      - status
+      - created_at
+      - updated_at
+      title: FeedbackReport
+      type: object
+    FeedbackStatusUpdate:
+      additionalProperties: false
+      properties:
+        id:
+          format: uuid
+          title: Id
+          type: string
+        status:
+          enum:
+          - new
+          - seen
+          - resolved
+          title: Status
+          type: string
+      required:
+      - id
+      - status
+      title: FeedbackStatusUpdate
+      type: object
     Flag:
       properties:
         enabled:
@@ -802,6 +899,92 @@ components:
       - created_at
       title: OpsAction
       type: object
+    OpsFeedback:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        handled_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Handled By
+        id:
+          format: uuid
+          title: Id
+          type: string
+        kind:
+          title: Kind
+          type: string
+        message:
+          title: Message
+          type: string
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        org_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Org Name
+        page:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page
+        reporter_email:
+          title: Reporter Email
+          type: string
+        status:
+          enum:
+          - new
+          - seen
+          - resolved
+          title: Status
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - kind
+      - message
+      - page
+      - status
+      - created_at
+      - updated_at
+      - org_id
+      - org_name
+      - user_id
+      - reporter_email
+      - handled_by
+      title: OpsFeedback
+      type: object
+    OpsFeedbackList:
+      properties:
+        counts:
+          additionalProperties:
+            type: integer
+          title: Counts
+          type: object
+        items:
+          items:
+            $ref: '#/components/schemas/OpsFeedback'
+          title: Items
+          type: array
+      required:
+      - items
+      - counts
+      title: OpsFeedbackList
+      type: object
     OutboxTenant:
       properties:
         max_attempts:
@@ -877,6 +1060,10 @@ components:
       properties:
         active:
           title: Active
+          type: integer
+        feedback_new:
+          default: 0
+          title: Feedback New
           type: integer
         meetings_7d:
           title: Meetings 7D
@@ -1792,6 +1979,92 @@ paths:
       summary: Cost Report
       tags:
       - admin-ops
+  /admin/ops/feedback:
+    get:
+      description: 'authz: staff. Every report, newest first (at most 200), with counts by state.'
+      operationId: feedback_inbox
+      parameters:
+      - in: query
+        name: state
+        required: false
+        schema:
+          default: all
+          enum:
+          - new
+          - seen
+          - resolved
+          - all
+          title: State
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsFeedbackList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Feedback Inbox
+      tags:
+      - admin-ops
+  /admin/ops/feedback/status:
+    post:
+      description: 'authz: staff. Mark a report new, seen or resolved.'
+      operationId: set_feedback_status
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackStatusUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsFeedback'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Set Feedback Status
+      tags:
+      - admin-ops
   /admin/ops/flags:
     get:
       description: 'authz: staff. Every flag, global first.'
@@ -2574,6 +2847,73 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Create Erasure
+      tags:
+      - admin-tenant
+  /admin/tenant/feedback:
+    get:
+      description: 'authz: member. The caller''s own reports, newest first.'
+      operationId: my_feedback
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: My Feedback
+      tags:
+      - admin-tenant
+    post:
+      description: 'authz: member. Send Mytheus a bug report or feedback.'
+      operationId: submit_feedback
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackReport'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Submit Feedback
       tags:
       - admin-tenant
   /admin/tenant/members:
