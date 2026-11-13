@@ -204,6 +204,19 @@ components:
       - items
       title: DataExportList
       type: object
+    DayCount:
+      properties:
+        count:
+          title: Count
+          type: integer
+        day:
+          title: Day
+          type: string
+      required:
+      - day
+      - count
+      title: DayCount
+      type: object
     DlqCount:
       properties:
         count:
@@ -501,6 +514,46 @@ components:
           title: Rules
       title: FlagUpdate
       type: object
+    GrantView:
+      properties:
+        active:
+          title: Active
+          type: boolean
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        revoked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Revoked At
+        scope:
+          title: Scope
+          type: string
+        staff_user_id:
+          format: uuid
+          title: Staff User Id
+          type: string
+      required:
+      - id
+      - staff_user_id
+      - scope
+      - expires_at
+      - revoked_at
+      - created_at
+      - active
+      title: GrantView
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -509,6 +562,57 @@ components:
           title: Detail
           type: array
       title: HTTPValidationError
+      type: object
+    Health:
+      properties:
+        checked_at:
+          format: date-time
+          title: Checked At
+          type: string
+        consumer_lag:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ConsumerLag'
+            type: array
+          - type: 'null'
+          title: Consumer Lag
+        dlq:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/DlqCount'
+            type: array
+          - type: 'null'
+          title: Dlq
+        outbox_max_attempts:
+          title: Outbox Max Attempts
+          type: integer
+        outbox_oldest_pending_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Outbox Oldest Pending At
+        outbox_pending:
+          title: Outbox Pending
+          type: integer
+        outbox_tenants:
+          items:
+            $ref: '#/components/schemas/OutboxTenant'
+          title: Outbox Tenants
+          type: array
+        services:
+          items:
+            $ref: '#/components/schemas/ServiceProbe'
+          title: Services
+          type: array
+      required:
+      - checked_at
+      - services
+      - outbox_pending
+      - outbox_oldest_pending_at
+      - outbox_max_attempts
+      - outbox_tenants
+      title: Health
       type: object
     Member:
       properties:
@@ -564,6 +668,257 @@ components:
       - tier
       title: MemberTierUpdate
       type: object
+    MigrateRequest:
+      additionalProperties: false
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        reason:
+          maxLength: 500
+          minLength: 5
+          title: Reason
+          type: string
+        to_cell:
+          anyOf:
+          - pattern: ^[a-z0-9][a-z0-9-]{1,40}$
+            type: string
+          - type: 'null'
+          title: To Cell
+        to_region:
+          enum:
+          - us
+          - eu
+          - ap
+          title: To Region
+          type: string
+      required:
+      - org_id
+      - to_region
+      - reason
+      title: MigrateRequest
+      type: object
+    MigrationCancel:
+      additionalProperties: false
+      properties:
+        migration_id:
+          format: uuid
+          title: Migration Id
+          type: string
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+      required:
+      - org_id
+      - migration_id
+      title: MigrationCancel
+      type: object
+    MigrationView:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        from_cell:
+          title: From Cell
+          type: string
+        from_region:
+          title: From Region
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        reason:
+          title: Reason
+          type: string
+        requested_by:
+          format: uuid
+          title: Requested By
+          type: string
+        status:
+          title: Status
+          type: string
+        to_cell:
+          title: To Cell
+          type: string
+        to_region:
+          title: To Region
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - from_region
+      - from_cell
+      - to_region
+      - to_cell
+      - status
+      - reason
+      - requested_by
+      - created_at
+      - updated_at
+      title: MigrationView
+      type: object
+    OpsAction:
+      properties:
+        action:
+          title: Action
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        details:
+          additionalProperties: true
+          title: Details
+          type: object
+        id:
+          format: uuid
+          title: Id
+          type: string
+        staff_user_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Staff User Id
+        target_org_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Target Org Id
+      required:
+      - id
+      - staff_user_id
+      - action
+      - target_org_id
+      - details
+      - created_at
+      title: OpsAction
+      type: object
+    OutboxTenant:
+      properties:
+        max_attempts:
+          title: Max Attempts
+          type: integer
+        name:
+          title: Name
+          type: string
+        oldest_pending_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Oldest Pending At
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        pending:
+          title: Pending
+          type: integer
+      required:
+      - org_id
+      - name
+      - pending
+      - oldest_pending_at
+      - max_attempts
+      title: OutboxTenant
+      type: object
+    Overview:
+      properties:
+        meetings_by_week:
+          items:
+            $ref: '#/components/schemas/WeekCount'
+          title: Meetings By Week
+          type: array
+        ops_activity_by_day:
+          items:
+            $ref: '#/components/schemas/DayCount'
+          title: Ops Activity By Day
+          type: array
+        period:
+          title: Period
+          type: string
+        plans:
+          items:
+            $ref: '#/components/schemas/PlanCount'
+          title: Plans
+          type: array
+        signups_by_week:
+          items:
+            $ref: '#/components/schemas/WeekCount'
+          title: Signups By Week
+          type: array
+        token_leaders:
+          items:
+            $ref: '#/components/schemas/TokenLeader'
+          title: Token Leaders
+          type: array
+        totals:
+          $ref: '#/components/schemas/OverviewTotals'
+      required:
+      - period
+      - totals
+      - signups_by_week
+      - meetings_by_week
+      - plans
+      - token_leaders
+      - ops_activity_by_day
+      title: Overview
+      type: object
+    OverviewTotals:
+      properties:
+        active:
+          title: Active
+          type: integer
+        meetings_7d:
+          title: Meetings 7D
+          type: integer
+        meetings_total:
+          title: Meetings Total
+          type: integer
+        members:
+          title: Members
+          type: integer
+        suspended:
+          title: Suspended
+          type: integer
+        tenants:
+          title: Tenants
+          type: integer
+        tokens_period:
+          title: Tokens Period
+          type: integer
+      required:
+      - tenants
+      - active
+      - suspended
+      - members
+      - meetings_7d
+      - meetings_total
+      - tokens_period
+      title: OverviewTotals
+      type: object
+    PlanCount:
+      properties:
+        count:
+          title: Count
+          type: integer
+        plan:
+          title: Plan
+          type: string
+      required:
+      - plan
+      - count
+      title: PlanCount
+      type: object
     Problem:
       description: 'RFC 7807 problem detail. Every 4xx and 5xx this service emits has this shape, including
         the ones FastAPI would otherwise return in its own format: `libs/shared/errors.py` registers handlers
@@ -613,6 +968,124 @@ components:
       required:
       - org_id
       title: ReinstateRequest
+      type: object
+    Residency:
+      properties:
+        db_cell:
+          title: Db Cell
+          type: string
+        locked_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Locked At
+        object_bucket_region:
+          title: Object Bucket Region
+          type: string
+        qdrant_region:
+          title: Qdrant Region
+          type: string
+        region:
+          title: Region
+          type: string
+      required:
+      - region
+      - db_cell
+      - qdrant_region
+      - object_bucket_region
+      - locked_at
+      title: Residency
+      type: object
+    ServiceProbe:
+      properties:
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+        latency_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Latency Ms
+        service:
+          title: Service
+          type: string
+        status:
+          enum:
+          - up
+          - down
+          title: Status
+          type: string
+      required:
+      - service
+      - status
+      - latency_ms
+      title: ServiceProbe
+      type: object
+    StaffMember:
+      properties:
+        actions_30d:
+          title: Actions 30D
+          type: integer
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        last_seen_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Seen At
+        org_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Org Id
+        org_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Org Name
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - email
+      - org_id
+      - org_name
+      - last_seen_at
+      - actions_30d
+      title: StaffMember
+      type: object
+    StaffReport:
+      properties:
+        activity_by_day:
+          items:
+            $ref: '#/components/schemas/DayCount'
+          title: Activity By Day
+          type: array
+        recent:
+          items:
+            $ref: '#/components/schemas/OpsAction'
+          title: Recent
+          type: array
+        staff:
+          items:
+            $ref: '#/components/schemas/StaffMember'
+          title: Staff
+          type: array
+      required:
+      - staff
+      - activity_by_day
+      - recent
+      title: StaffReport
       type: object
     SupportGrant:
       properties:
@@ -693,6 +1166,169 @@ components:
       - items
       title: SupportGrantList
       type: object
+    SupportMember:
+      properties:
+        email:
+          title: Email
+          type: string
+        is_staff:
+          title: Is Staff
+          type: boolean
+        tier:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tier
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - user_id
+      - email
+      - tier
+      - is_staff
+      title: SupportMember
+      type: object
+    SupportMemberList:
+      properties:
+        grant_expires_at:
+          format: date-time
+          title: Grant Expires At
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/SupportMember'
+          title: Items
+          type: array
+      required:
+      - items
+      - grant_expires_at
+      title: SupportMemberList
+      type: object
+    SupportSessionEnd:
+      additionalProperties: false
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        session_id:
+          format: uuid
+          title: Session Id
+          type: string
+      required:
+      - org_id
+      - session_id
+      title: SupportSessionEnd
+      type: object
+    SupportSessionList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SupportSessionView'
+          title: Items
+          type: array
+      required:
+      - items
+      title: SupportSessionList
+      type: object
+    SupportSessionStart:
+      additionalProperties: false
+      properties:
+        minutes:
+          default: 30
+          maximum: 60.0
+          minimum: 15.0
+          title: Minutes
+          type: integer
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        reason:
+          maxLength: 500
+          minLength: 5
+          title: Reason
+          type: string
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - org_id
+      - user_id
+      - reason
+      title: SupportSessionStart
+      type: object
+    SupportSessionStarted:
+      properties:
+        session:
+          $ref: '#/components/schemas/SupportSessionView'
+        sign_in_url:
+          title: Sign In Url
+          type: string
+      required:
+      - session
+      - sign_in_url
+      title: SupportSessionStarted
+      type: object
+    SupportSessionView:
+      properties:
+        end_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: End Reason
+        ended_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Ended At
+        expires_at:
+          format: date-time
+          title: Expires At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        open:
+          title: Open
+          type: boolean
+        reason:
+          title: Reason
+          type: string
+        staff_user_id:
+          format: uuid
+          title: Staff User Id
+          type: string
+        started_at:
+          format: date-time
+          title: Started At
+          type: string
+        user_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Email
+        user_id:
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - id
+      - staff_user_id
+      - user_id
+      - reason
+      - started_at
+      - expires_at
+      - ended_at
+      - end_reason
+      - open
+      title: SupportSessionView
+      type: object
     SuspendRequest:
       additionalProperties: false
       properties:
@@ -733,6 +1369,98 @@ components:
       - tokens_consumed
       - token_quota
       title: TenantCost
+      type: object
+    TenantDetail:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        flags:
+          items:
+            $ref: '#/components/schemas/Flag'
+          title: Flags
+          type: array
+        grants:
+          items:
+            $ref: '#/components/schemas/GrantView'
+          title: Grants
+          type: array
+        meetings_by_week:
+          items:
+            $ref: '#/components/schemas/WeekCount'
+          title: Meetings By Week
+          type: array
+        meetings_total:
+          title: Meetings Total
+          type: integer
+        members:
+          title: Members
+          type: integer
+        migrations:
+          items:
+            $ref: '#/components/schemas/MigrationView'
+          title: Migrations
+          type: array
+        name:
+          title: Name
+          type: string
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        period:
+          title: Period
+          type: string
+        plan:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Plan
+        recent_ops:
+          items:
+            $ref: '#/components/schemas/OpsAction'
+          title: Recent Ops
+          type: array
+        residency:
+          anyOf:
+          - $ref: '#/components/schemas/Residency'
+          - type: 'null'
+        sessions:
+          items:
+            $ref: '#/components/schemas/SupportSessionView'
+          title: Sessions
+          type: array
+        status:
+          title: Status
+          type: string
+        token_quota:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Token Quota
+        tokens_period:
+          title: Tokens Period
+          type: integer
+      required:
+      - org_id
+      - name
+      - status
+      - plan
+      - created_at
+      - residency
+      - members
+      - meetings_total
+      - meetings_by_week
+      - tokens_period
+      - token_quota
+      - period
+      - flags
+      - grants
+      - sessions
+      - migrations
+      - recent_ops
+      title: TenantDetail
       type: object
     TenantList:
       properties:
@@ -858,6 +1586,41 @@ components:
       - created_at
       title: TenantSummary
       type: object
+    TenantTarget:
+      additionalProperties: false
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+      required:
+      - org_id
+      title: TenantTarget
+      type: object
+    TokenLeader:
+      properties:
+        name:
+          title: Name
+          type: string
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        token_quota:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Token Quota
+        tokens:
+          title: Tokens
+          type: integer
+      required:
+      - org_id
+      - name
+      - tokens
+      - token_quota
+      title: TokenLeader
+      type: object
     ValidationError:
       properties:
         ctx:
@@ -883,6 +1646,19 @@ components:
       - msg
       - type
       title: ValidationError
+      type: object
+    WeekCount:
+      properties:
+        count:
+          title: Count
+          type: integer
+        week:
+          title: Week
+          type: string
+      required:
+      - week
+      - count
+      title: WeekCount
       type: object
     Whoami:
       properties:
@@ -1156,6 +1932,217 @@ paths:
       summary: Update Flag
       tags:
       - admin-ops
+  /admin/ops/health:
+    get:
+      description: 'authz: staff. Service probes and the outbox backlog (counts per workspace only).'
+      operationId: health
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Health
+      tags:
+      - admin-ops
+  /admin/ops/overview:
+    get:
+      description: 'authz: staff. Platform totals and series. Aggregates only.'
+      operationId: overview
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Overview
+      tags:
+      - admin-ops
+  /admin/ops/staff:
+    get:
+      description: 'authz: staff. The allowlist and its activity. A staff member''s email is read from
+        their
+
+        own workspace, found through their own `ops.whoami` rows; someone who has never opened the
+
+        console has none yet.'
+      operationId: staff_report
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffReport'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Staff Report
+      tags:
+      - admin-ops
+  /admin/ops/support/members:
+    post:
+      description: 'authz: staff with an active `impersonate` grant from that workspace.'
+      operationId: support_members
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantTarget'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportMemberList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Support Members
+      tags:
+      - admin-ops
+  /admin/ops/support/sessions:
+    post:
+      description: 'authz: staff with an active `impersonate` grant. Opens a time-boxed session as one
+
+        member through a Clerk actor token. The workspace''s own audit log records it.'
+      operationId: start_support_session
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportSessionStart'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSessionStarted'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start Support Session
+      tags:
+      - admin-ops
+  /admin/ops/support/sessions/end:
+    post:
+      description: 'authz: staff, their own session. Access ends on the member''s next request.'
+      operationId: end_support_session
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportSessionEnd'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSessionView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: End Support Session
+      tags:
+      - admin-ops
   /admin/ops/tenants:
     get:
       description: 'authz: staff. Tenant directory, newest first, keyset-paged: aggregates only.'
@@ -1201,6 +2188,140 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: List Tenants
+      tags:
+      - admin-ops
+  /admin/ops/tenants/detail:
+    post:
+      description: 'authz: staff. One workspace''s control-plane picture. No meeting, transcript, decision
+
+        or action content: meetings are counted by week, nothing else is read from them.'
+      operationId: tenant_detail
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantTarget'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantDetail'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Tenant Detail
+      tags:
+      - admin-ops
+  /admin/ops/tenants/migrate:
+    post:
+      description: 'authz: staff. Record a move request (ADR-0046 D5). One open request per workspace.'
+      operationId: request_migration
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Request Migration
+      tags:
+      - admin-ops
+  /admin/ops/tenants/migrations/cancel:
+    post:
+      description: 'authz: staff. Cancel an open move request.'
+      operationId: cancel_migration
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationCancel'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Cancel Migration
       tags:
       - admin-ops
   /admin/ops/tenants/reinstate:
@@ -1647,7 +2768,9 @@ paths:
       tags:
       - admin-tenant
     post:
-      description: 'authz: admin. A time-boxed grant to one Mytheus staff user (at most 30 days).'
+      description: 'authz: admin. A time-boxed grant to one Mytheus staff user (at most 30 days). Refused
+
+        inside a staff support session: support access is never granted by the support itself.'
       operationId: create_support_grant
       parameters:
       - description: Client-generated key making this write safe to retry. A replay with the same key
@@ -1722,6 +2845,32 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Revoke Support Grant
+      tags:
+      - admin-tenant
+  /admin/tenant/support-sessions:
+    get:
+      description: 'authz: admin. Every staff support session in this workspace, newest first (ADR-0046):
+
+        who acted as whom, why, and for how long.'
+      operationId: list_support_sessions
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSessionList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Support Sessions
       tags:
       - admin-tenant
   /healthz:
