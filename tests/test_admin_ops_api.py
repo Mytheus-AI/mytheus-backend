@@ -46,7 +46,7 @@ from libs.shared import authz as authz_mod
 from libs.shared import cache as cache_mod
 from libs.shared import db as db_mod
 from libs.shared.errors import add_exception_handlers
-from services.admin_ops_service import common, ops_routes, tenant_routes
+from services.admin_ops_service import common, console_routes, ops_routes, tenant_routes
 from services.identity_tenant_service.routes import internal_status, rbac, tenant_settings
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
@@ -58,13 +58,17 @@ SECRET = "i" * 40
 class Principal:
     clerk_org = ""
     clerk_user = ""
+    act: str | None = None  # a staff Clerk user id: the token is a support session (ADR-0046)
 
 
 PRINCIPAL = Principal()
 
 
-def _claims() -> dict[str, str]:
-    return {"sub": PRINCIPAL.clerk_user, "org_id": PRINCIPAL.clerk_org}
+def _claims() -> dict[str, Any]:
+    claims: dict[str, Any] = {"sub": PRINCIPAL.clerk_user, "org_id": PRINCIPAL.clerk_org}
+    if PRINCIPAL.act:
+        claims["act"] = {"sub": PRINCIPAL.act}
+    return claims
 
 
 def _sql(query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -110,9 +114,10 @@ class User:
         self.user_id = user_id
         self.clerk_user = clerk_user
 
-    def sign_in(self) -> User:
+    def sign_in(self, acting_as_staff: str | None = None) -> User:
         PRINCIPAL.clerk_org = self.tenant.clerk_org
         PRINCIPAL.clerk_user = self.clerk_user
+        PRINCIPAL.act = acting_as_staff
         return self
 
 
@@ -192,6 +197,7 @@ def apps(migrated_db):
     add_exception_handlers(admin)
     admin.include_router(tenant_routes.router)
     admin.include_router(ops_routes.router)
+    admin.include_router(console_routes.router)
     admin.dependency_overrides[auth_mod.verify_token] = _claims
     admin.dependency_overrides[common.identity_transport] = lambda: httpx.ASGITransport(
         app=identity
