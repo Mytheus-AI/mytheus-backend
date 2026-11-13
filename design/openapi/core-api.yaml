@@ -5821,6 +5821,13 @@ components:
           maxItems: 500
           title: Issues
           type: array
+        provider:
+          default: jira
+          enum:
+          - jira
+          - linear
+          title: Provider
+          type: string
       required:
       - as_of
       - issues
@@ -6247,7 +6254,9 @@ components:
           title: External Key
           type: string
         source:
-          const: jira
+          enum:
+          - jira
+          - linear
           title: Source
           type: string
         status:
@@ -7434,6 +7443,13 @@ components:
         key:
           title: Key
           type: string
+        provider:
+          default: jira
+          enum:
+          - jira
+          - linear
+          title: Provider
+          type: string
         status:
           anyOf:
           - type: string
@@ -7487,6 +7503,9 @@ components:
       type: object
     JiraOutcome:
       additionalProperties: false
+      description: 'The tenant''s tracker outcome. Named for Jira on the wire; since ADR-0044 it may be
+
+        Linear, and `provider` says which (evidence `kind` stays `jira`, meaning the tracker).'
       properties:
         connected:
           title: Connected
@@ -7497,6 +7516,14 @@ components:
           maxItems: 50
           title: Issues
           type: array
+        provider:
+          anyOf:
+          - enum:
+            - jira
+            - linear
+            type: string
+          - type: 'null'
+          title: Provider
       required:
       - connected
       title: JiraOutcome

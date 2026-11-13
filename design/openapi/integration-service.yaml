@@ -419,6 +419,14 @@ components:
             $ref: '#/components/schemas/IssueStatus'
           title: Issues
           type: array
+        provider:
+          anyOf:
+          - enum:
+            - jira
+            - linear
+            type: string
+          - type: 'null'
+          title: Provider
       required:
       - connected
       - issues
@@ -444,6 +452,11 @@ components:
           default: false
           title: Connected
           type: boolean
+        issues:
+          items:
+            $ref: '#/components/schemas/WatchIssue'
+          title: Issues
+          type: array
       title: LinearSource
       type: object
     MeetingRef:
@@ -736,6 +749,13 @@ components:
           title: Due Date
         key:
           title: Key
+          type: string
+        provider:
+          default: jira
+          enum:
+          - jira
+          - linear
+          title: Provider
           type: string
         status:
           anyOf:
