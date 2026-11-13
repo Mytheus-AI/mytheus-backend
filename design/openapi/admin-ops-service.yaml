@@ -1216,11 +1216,18 @@ components:
         actions_30d:
           title: Actions 30D
           type: integer
+        clerk_user_id:
+          title: Clerk User Id
+          type: string
         email:
           anyOf:
           - type: string
           - type: 'null'
           title: Email
+        in_workspace:
+          default: false
+          title: In Workspace
+          type: boolean
         last_seen_at:
           anyOf:
           - format: date-time
@@ -1232,26 +1239,14 @@ components:
           - type: string
           - type: 'null'
           title: Name
-        org_id:
-          anyOf:
-          - format: uuid
-            type: string
-          - type: 'null'
-          title: Org Id
-        org_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Org Name
         user_id:
           format: uuid
           title: User Id
           type: string
       required:
       - user_id
+      - clerk_user_id
       - email
-      - org_id
-      - org_name
       - last_seen_at
       - actions_30d
       title: StaffMember
@@ -1862,6 +1857,12 @@ components:
         staff:
           title: Staff
           type: boolean
+        staff_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Staff Id
       required:
       - staff
       title: Whoami
@@ -2265,12 +2266,11 @@ paths:
       - admin-ops
   /admin/ops/staff:
     get:
-      description: 'authz: staff. The allowlist and its activity. A staff member''s email is read from
-        their
+      description: 'authz: staff. The allowlist and its activity. Staff accounts have no `users` row (they
 
-        own workspace, found through their own `ops.whoami` rows; someone who has never opened the
+        belong to no workspace), so each name and email is read from Clerk; if Clerk cannot be
 
-        console has none yet.'
+        asked, the list still shows each account''s ids and activity.'
       operationId: staff_report
       responses:
         '200':
@@ -2697,7 +2697,11 @@ paths:
       - admin-ops
   /admin/ops/whoami:
     get:
-      description: 'authz: any signed-in user; answers whether they are Mytheus staff. Logged.'
+      description: 'authz: any signed-in session, with or without a workspace; answers whether it is a
+
+        Mytheus staff account (ADR-0046 D1), and its Staff ID when it is. Logged, with the reason
+
+        when it is not.'
       operationId: whoami
       responses:
         '200':
