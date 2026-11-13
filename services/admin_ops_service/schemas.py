@@ -291,6 +291,7 @@ class OverviewTotals(BaseModel):
     meetings_7d: int
     meetings_total: int
     tokens_period: int
+    feedback_new: int = 0
 
 
 class Overview(BaseModel):
@@ -476,3 +477,48 @@ class SupportSessionEnd(BaseModel):
 
     org_id: uuid.UUID
     session_id: uuid.UUID
+
+
+# --- bug reports and feedback (ADR-0046 D6) ----------------------------------------------------
+
+
+class FeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["bug", "feedback"]
+    message: str = Field(min_length=1, max_length=4000)
+    page: str | None = Field(default=None, max_length=300)
+
+
+class FeedbackReport(BaseModel):
+    id: uuid.UUID
+    kind: str
+    message: str
+    page: str | None
+    status: Literal["new", "seen", "resolved"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class FeedbackList(BaseModel):
+    items: list[FeedbackReport]
+
+
+class OpsFeedback(FeedbackReport):
+    org_id: uuid.UUID
+    org_name: str | None
+    user_id: uuid.UUID
+    reporter_email: str
+    handled_by: uuid.UUID | None
+
+
+class OpsFeedbackList(BaseModel):
+    items: list[OpsFeedback]
+    counts: dict[str, int]
+
+
+class FeedbackStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    status: Literal["new", "seen", "resolved"]

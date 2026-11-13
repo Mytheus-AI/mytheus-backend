@@ -204,6 +204,14 @@ async def overview(
         ],
         ops_activity_by_day=await _activity_by_day(session, now),
     )
+    await enable_ops_console(session)
+    result.totals.feedback_new = int(
+        (
+            await session.execute(
+                text("SELECT count(*) FROM feedback_reports WHERE status = 'new'")
+            )
+        ).scalar_one()
+    )
     await ops_log(
         session,
         staff_user_id=ctx.user_id,
