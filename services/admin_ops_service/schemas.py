@@ -414,6 +414,7 @@ class Health(BaseModel):
 
 class StaffMember(BaseModel):
     user_id: uuid.UUID
+    name: str | None = None
     email: str | None
     org_id: uuid.UUID | None
     org_name: str | None
@@ -445,6 +446,7 @@ class MigrationCancel(BaseModel):
 
 class SupportMember(BaseModel):
     user_id: uuid.UUID
+    name: str | None = None
     email: str
     tier: str | None
     is_staff: bool

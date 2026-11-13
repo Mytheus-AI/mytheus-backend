@@ -523,7 +523,7 @@ async def staff_report(
     members: list[StaffMember] = []
     for staff_id in ids:
         org_id: uuid.UUID | None = None
-        email = org_name = None
+        email = org_name = name = None
         raw = seen[staff_id]["org_id"] if staff_id in seen else None
         try:
             org_id = uuid.UUID(raw) if raw else None
@@ -536,15 +536,18 @@ async def staff_report(
                 )
             ).scalar()
             await set_rls(session, org_id)
-            email = (
+            who = (
                 await session.execute(
-                    text("SELECT email FROM users WHERE id = :u"), {"u": str(staff_id)}
+                    text("SELECT email, display_name FROM users WHERE id = :u"),
+                    {"u": str(staff_id)},
                 )
-            ).scalar()
+            ).first()
+            email, name = (who[0], who[1]) if who else (None, None)
         act = activity.get(staff_id)
         members.append(
             StaffMember(
                 user_id=staff_id,
+                name=name,
                 email=email,
                 org_id=org_id,
                 org_name=org_name,
@@ -735,7 +738,7 @@ async def support_members(
         (
             await session.execute(
                 text(
-                    "SELECT u.id, u.email, g.tier FROM users u "
+                    "SELECT u.id, u.email, u.display_name, g.tier FROM users u "
                     "LEFT JOIN rbac_grants g ON g.user_id = u.id AND g.org_id = u.org_id "
                     "WHERE u.deleted_at IS NULL ORDER BY u.email LIMIT 500"
                 )
@@ -754,7 +757,11 @@ async def support_members(
     return SupportMemberList(
         items=[
             SupportMember(
-                user_id=r["id"], email=r["email"], tier=r["tier"], is_staff=r["id"] in staff
+                user_id=r["id"],
+                name=r["display_name"],
+                email=r["email"],
+                tier=r["tier"],
+                is_staff=r["id"] in staff,
             )
             for r in rows
         ],
