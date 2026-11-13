@@ -134,7 +134,7 @@ def upgrade() -> None:
         AS $$
         DECLARE
           o record;
-          previoustext := current_setting('app.current_org', true);
+          previous text := current_setting('app.current_org', true);
           week0 timestamptz := date_trunc('week', now()) - make_interval(weeks => p_weeks - 1);
         BEGIN
           IF p_weeks < 1 OR p_weeks > 52 THEN
