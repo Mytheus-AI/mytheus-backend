@@ -70,7 +70,8 @@ def test_jira_status_is_not_connected_without_jira(client):
         headers=headers("workflow-service", t.org_id),
     )
     assert res.status_code == 200, res.text
-    assert res.json() == {"connected": False, "issues": []}
+    # `provider` names the connected tracker (Jira or Linear, ADR-0044); none is connected here.
+    assert res.json() == {"connected": False, "provider": None, "issues": []}
     assert (
         client.post(
             "/internal/jira/issue-status",
@@ -180,6 +181,8 @@ def test_drift_activity_wires_core_and_jira():
     assert result == {"due": 1, "open": 1, "owner": 1, "host": 0, "jira": 1}
     assert calls[2][2] == {
         "as_of": "2026-11-11",
+        # the tracker the statuses came from; an answer that names none is Jira (ADR-0044)
+        "provider": "jira",
         "issues": [{"action_id": action, "issue_key": "WEB-1", "issue_url": None}],
     }
 
