@@ -80,7 +80,13 @@ def test_overview_counts_every_workspace_and_is_logged(client, staff):
         _sql("INSERT INTO meetings (org_id, title) VALUES (%(o)s, 'x')", {"o": str(t.org_id)})
     _sql(
         "INSERT INTO usage_aggregates (org_id, dimension, billing_period, quantity) "
-        "VALUES (%(o)s, 'agent_token', %(p)s, 5000)",
+        "VALUES (%(o)s, 'agent_token', %(p)s, 9000)",
+        {"o": str(t.org_id), "p": ops_routes.current_period()},
+    )
+    # 180% of its quota, so it leads the top ten whatever other tests leave behind.
+    _sql(
+        "INSERT INTO agent_budgets (org_id, period, token_quota, hard_cap) "
+        "VALUES (%(o)s, %(p)s, 5000, 6000)",
         {"o": str(t.org_id), "p": ops_routes.current_period()},
     )
 
@@ -181,7 +187,26 @@ def test_health_probes_services_and_reports_the_outbox(client, staff):
     assert by_name["admin-ops-service"]["status"] == "up"
     assert by_name["core-api"]["status"] == "down" and by_name["bff"]["status"] == "up"
     assert h["outbox_pending"] >= 1 and h["outbox_max_attempts"] >= 3
-    assert any(r["org_id"] == str(t.org_id) for r in h["outbox_tenants"])
+    # The list is the ten largest backlogs, largest first; other tests leave events behind, so
+    # this workspace's one event is checked in the rollup itself rather than in that top ten.
+    pending = [r["pending"] for r in h["outbox_tenants"]]
+    assert len(pending) <= 10 and pending == sorted(pending, reverse=True)
+    # As `mytheus_app`, so RLS applies exactly as on the request path.
+    import psycopg2
+
+    from tests.conftest import APP_URL
+
+    conn = psycopg2.connect(APP_URL.replace("+asyncpg", ""))
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT outbox_pending, outbox_attempts FROM ops_tenant_rollup(1, '2026-11') "
+                "WHERE org_id = %s",
+                (str(t.org_id),),
+            )
+            assert cur.fetchall() == [(1, 3)]
+    finally:
+        conn.close()
     assert h["dlq"] is None and h["consumer_lag"] is None
     assert ops_rows(staff.user_id, "health.read")[-1]["details"]["down"] == ["core-api"]
 
