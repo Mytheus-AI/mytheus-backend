@@ -66,6 +66,7 @@ from services.admin_ops_service.schemas import (
     OutboxTenant,
     Overview,
     OverviewTotals,
+    PlaceCount,
     PlanCount,
     RegionCount,
     Residency,
@@ -173,6 +174,24 @@ async def _member_zones(session: AsyncSession, rows: list[Any]) -> list[ZoneCoun
     return [ZoneCount(time_zone=tz, members=n) for tz, n in counts.most_common()]
 
 
+async def _member_places(session: AsyncSession, rows: list[Any]) -> list[PlaceCount]:
+    """Members by the country and subdivision they set, summed over every workspace. Read like
+    `_member_zones`: each workspace under its own RLS binding, counts only, binding cleared."""
+    counts: Counter[tuple[str | None, str | None]] = Counter()
+    for r in rows:
+        await set_rls(session, r["org_id"])
+        result = await session.execute(
+            text(
+                "SELECT country, subdivision, count(*) AS n FROM users "
+                "WHERE deleted_at IS NULL GROUP BY country, subdivision"
+            )
+        )
+        for country, subdivision, n in result.all():
+            counts[(country, subdivision)] += int(n)
+    await session.execute(text("SELECT set_config('app.current_org', '', true)"))
+    return [PlaceCount(country=c, subdivision=s, members=n) for (c, s), n in counts.most_common()]
+
+
 def _regions(rows: list[Any]) -> list[RegionCount]:
     """Workspaces grouped by `data_residency.region`, largest first, each with its cells. A
     workspace with no residency row counts under `unplaced`, so the rows add up to the total."""
@@ -251,6 +270,7 @@ async def overview(
         ops_activity_by_day=await _activity_by_day(session, now),
         regions=_regions(rows),
         member_zones=await _member_zones(session, rows),
+        member_places=await _member_places(session, rows),
     )
     await enable_ops_console(session)
     result.totals.feedback_new = int(

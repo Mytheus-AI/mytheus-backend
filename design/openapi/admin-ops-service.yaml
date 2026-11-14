@@ -1034,6 +1034,13 @@ components:
             $ref: '#/components/schemas/WeekCount'
           title: Meetings By Week
           type: array
+        member_places:
+          description: Members by the country and subdivision they set (users.country, users.subdivision),
+            across every workspace, largest first; a row with both null counts members who have not said.
+          items:
+            $ref: '#/components/schemas/PlaceCount'
+          title: Member Places
+          type: array
         member_zones:
           description: Members by saved time zone across every workspace, largest first. Members with
             no listening preferences row are not counted here.
@@ -1117,6 +1124,28 @@ components:
       - meetings_total
       - tokens_period
       title: OverviewTotals
+      type: object
+    PlaceCount:
+      description: 'Members who say they work in this country (and subdivision). Both null: not set.'
+      properties:
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        members:
+          title: Members
+          type: integer
+        subdivision:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Subdivision
+      required:
+      - country
+      - subdivision
+      - members
+      title: PlaceCount
       type: object
     PlanCount:
       properties:

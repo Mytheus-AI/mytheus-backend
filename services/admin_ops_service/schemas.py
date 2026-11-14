@@ -320,6 +320,14 @@ class ZoneCount(BaseModel):
     members: int
 
 
+class PlaceCount(BaseModel):
+    """Members who say they work in this country (and subdivision). Both null: not set."""
+
+    country: str | None
+    subdivision: str | None
+    members: int
+
+
 class Overview(BaseModel):
     period: str
     totals: OverviewTotals
@@ -333,6 +341,12 @@ class Overview(BaseModel):
         default_factory=list,
         description="Members by saved time zone across every workspace, largest first. "
         "Members with no listening preferences row are not counted here.",
+    )
+    member_places: list[PlaceCount] = Field(
+        default_factory=list,
+        description="Members by the country and subdivision they set (users.country, "
+        "users.subdivision), across every workspace, largest first; a row with both null "
+        "counts members who have not said.",
     )
 
 

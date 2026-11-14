@@ -111,6 +111,10 @@ def test_overview_counts_every_workspace_and_is_logged(client, staff):
     zones = body["member_zones"]
     assert all(z["members"] > 0 and z["time_zone"] for z in zones)
     assert sum(z["members"] for z in zones) <= totals["members"]
+    # Members by the country and state they set: counts only, adding up to every member.
+    places = body["member_places"]
+    assert all(set(p) == {"country", "subdivision", "members"} for p in places)
+    assert all(p["members"] > 0 for p in places) and (places or not totals["members"])
     assert ops_rows(staff.user_id, "overview.read")
 
 
