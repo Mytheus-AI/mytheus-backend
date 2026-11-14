@@ -47,6 +47,9 @@ UNMODELLED_TABLES = frozenset(
         "share_links",
         "meeting_followups",
         "email_deliveries",
+        # ADR-0047 Ask Myte (d927f2c093f5): raw-SQL DDL, read and written with `text()`.
+        "myte_threads",
+        "myte_messages",
         # NOT this repo's. `mytheus-realtime` owns and migrates `transcript_chunks` in the
         # same physical Postgres (migrations/_grants.py:20-24). Dropping another repo's table
         # from this repo's autogenerate is the worst version of this bug.

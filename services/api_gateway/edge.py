@@ -449,6 +449,8 @@ ROUTE_MAP: dict[str, str] = {
     # Beyond the meeting, Layer 3: decisions as bets and the company time machine.
     "/api/v1/bets": "core-api",
     "/api/v1/time-machine": "core-api",
+    # ADR-0047 Ask Myte: the caller's own threads (the answer streams from rag-service, `/api/rag`).
+    "/api/v1/myte": "core-api",
     # The A2A grant store (ADR-0013) is identity's, under a versioned prefix of its own.
     "/api/v1/agent-authz-scopes": "identity-tenant-service",
     # The company brain (ADR-0039 Part A), identity's too.

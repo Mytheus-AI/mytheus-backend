@@ -283,6 +283,11 @@ def test_the_clerk_webhook_is_public_at_the_edge(client):
         ("/api/v1/meetings", "core-api"),
         ("/api/v1/meetings/abc-123", "core-api"),
         ("/api/v1/teams", "core-api"),
+        # ADR-0047 Ask Myte threads are core-api's; the answer itself streams from rag-service.
+        ("/api/v1/myte/threads", "core-api"),
+        ("/api/v1/myte/threads/abc-123/messages", "core-api"),
+        ("/api/v1/myte/messages/abc-123", "core-api"),
+        ("/api/rag/myte", "rag-service"),
         ("/scim/v2/Users", "identity-tenant-service"),
         ("/clerk/webhook", "identity-tenant-service"),
         ("/billing/subscriptions", "billing-metering-service"),

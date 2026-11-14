@@ -126,6 +126,10 @@ async def test_tools_end_to_end_as_the_token_owner(apps):
             "list_my_promises",
             "check_against_decisions",
             "check_my_capacity",
+            "list_my_schedule",
+            "find_people",
+            "list_my_inbox",
+            "get_my_myte",
             "create_action",
             "add_promise",
         }

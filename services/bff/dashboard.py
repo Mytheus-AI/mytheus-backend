@@ -209,6 +209,55 @@ class Dashboard(BaseModel):
         )
 
 
+_NEEDS_REVIEW_SQL = (
+    "SELECT * FROM ("
+    " SELECT 'decision' AS kind, d.id, d.meeting_id, m.title AS meeting_title, "
+    " d.content, d.created_at FROM decisions d JOIN meetings m ON m.id = d.meeting_id "
+    " WHERE d.status = 'proposed' AND d.confidence > :ds AND d.deleted_at IS NULL "
+    " AND (CASE WHEN d.review_owner_id IS NOT NULL THEN d.review_owner_id = :u "
+    "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
+    "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
+    " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
+    "  WHERE p.meeting_id = d.meeting_id AND p.user_id = :u) "
+    " UNION ALL "
+    " SELECT 'action' AS kind, a.id, a.meeting_id, m.title AS meeting_title, "
+    " a.content, a.created_at FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
+    " WHERE a.status = 'proposed' AND a.confidence > :as AND a.deleted_at IS NULL "
+    " AND (CASE WHEN EXISTS (SELECT 1 FROM meeting_participants o "
+    "   WHERE o.meeting_id = m.id AND o.user_id = a.assignee_id) THEN a.assignee_id = :u "
+    "  WHEN a.review_owner_id IS NOT NULL THEN a.review_owner_id = :u "
+    "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
+    "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
+    " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
+    "  WHERE p.meeting_id = a.meeting_id AND p.user_id = :u) "
+    ") c ORDER BY created_at DESC, id DESC LIMIT :limit"
+)
+
+
+async def load_needs_review(
+    session: AsyncSession, me: str, limit: int
+) -> list[DashboardReviewItem]:
+    """Proposed candidates in the caller's meetings that `GET /meetings/:id/candidates`
+    would surface (above the tenant's per-agent threshold), newest first. The 0.4 to 0.7
+    silent band is stored but never served, here as there. Only the cards the caller may
+    settle (core-api `candidates._require_card_owner`): a task that is theirs; a decision or
+    a task with no owner in the meeting when they host or created it, or when the room's
+    close-out handed it to them (`review_owner_id`, polish program)."""
+    decision_surface, _ = await band_for(session, "DecisionAgent")
+    action_surface, _ = await band_for(session, "ActionAgent")
+    found = (
+        (
+            await session.execute(
+                text(_NEEDS_REVIEW_SQL),
+                {"u": me, "ds": decision_surface, "as": action_surface, "limit": limit},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [DashboardReviewItem(**dict(r)) for r in found]
+
+
 async def _arm[ArmT: _ArmBase[Any]](
     name: str, arm: type[ArmT], load: Callable[[], Awaitable[list[Any]]]
 ) -> ArmT:
@@ -332,43 +381,10 @@ async def dashboard(
         return [DashboardRecentMeeting(**r) for r in found]
 
     async def needs_review() -> list[DashboardReviewItem]:
-        """Proposed candidates in the caller's meetings that `GET /meetings/:id/candidates`
-        would surface (above the tenant's per-agent threshold), newest first. The 0.4 to 0.7
-        silent band is stored but never served, here as there. Only the cards the caller may
-        settle (core-api `candidates._require_card_owner`): a task that is theirs; a decision or
-        a task with no owner in the meeting when they host or created it, or when the room's
-        close-out handed it to them (`review_owner_id`, polish program)."""
         if me is None:
             return []
         async with db:
-            # the workspace's calibrated thresholds (polish wave 2), as the candidates read
-            decision_surface, _ = await band_for(session, "DecisionAgent")
-            action_surface, _ = await band_for(session, "ActionAgent")
-        found = await rows(
-            "SELECT * FROM ("
-            " SELECT 'decision' AS kind, d.id, d.meeting_id, m.title AS meeting_title, "
-            " d.content, d.created_at FROM decisions d JOIN meetings m ON m.id = d.meeting_id "
-            " WHERE d.status = 'proposed' AND d.confidence > :ds AND d.deleted_at IS NULL "
-            " AND (CASE WHEN d.review_owner_id IS NOT NULL THEN d.review_owner_id = :u "
-            "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
-            "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
-            " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
-            "  WHERE p.meeting_id = d.meeting_id AND p.user_id = :u) "
-            " UNION ALL "
-            " SELECT 'action' AS kind, a.id, a.meeting_id, m.title AS meeting_title, "
-            " a.content, a.created_at FROM action_items a JOIN meetings m ON m.id = a.meeting_id "
-            " WHERE a.status = 'proposed' AND a.confidence > :as AND a.deleted_at IS NULL "
-            " AND (CASE WHEN EXISTS (SELECT 1 FROM meeting_participants o "
-            "   WHERE o.meeting_id = m.id AND o.user_id = a.assignee_id) THEN a.assignee_id = :u "
-            "  WHEN a.review_owner_id IS NOT NULL THEN a.review_owner_id = :u "
-            "  ELSE (m.created_by = :u OR EXISTS (SELECT 1 FROM meeting_participants h "
-            "   WHERE h.meeting_id = m.id AND h.user_id = :u AND h.role_in_meeting = 'host')) END) "
-            " AND m.deleted_at IS NULL AND EXISTS (SELECT 1 FROM meeting_participants p "
-            "  WHERE p.meeting_id = a.meeting_id AND p.user_id = :u) "
-            ") c ORDER BY created_at DESC, id DESC LIMIT :limit",
-            {"u": me, "ds": decision_surface, "as": action_surface, "limit": MAX_REVIEW},
-        )
-        return [DashboardReviewItem(**r) for r in found]
+            return await load_needs_review(session, me, MAX_REVIEW)
 
     # Gathered, so each arm keeps its own timeout and failure isolation.
     (
