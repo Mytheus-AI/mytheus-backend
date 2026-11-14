@@ -161,7 +161,7 @@ async def put_preferences(
     if body.language not in briefings.LANGUAGES:
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Unknown briefing language")
     if body.server_voice is not None and not any(
-        v.id == body.server_voice for v in briefing_audio.SERVER_VOICES
+        v.id == body.server_voice for v in briefing_audio.server_voices()
     ):
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Unknown server voice")
     prefs = body.model_copy(

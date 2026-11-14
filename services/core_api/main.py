@@ -69,6 +69,7 @@ from services.core_api.routes import (
     suggestions,
     time_machine,
     transcript,
+    voice,
     worklogs,
 )
 
@@ -157,6 +158,7 @@ app.include_router(internal_bets.router)
 app.include_router(time_machine.router)
 # ADR-0047 Ask Myte: the caller's own conversations with their Myte (`/api/v1/myte/*`).
 app.include_router(myte.router)
+app.include_router(voice.router)
 # ADR-0049 Ask Myte v2: peer questions, memories and routines (`/api/v1/myte/*`).
 app.include_router(myte_peers.router)
 app.include_router(myte_memory.router)

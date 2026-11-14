@@ -13914,6 +13914,35 @@ components:
       - user_id
       title: SpeakerAssign
       type: object
+    SpeechRequest:
+      properties:
+        language:
+          default: en
+          maxLength: 8
+          minLength: 2
+          title: Language
+          type: string
+        speed:
+          default: 1.0
+          maximum: 1.4
+          minimum: 0.7
+          title: Speed
+          type: number
+        text:
+          maxLength: 1500
+          minLength: 1
+          title: Text
+          type: string
+        voice:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          title: Voice
+      required:
+      - text
+      title: SpeechRequest
+      type: object
     StandInAnswer:
       properties:
         fill_id:
@@ -14900,6 +14929,71 @@ components:
       required:
       - text
       title: ViewPost
+      type: object
+    VoiceOption:
+      properties:
+        accent:
+          title: Accent
+          type: string
+        description:
+          title: Description
+          type: string
+        gender:
+          title: Gender
+          type: string
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - description
+      - accent
+      - gender
+      title: VoiceOption
+      type: object
+    VoicePreference:
+      properties:
+        voice:
+          anyOf:
+          - maxLength: 100
+            type: string
+          - type: 'null'
+          title: Voice
+      title: VoicePreference
+      type: object
+    VoicesView:
+      properties:
+        chosen:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The voice the person picked, if any.
+          title: Chosen
+        connected:
+          description: Whether Mytheus speaks with its own server voice.
+          title: Connected
+          type: boolean
+        selected:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The voice their Myte speaks with now: their choice, else its personality.'
+          title: Selected
+        voices:
+          items:
+            $ref: '#/components/schemas/VoiceOption'
+          title: Voices
+          type: array
+      required:
+      - connected
+      - voices
+      - chosen
+      - selected
+      title: VoicesView
       type: object
     Watch:
       properties:
@@ -27003,6 +27097,113 @@ paths:
       summary: Timeline
       tags:
       - time-machine
+  /api/v1/voice/preference:
+    put:
+      operationId: choose_voice
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoicePreference'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoicesView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Choose Voice
+      tags:
+      - voice
+  /api/v1/voice/speech:
+    post:
+      operationId: speak
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeechRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            audio/mpeg: {}
+          description: MP3, streamed.
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Speak
+      tags:
+      - voice
+  /api/v1/voice/voices:
+    get:
+      operationId: list_voices
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoicesView'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List Voices
+      tags:
+      - voice
   /api/v1/worklogs/{worklog_id}/feedback:
     post:
       description: 'Rate one of your own notes useful or not: your PersonalListenerAgent learns from it.'

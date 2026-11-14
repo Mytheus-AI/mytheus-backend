@@ -1,24 +1,22 @@
-"""The server-side voice of a briefing: a text-to-speech provider and the audio's object storage.
+"""The server-side voice of every Myte: a text-to-speech provider and the briefing audio's store.
 
-NOT CONNECTED by default. The apps speak a briefing on the device (the browser's speechSynthesis,
-expo-speech on the phone) unless BOTH of these are configured:
+The provider is Kokoro by default (`TTS_PROVIDER`, default `kokoro`): Kokoro-82M, open-weight,
+self-hosted on the VPS as the `kokoro-tts` service (Kokoro-FastAPI, OpenAI-style
+`POST /v1/audio/speech`, `KOKORO_URL`, default `http://kokoro-tts:8880`). Nothing leaves the
+server. `TTS_PROVIDER=elevenlabs` with `ELEVENLABS_API_KEY` keeps the hosted option;
+`TTS_PROVIDER=none` turns server voice off (the apps then show text only).
 
-- `TTS_PROVIDER=elevenlabs` with `ELEVENLABS_API_KEY` (optional `ELEVENLABS_MODEL_ID`, default
-  `eleven_multilingual_v2`, which speaks every briefing language). Any other value, or no key,
-  is "not connected".
-- Object storage, the same `S3_*` variables meeting-service and billing use
-  (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL` for R2, `S3_REGION`,
-  `S3_FORCE_PATH_STYLE`), and the bucket `BRIEFING_AUDIO_BUCKET` (default `mytheus-briefings`,
-  core-api's own). Keys follow the program's convention, tenant first:
-  `{org_id}/briefings/{user_id}/{briefing_id}.mp3`, so retention, residency and erasure act on
-  a prefix.
+Two uses:
+- Live speech (`speak`, streamed MP3): Ask Myte's read aloud and voice mode, and the briefing
+  player, through core-api `POST /api/v1/voice/speech`. Needs only the provider.
+- Briefing files (`backend()`): rendered right after the script lands and stored privately in
+  object storage, the same `S3_*` variables meeting-service and billing use, bucket
+  `BRIEFING_AUDIO_BUCKET` (default `mytheus-briefings`), keys tenant first:
+  `{org_id}/briefings/{user_id}/{briefing_id}.mp3`; served by a short-lived presigned GET.
 
-When connected, core-api renders the audio right after the script lands (`render`), stores it
-privately and serves a short-lived presigned GET (`presign`, 10 minutes, never stored, never
-public). The phone and the browser then play the file instead of speaking the script.
-
-`set_backend` swaps the provider and the store for tests (`FakeAudio`); no test calls a real
-provider.
+The person's voice (`briefing_preferences.server_voice`) is their Myte's voice everywhere; with
+none chosen the Myte's personality picks one. `set_backend` / `set_speaker` swap in fakes for
+tests; no test calls a real provider.
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ import asyncio
 import logging
 import os
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -36,6 +35,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 PROVIDER_ENV = "TTS_PROVIDER"
+DEFAULT_PROVIDER = "kokoro"
+KOKORO_URL_ENV = "KOKORO_URL"
+KOKORO_URL = "http://kokoro-tts:8880"
 ELEVENLABS_KEY_ENV = "ELEVENLABS_API_KEY"
 ELEVENLABS_MODEL_ENV = "ELEVENLABS_MODEL_ID"
 ELEVENLABS_URL_ENV = "ELEVENLABS_API_URL"
@@ -53,11 +55,43 @@ class ServerVoice:
     id: str
     name: str
     description: str
+    accent: str = ""
+    gender: str = ""
 
 
-# ElevenLabs premade voices (available on every account). The persona's personality picks the
-# default; the person can choose any of them in their preferences.
-SERVER_VOICES: tuple[ServerVoice, ...] = (
+# Kokoro-82M's best-graded English voices (its own quality grades, A to B-), curated so every
+# Myte sounds natural. The personality picks the default; anyone can choose another.
+KOKORO_VOICES: tuple[ServerVoice, ...] = (
+    ServerVoice("af_heart", "Heart", "Warm and natural", "American", "female"),
+    ServerVoice("af_bella", "Bella", "Bright and expressive", "American", "female"),
+    ServerVoice("af_kore", "Kore", "Clear and composed", "American", "female"),
+    ServerVoice("af_aoede", "Aoede", "Calm and gentle", "American", "female"),
+    ServerVoice("am_michael", "Michael", "Steady and confident", "American", "male"),
+    ServerVoice("am_fenrir", "Fenrir", "Deep and grounded", "American", "male"),
+    ServerVoice("am_puck", "Puck", "Lively and playful", "American", "male"),
+    ServerVoice("bf_emma", "Emma", "Polished and articulate", "British", "female"),
+    ServerVoice("bm_george", "George", "Warm and measured", "British", "male"),
+)
+_KOKORO_BY_PERSONALITY = {
+    "balanced": "af_heart",
+    "friendly": "af_bella",
+    "concise": "af_kore",
+    "direct": "am_michael",
+    "detailed": "bf_emma",
+}
+# Kokoro voices are per language; a briefing in another language uses that language's voice.
+_KOKORO_BY_LANGUAGE = {
+    "es": "ef_dora",
+    "fr": "ff_siwis",
+    "hi": "hf_alpha",
+    "it": "if_sara",
+    "ja": "jf_alpha",
+    "pt": "pf_dora",
+    "zh": "zf_xiaobei",
+}
+
+# ElevenLabs premade voices (available on every account), when TTS_PROVIDER=elevenlabs.
+ELEVENLABS_VOICES: tuple[ServerVoice, ...] = (
     ServerVoice("21m00Tcm4TlvDq8ikWAM", "Rachel", "Calm and clear"),
     ServerVoice("pNInz6obpgDQGcFmaJgB", "Adam", "Deep and steady"),
     ServerVoice("EXAVITQu4vr4xnSDxMfL", "Bella", "Soft and warm"),
@@ -65,7 +99,7 @@ SERVER_VOICES: tuple[ServerVoice, ...] = (
     ServerVoice("TxGEqnHWrfWFTfGW9XjX", "Josh", "Brisk and direct"),
     ServerVoice("MF3mGyEqCkNgVwKbdHrq", "Elli", "Bright and quick"),
 )
-_BY_PERSONALITY = {
+_ELEVENLABS_BY_PERSONALITY = {
     "balanced": "21m00Tcm4TlvDq8ikWAM",
     "concise": "TxGEqnHWrfWFTfGW9XjX",
     "detailed": "pNInz6obpgDQGcFmaJgB",
@@ -74,11 +108,36 @@ _BY_PERSONALITY = {
 }
 
 
-def voice_for(preferred: str | None, personality: str | None) -> str:
-    """The person's chosen server voice when it is one we know, else the persona's default."""
-    if preferred and any(v.id == preferred for v in SERVER_VOICES):
+def provider(env: dict[str, str] | None = None) -> str:
+    """`kokoro` (default), `elevenlabs`, or `none`."""
+    source = env if env is not None else os.environ
+    value = (source.get(PROVIDER_ENV) or DEFAULT_PROVIDER).strip().lower()
+    return value if value in ("kokoro", "elevenlabs") else "none"
+
+
+def server_voices() -> tuple[ServerVoice, ...]:
+    """The voices a person can choose, for the active provider."""
+    p = provider()
+    if p == "kokoro":
+        return KOKORO_VOICES
+    if p == "elevenlabs":
+        return ELEVENLABS_VOICES
+    return ()
+
+
+def voice_for(preferred: str | None, personality: str | None, language: str = "en") -> str:
+    """The person's chosen voice when it is one we know, else the persona's default. Kokoro
+    speaks another language only with that language's own voice."""
+    lang = (language or "en").split("-")[0].lower()
+    if provider() == "kokoro":
+        if lang != "en" and lang in _KOKORO_BY_LANGUAGE:
+            return _KOKORO_BY_LANGUAGE[lang]
+        if preferred and any(v.id == preferred for v in KOKORO_VOICES):
+            return preferred
+        return _KOKORO_BY_PERSONALITY.get(personality or "balanced", KOKORO_VOICES[0].id)
+    if preferred and any(v.id == preferred for v in ELEVENLABS_VOICES):
         return preferred
-    return _BY_PERSONALITY.get(personality or "balanced", SERVER_VOICES[0].id)
+    return _ELEVENLABS_BY_PERSONALITY.get(personality or "balanced", ELEVENLABS_VOICES[0].id)
 
 
 def audio_key(org_id: uuid.UUID, user_id: uuid.UUID, briefing_id: uuid.UUID) -> str:
@@ -112,7 +171,7 @@ class ElevenLabsS3:
         import boto3
         from botocore.config import Config
 
-        self._key = env[ELEVENLABS_KEY_ENV]
+        self._key = env.get(ELEVENLABS_KEY_ENV, "")
         self._model = env.get(ELEVENLABS_MODEL_ENV) or DEFAULT_MODEL
         self._url = (env.get(ELEVENLABS_URL_ENV) or ELEVENLABS_URL).rstrip("/")
         self._bucket = env.get(BUCKET_ENV) or DEFAULT_BUCKET
@@ -188,6 +247,102 @@ class ElevenLabsS3:
         return await asyncio.to_thread(run)
 
 
+class KokoroS3(ElevenLabsS3):
+    """Kokoro (self-hosted) for the voice, the same object storage for the file."""
+
+    def __init__(self, env: dict[str, str]) -> None:
+        super().__init__(env)
+        self._kokoro = (env.get(KOKORO_URL_ENV) or KOKORO_URL).rstrip("/")
+
+    async def synthesize(self, text: str, *, voice: str, language: str) -> bytes:
+        chunks = [c async for c in kokoro_stream(self._kokoro, text[:MAX_CHARS], voice=voice)]
+        data = b"".join(chunks)
+        if not data:
+            raise TtsError("tts answered no audio")
+        return data
+
+
+async def kokoro_stream(
+    base_url: str, text: str, *, voice: str, speed: float = 1.0
+) -> AsyncIterator[bytes]:
+    """Stream MP3 from Kokoro-FastAPI (`POST /v1/audio/speech`, OpenAI-style)."""
+    try:
+        async with (
+            httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client,
+            client.stream(
+                "POST",
+                f"{base_url}/v1/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": text,
+                    "voice": voice,
+                    "response_format": "mp3",
+                    "speed": speed,
+                    "stream": True,
+                },
+            ) as res,
+        ):
+            if res.status_code != 200:
+                raise TtsError(f"tts answered {res.status_code}")
+            async for chunk in res.aiter_bytes():
+                if chunk:
+                    yield chunk
+    except httpx.HTTPError as exc:
+        raise TtsError(f"tts unreachable: {type(exc).__name__}") from None
+
+
+class Speaker(Protocol):
+    def stream(self, text: str, *, voice: str, speed: float) -> AsyncIterator[bytes]: ...
+
+
+class KokoroSpeaker:
+    """Live speech (read aloud, voice mode, the briefing player)."""
+
+    def __init__(self, base_url: str) -> None:
+        self._url = base_url.rstrip("/")
+
+    def stream(self, text: str, *, voice: str, speed: float) -> AsyncIterator[bytes]:
+        return kokoro_stream(self._url, text, voice=voice, speed=speed)
+
+
+@dataclass
+class FakeSpeaker:
+    spoken: list[tuple[str, str, float]] = field(default_factory=list)
+    fail: bool = False
+
+    async def _gen(self, text: str) -> AsyncIterator[bytes]:
+        yield b"ID3fake-mp3:"
+        yield text[:20].encode()
+
+    def stream(self, text: str, *, voice: str, speed: float) -> AsyncIterator[bytes]:
+        if self.fail:
+            raise TtsError("fake failure")
+        self.spoken.append((text, voice, speed))
+        return self._gen(text)
+
+
+_speaker_override: list[Speaker | None] = []
+
+
+def set_speaker(speaker: Speaker | None) -> None:
+    _speaker_override.clear()
+    _speaker_override.append(speaker)
+
+
+def reset_speaker() -> None:
+    _speaker_override.clear()
+
+
+def speaker() -> Speaker | None:
+    """Live speech, or None when server voice is off. Only Kokoro streams live; ElevenLabs is
+    kept for briefing files."""
+    if _speaker_override:
+        return _speaker_override[0]
+    if provider() != "kokoro":
+        return None
+    return KokoroSpeaker(os.environ.get(KOKORO_URL_ENV) or KOKORO_URL)
+
+
 @dataclass
 class FakeAudio:
     """In-memory stand-in for tests: records what was spoken and stored."""
@@ -232,12 +387,15 @@ def reset_backend() -> None:
 
 
 def configured_from_env(env: dict[str, str] | None = None) -> bool:
+    """Briefing files need a provider and object storage."""
     source = env if env is not None else dict(os.environ)
-    return (
-        source.get(PROVIDER_ENV, "").strip().lower() == "elevenlabs"
-        and bool(source.get(ELEVENLABS_KEY_ENV, "").strip())
-        and bool(source.get("S3_ACCESS_KEY_ID", "").strip())
-        and bool(source.get("S3_SECRET_ACCESS_KEY", "").strip())
+    p = provider(source)
+    if p == "none":
+        return False
+    if p == "elevenlabs" and not source.get(ELEVENLABS_KEY_ENV, "").strip():
+        return False
+    return bool(source.get("S3_ACCESS_KEY_ID", "").strip()) and bool(
+        source.get("S3_SECRET_ACCESS_KEY", "").strip()
     )
 
 
@@ -245,13 +403,14 @@ _cached: list[AudioBackend] = []
 
 
 def backend() -> AudioBackend | None:
-    """The configured backend, or None ("not connected": the apps speak on the device)."""
+    """The configured backend, or None ("not connected": the apps play live speech instead)."""
     if _override:
         return _override[0]
     if not configured_from_env():
         return None
     if not _cached:
-        _cached.append(ElevenLabsS3(dict(os.environ)))
+        env = dict(os.environ)
+        _cached.append(KokoroS3(env) if provider(env) == "kokoro" else ElevenLabsS3(env))
     return _cached[0]
 
 

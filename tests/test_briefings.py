@@ -32,6 +32,7 @@ from libs.shared import db as db_mod
 from services.core_api import briefing_audio, briefings, consumer
 from services.core_api.routes import briefings as briefing_routes
 from services.core_api.routes import internal_meetings
+from services.core_api.routes import voice as voice_routes
 from tests.conftest import APP_URL
 from tests.test_chat_api import (
     PRINCIPAL,
@@ -59,6 +60,7 @@ def client(migrated_db):
     db_mod.get_sessionmaker.cache_clear()
     app = _create_test_app("core-api-briefings-test")
     app.include_router(briefing_routes.router)
+    app.include_router(voice_routes.router)
     app.dependency_overrides[auth_mod.verify_token] = lambda: {
         "sub": PRINCIPAL.clerk_user,
         "org_id": PRINCIPAL.clerk_org,
@@ -521,7 +523,7 @@ async def test_server_voice_renders_stores_and_then_notifies(client):
     client.post(f"/internal/briefings/{briefing}/claim", headers=_agent_headers(host.org_id))
     _sql(
         "INSERT INTO briefing_preferences (user_id, org_id, server_voice) "
-        "VALUES (%(u)s, %(o)s, 'pNInz6obpgDQGcFmaJgB')",
+        "VALUES (%(u)s, %(o)s, 'bm_george')",
         {"u": str(member.user_id), "o": str(host.org_id)},
     )
     sign_in(member)
@@ -546,9 +548,9 @@ async def test_server_voice_renders_stores_and_then_notifies(client):
     key = f"{host.org_id}/briefings/{member.user_id}/{briefing}.mp3"
     assert key in fake.objects
     text_, voice, language = fake.spoken[0]
-    assert text_.startswith("Hi Sam") and voice == "pNInz6obpgDQGcFmaJgB" and language == "en"
+    assert text_.startswith("Hi Sam") and voice == "bm_george" and language == "en"
     got = client.get(f"/api/v1/briefings/{briefing}").json()
-    assert got["audio"] == {"status": "ready", "voice": "pNInz6obpgDQGcFmaJgB"}
+    assert got["audio"] == {"status": "ready", "voice": "bm_george"}
     url = client.get(f"/api/v1/briefings/{briefing}/audio").json()
     assert url["url"].startswith("https://storage.test/") and url["mime"] == "audio/mpeg"
     assert len(notifications_for(briefing)) == 1
@@ -642,3 +644,60 @@ async def test_rls_isolates_briefings_and_preferences(client):
 
 def test_payload_shapes_are_json_safe():
     assert json.loads(json.dumps(script()))["segments"][0]["kind"] == "opening"
+
+
+# --- every Myte's voice (Kokoro, /api/v1/voice) -------------------------------------------------
+
+
+def test_kokoro_is_the_default_provider_with_curated_voices(monkeypatch):
+    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    assert briefing_audio.provider() == "kokoro"
+    ids = [v.id for v in briefing_audio.server_voices()]
+    assert ids[0] == "af_heart" and "bm_george" in ids and len(ids) >= 8
+    assert briefing_audio.voice_for(None, "friendly") == "af_bella"
+    assert briefing_audio.voice_for("am_puck", "friendly") == "am_puck"
+    assert briefing_audio.voice_for("not-a-voice", None) == "af_heart"
+    # Another language speaks with that language's own Kokoro voice.
+    assert briefing_audio.voice_for("am_puck", "friendly", "es") == "ef_dora"
+    monkeypatch.setenv("TTS_PROVIDER", "none")
+    assert briefing_audio.server_voices() == () and briefing_audio.speaker() is None
+
+
+def test_voices_lists_the_choice_and_speech_streams_in_the_chosen_voice(client):
+    fake = briefing_audio.FakeSpeaker()
+    briefing_audio.set_speaker(fake)
+    try:
+        host, member, _m = meeting()
+        sign_in(host)  # host's Myte is 'friendly'
+        got = client.get("/api/v1/voice/voices").json()
+        assert got["connected"] is True and got["chosen"] is None
+        assert got["selected"] == "af_bella"
+        assert {"id", "name", "description", "accent", "gender"} <= set(got["voices"][0])
+        assert client.put("/api/v1/voice/preference", json={"voice": "nope"}).status_code == 422
+        chosen = client.put("/api/v1/voice/preference", json={"voice": "bm_george"}).json()
+        assert chosen["chosen"] == "bm_george" and chosen["selected"] == "bm_george"
+        # The same choice is the briefing's server voice.
+        assert client.get("/api/v1/briefings/preferences").json()["server_voice"] == "bm_george"
+        res = client.post("/api/v1/voice/speech", json={"text": "Hello  there. "})
+        assert res.status_code == 200 and res.headers["content-type"] == "audio/mpeg"
+        assert res.headers["x-myte-voice"] == "bm_george"
+        assert res.content.startswith(b"ID3fake-mp3:")
+        assert fake.spoken[-1] == ("Hello there.", "bm_george", 1.0)
+        assert client.post("/api/v1/voice/speech", json={"text": ""}).status_code == 422
+        assert client.post("/api/v1/voice/speech", json={"text": "x" * 1501}).status_code == 422
+    finally:
+        briefing_audio.reset_speaker()
+
+
+def test_speech_without_a_voice_service_is_a_clear_503(client):
+    briefing_audio.set_speaker(briefing_audio.FakeSpeaker(fail=True))
+    try:
+        host, _member, _m = meeting()
+        sign_in(host)
+        res = client.post("/api/v1/voice/speech", json={"text": "Hi"})
+        assert res.status_code == 503 and res.json()["reason"] == "voice_not_connected"
+        briefing_audio.set_speaker(None)
+        assert client.post("/api/v1/voice/speech", json={"text": "Hi"}).status_code == 503
+        assert client.get("/api/v1/voice/voices").json()["connected"] is False
+    finally:
+        briefing_audio.reset_speaker()
