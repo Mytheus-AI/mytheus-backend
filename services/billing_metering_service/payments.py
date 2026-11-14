@@ -428,6 +428,15 @@ async def billing_status(
             {"c": plan["code"]},
         )
     ).scalar()
+    if snap.state == "blocked":
+        # The agent tier's gate reads the Redis mirror, which a migration or a lapse can leave
+        # behind the row (it is only rewritten on the next charge or plan change). Republishing
+        # here, where every member's page load already reads the row, keeps the gate and the
+        # banner saying the same thing. Best effort: the banner answers either way.
+        try:
+            await write_mirror(get_redis(), snap)
+        except Exception:  # noqa: BLE001 - Redis down must not fail the status read
+            logger.warning("billing status: budget mirror republish failed org=%s", ctx.org_id)
     admin = ctx.rbac_tier in ("admin", "owner")
     return BillingStatus(
         plan_code=str(plan["code"]),
