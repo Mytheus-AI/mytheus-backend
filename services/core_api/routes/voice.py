@@ -11,7 +11,8 @@ Ask Myte's read aloud and voice mode, and the briefing player.
   personality default). Stored as `briefing_preferences.server_voice`, so briefings use it too.
 - `POST /api/v1/voice/speech` `{text, voice?, speed?, language?}`: streams MP3 (`audio/mpeg`).
   Text is 1 to 1500 characters (the apps send a sentence or two at a time, so the first sound
-  arrives quickly). 60 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`; phrases served from the cache do not count), counted in
+  arrives quickly). 60 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`;
+  cached phrases do not count), counted in
   Redis at `nexus:{org_id}:ratelimit:voice:{user_id}:{minute}`. Server voice off or Kokoro
   unreachable: 503 `voice_not_connected` before any audio is sent.
 - `POST /api/v1/voice/transcribe`: the raw recording (`audio/webm`, `audio/ogg`, `audio/mp4`,
