@@ -147,6 +147,8 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     # Beyond the meeting: their agent's briefings (audio too, below) and briefing settings.
     ("briefings", "DELETE FROM agent_briefings WHERE user_id = :t"),
     ("briefing_preferences", "DELETE FROM briefing_preferences WHERE user_id = :t"),
+    # Ask Myte (ADR-0047): their conversations with their Myte; messages cascade.
+    ("myte_threads", "DELETE FROM myte_threads WHERE user_id = :t"),
 )
 
 _PERSON_ANONYMIZE: tuple[tuple[str, str], ...] = (
