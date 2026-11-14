@@ -97,6 +97,19 @@ components:
       - org_id
       title: AuditSearch
       type: object
+    CellCount:
+      properties:
+        db_cell:
+          title: Db Cell
+          type: string
+        workspaces:
+          title: Workspaces
+          type: integer
+      required:
+      - db_cell
+      - workspaces
+      title: CellCount
+      type: object
     ConfidenceThresholds:
       additionalProperties: false
       properties:
@@ -1034,6 +1047,11 @@ components:
             $ref: '#/components/schemas/PlanCount'
           title: Plans
           type: array
+        regions:
+          items:
+            $ref: '#/components/schemas/RegionCount'
+          title: Regions
+          type: array
         signups_by_week:
           items:
             $ref: '#/components/schemas/WeekCount'
@@ -1138,6 +1156,40 @@ components:
       - title
       - status
       - code
+      type: object
+    RegionCount:
+      description: 'Where workspaces live: one row per `data_residency.region`. A workspace with no
+
+        residency row is counted under `unplaced`, so the rows always add up to `totals.tenants`.'
+      properties:
+        active:
+          title: Active
+          type: integer
+        cells:
+          items:
+            $ref: '#/components/schemas/CellCount'
+          title: Cells
+          type: array
+        meetings_7d:
+          title: Meetings 7D
+          type: integer
+        members:
+          title: Members
+          type: integer
+        region:
+          title: Region
+          type: string
+        workspaces:
+          title: Workspaces
+          type: integer
+      required:
+      - region
+      - workspaces
+      - active
+      - members
+      - meetings_7d
+      - cells
+      title: RegionCount
       type: object
     ReinstateRequest:
       additionalProperties: false

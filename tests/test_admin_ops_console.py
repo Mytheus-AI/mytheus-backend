@@ -102,7 +102,41 @@ def test_overview_counts_every_workspace_and_is_logged(client, staff):
     assert body["signups_by_week"][-1]["count"] >= 1
     assert any(r["org_id"] == str(t.org_id) for r in body["token_leaders"])
     assert len(body["ops_activity_by_day"]) == 14
+    # Where workspaces live: the regions add up to the total, and each region's cells to it.
+    regions = body["regions"]
+    assert sum(r["workspaces"] for r in regions) == totals["tenants"]
+    for r in regions:
+        assert sum(c["workspaces"] for c in r["cells"]) == r["workspaces"]
     assert ops_rows(staff.user_id, "overview.read")
+
+
+def test_regions_group_by_residency_and_count_unplaced():
+    """`_regions` is pure: grouping, the `unplaced` bucket and the largest-first order."""
+    from services.admin_ops_service.console_routes import _regions
+
+    def row(region, cell, status="active", members=1, m7=0):
+        return {
+            "region": region,
+            "db_cell": cell,
+            "status": status,
+            "members": members,
+            "meetings_7d": m7,
+        }
+
+    out = _regions(
+        [
+            row("eu", "pool-eu-1", members=3, m7=2),
+            row("us", "pool-us-1"),
+            row("us", "pool-us-2", status="suspended"),
+            row("us", "pool-us-1", m7=5),
+            row(None, None),
+        ]
+    )
+    assert [r.region for r in out] == ["us", "eu", "unplaced"]
+    us = out[0]
+    assert (us.workspaces, us.active, us.members, us.meetings_7d) == (3, 2, 3, 5)
+    assert [(c.db_cell, c.workspaces) for c in us.cells] == [("pool-us-1", 2), ("pool-us-2", 1)]
+    assert out[2].cells[0].db_cell == "unplaced"
 
 
 def test_rollup_runs_as_the_app_role_and_restores_its_binding(client, staff):

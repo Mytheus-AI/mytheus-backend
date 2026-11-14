@@ -54,6 +54,7 @@ from services.admin_ops_service.common import (
 )
 from services.admin_ops_service.ops_routes import current_period
 from services.admin_ops_service.schemas import (
+    CellCount,
     DayCount,
     Flag,
     GrantView,
@@ -66,6 +67,7 @@ from services.admin_ops_service.schemas import (
     Overview,
     OverviewTotals,
     PlanCount,
+    RegionCount,
     Residency,
     ServiceProbe,
     StaffMember,
@@ -150,6 +152,31 @@ _OPS_ACTION_COLUMNS = "id, staff_user_id, action, target_org_id, details, create
 # --- overview ----------------------------------------------------------------------------------
 
 
+UNPLACED = "unplaced"
+
+
+def _regions(rows: list[Any]) -> list[RegionCount]:
+    """Workspaces grouped by `data_residency.region`, largest first, each with its cells. A
+    workspace with no residency row counts under `unplaced`, so the rows add up to the total."""
+    by_region: dict[str, list[Any]] = {}
+    for r in rows:
+        by_region.setdefault(r["region"] or UNPLACED, []).append(r)
+    result = []
+    for region, members in by_region.items():
+        cells = Counter((r["db_cell"] or UNPLACED) for r in members)
+        result.append(
+            RegionCount(
+                region=region,
+                workspaces=len(members),
+                active=sum(1 for r in members if r["status"] == "active"),
+                members=sum(int(r["members"]) for r in members),
+                meetings_7d=sum(int(r["meetings_7d"]) for r in members),
+                cells=[CellCount(db_cell=c, workspaces=n) for c, n in cells.most_common()],
+            )
+        )
+    return sorted(result, key=lambda x: (-x.workspaces, x.region))
+
+
 @router.get("/overview", response_model=Overview)
 async def overview(
     ctx: Annotated[StaffPrincipal, Depends(require_staff)],
@@ -204,6 +231,7 @@ async def overview(
             for r in leaders
         ],
         ops_activity_by_day=await _activity_by_day(session, now),
+        regions=_regions(rows),
     )
     await enable_ops_console(session)
     result.totals.feedback_new = int(

@@ -295,6 +295,23 @@ class OverviewTotals(BaseModel):
     feedback_new: int = 0
 
 
+class CellCount(BaseModel):
+    db_cell: str
+    workspaces: int
+
+
+class RegionCount(BaseModel):
+    """Where workspaces live: one row per `data_residency.region`. A workspace with no
+    residency row is counted under `unplaced`, so the rows always add up to `totals.tenants`."""
+
+    region: str
+    workspaces: int
+    active: int
+    members: int
+    meetings_7d: int
+    cells: list[CellCount]
+
+
 class Overview(BaseModel):
     period: str
     totals: OverviewTotals
@@ -303,6 +320,7 @@ class Overview(BaseModel):
     plans: list[PlanCount]
     token_leaders: list[TokenLeader]
     ops_activity_by_day: list[DayCount]
+    regions: list[RegionCount] = Field(default_factory=list)
 
 
 class TenantTarget(BaseModel):
