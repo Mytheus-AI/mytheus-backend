@@ -13,7 +13,7 @@ table-level grants to `mytheus_app`, so the policy covers them with no new grant
 - `logo_updated_at`: when it last changed (set on upload and on removal).
 
 Revision ID: e9f0a1b2c3d4
-Revises: d8e3f4a5b6c7
+Revises: d927f2c093f5
 Create Date: 2026-11-14
 """
 
@@ -22,7 +22,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "e9f0a1b2c3d4"
-down_revision: Union[str, None] = "d8e3f4a5b6c7"
+down_revision: Union[str, None] = "d927f2c093f5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
