@@ -11,7 +11,8 @@ Ask Myte's read aloud and voice mode, and the briefing player.
   personality default). Stored as `briefing_preferences.server_voice`, so briefings use it too.
 - `POST /api/v1/voice/speech` `{text, voice?, speed?, language?}`: streams MP3 (`audio/mpeg`).
   Text is 1 to 1500 characters (the apps send a sentence or two at a time, so the first sound
-  arrives quickly). 30 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`), counted in
+  arrives quickly). 60 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`;
+  cached phrases do not count), counted in
   Redis at `nexus:{org_id}:ratelimit:voice:{user_id}:{minute}`. Server voice off or Kokoro
   unreachable: 503 `voice_not_connected` before any audio is sent.
 - `POST /api/v1/voice/transcribe`: the raw recording (`audio/webm`, `audio/ogg`, `audio/mp4`,
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice"])
 
 PER_MINUTE_ENV = "VOICE_SPEECH_PER_MINUTE"
-DEFAULT_PER_MINUTE = 30
+DEFAULT_PER_MINUTE = 60
 
 
 class VoiceOption(BaseModel):
@@ -214,8 +215,6 @@ async def speak(
     speaker = briefing_audio.speaker()
     if speaker is None:
         raise _not_connected()
-    if not await _take(ctx.org_id, me):
-        raise ProblemDetail(429, ErrorCode.RATE_LIMITED, "Too much speech at once; slow down")
     if body.voice is not None and any(v.id == body.voice for v in _options()):
         voice = body.voice
     else:
@@ -247,6 +246,9 @@ async def speak(
                     "X-Voice-Cache": "hit",
                 },
             )
+    # Only real synthesis counts against the limit; a cached phrase costs nothing.
+    if not await _take(ctx.org_id, me):
+        raise ProblemDetail(429, ErrorCode.RATE_LIMITED, "Too much speech at once; slow down")
     try:
         stream = speaker.stream(text_in, voice=voice, speed=body.speed)
         first = await stream.__anext__()
