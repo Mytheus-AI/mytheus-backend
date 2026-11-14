@@ -24,6 +24,7 @@ Ask Myte's read aloud and voice mode, and the briefing player.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -162,6 +163,31 @@ async def _take(org_id: uuid.UUID, user_id: uuid.UUID, kind: str = "voice") -> b
     return used <= _per_minute()
 
 
+# Short phrases (greetings, "Let me check.", "Looking through your meetings.") are spoken again
+# and again; cached per workspace they come back instantly. Keyed by voice, speed and text, so a
+# changed voice never replays the old one. Never anything long or personal enough to matter.
+PHRASE_CACHE_CHARS = 160
+PHRASE_CACHE_TTL_S = 7 * 24 * 3600
+
+
+async def _cache_get(key: str) -> bytes | None:
+    try:
+        value = await get_redis().get(key)
+    except Exception:  # noqa: BLE001 - a cache miss, never an error
+        logger.warning("voice: phrase cache unavailable", exc_info=True)
+        return None
+    return bytes(value) if value else None
+
+
+async def _cache_put(key: str, data: bytes) -> None:
+    if not data:
+        return
+    try:
+        await get_redis().set(key, data, ex=PHRASE_CACHE_TTL_S)
+    except Exception:  # noqa: BLE001
+        logger.warning("voice: could not cache a phrase", exc_info=True)
+
+
 def _not_connected() -> ProblemDetail:
     return ProblemDetail(
         503,
@@ -199,6 +225,28 @@ async def speak(
         )
     if body.language.split("-")[0].lower() != "en":
         voice = briefing_audio.voice_for(None, None, body.language)
+    cache_key = (
+        redis_key(
+            ctx.org_id,
+            "voice",
+            "phrase",
+            hashlib.sha256(f"{voice}|{body.speed}|{text_in}".encode()).hexdigest(),
+        )
+        if len(text_in) <= PHRASE_CACHE_CHARS
+        else None
+    )
+    if cache_key is not None:
+        cached = await _cache_get(cache_key)
+        if cached:
+            return StreamingResponse(
+                iter([cached]),
+                media_type=briefing_audio.MIME,
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Myte-Voice": voice,
+                    "X-Voice-Cache": "hit",
+                },
+            )
     try:
         stream = speaker.stream(text_in, voice=voice, speed=body.speed)
         first = await stream.__anext__()
@@ -207,12 +255,17 @@ async def speak(
         raise _not_connected() from None
 
     async def body_iter() -> AsyncIterator[bytes]:
+        parts = [first]
         yield first
         try:
             async for chunk in stream:
+                parts.append(chunk)
                 yield chunk
         except briefing_audio.TtsError:
             logger.warning("voice: speech stopped mid-stream", exc_info=True)
+            return
+        if cache_key is not None:
+            await _cache_put(cache_key, b"".join(parts))
 
     return StreamingResponse(
         body_iter(),
