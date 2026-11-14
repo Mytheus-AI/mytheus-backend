@@ -611,7 +611,9 @@ def test_weekly_digest_is_built_filtered_and_sent_once(client):
         m,
         host.user_id,
         "Send the invoice",
-        due=(datetime.now(UTC).date() + timedelta(days=2)).isoformat(),
+        # Inside the digest's horizon (the seven days after the digested week) whatever weekday
+        # the suite runs on: "today + 2" fell on next Monday, the horizon's open end, on weekends.
+        due=(week + timedelta(days=8)).isoformat(),
     )
 
     sign_in(off)
