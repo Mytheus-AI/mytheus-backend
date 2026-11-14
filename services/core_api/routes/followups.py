@@ -65,6 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import ACTION_MEETING_FOLLOWUP_SENT, ACTION_MEETING_UPDATED, audit
 from libs.shared.authz import RequestContext, not_found, require_tier
 from libs.shared.db import get_sessionmaker
+from libs.shared.email_brand import brand_header
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
@@ -388,6 +389,9 @@ def _html_shell(inner: list[str], url: str | None) -> str:
     parts = [
         f'<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;'
         f'color:{_INK};max-width:560px;margin:0 auto;padding:24px;line-height:1.5">',
+        '<div style="margin:0 0 20px">'
+        + brand_header(wordmark_style=f"font-weight:600;font-size:18px;color:{_INK}")
+        + "</div>",
         *inner,
     ]
     if url:
