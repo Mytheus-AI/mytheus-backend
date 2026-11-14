@@ -9979,6 +9979,314 @@ components:
       - items
       title: MyTaskList
       type: object
+    MyteFeedback:
+      additionalProperties: false
+      properties:
+        feedback:
+          enum:
+          - 1
+          - -1
+          - 0
+          title: Feedback
+          type: integer
+        feedback_reason:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Feedback Reason
+      required:
+      - feedback
+      title: MyteFeedback
+      type: object
+    MyteMessage:
+      properties:
+        content:
+          title: Content
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        feedback:
+          description: 'The owner''s rating: 1, -1, or 0 for none.'
+          title: Feedback
+          type: integer
+        feedback_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Feedback Reason
+        id:
+          format: uuid
+          title: Id
+          type: string
+        payload:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          description: 'What the UI renders besides text: `steps`, `sources`, `cards`, `proposals` (with
+            their confirmed state), `followups`, `abstained`, `degraded`. At most 64 KB.'
+          title: Payload
+        role:
+          enum:
+          - user
+          - myte
+          title: Role
+          type: string
+        thread_id:
+          format: uuid
+          title: Thread Id
+          type: string
+      required:
+      - id
+      - thread_id
+      - role
+      - content
+      - feedback
+      - created_at
+      title: MyteMessage
+      type: object
+    MyteMessageIn:
+      additionalProperties: false
+      properties:
+        content:
+          default: ''
+          maxLength: 32000
+          title: Content
+          type: string
+        payload:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Payload
+        role:
+          enum:
+          - user
+          - myte
+          title: Role
+          type: string
+      required:
+      - role
+      title: MyteMessageIn
+      type: object
+    MyteMessageList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MyteMessage'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MyteMessageList
+      type: object
+    MyteMessagesAppend:
+      additionalProperties: false
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/MyteMessageIn'
+          maxItems: 2
+          minItems: 1
+          title: Messages
+          type: array
+      required:
+      - messages
+      title: MyteMessagesAppend
+      type: object
+    MyteScope:
+      additionalProperties: false
+      description: What the question was asked about (ADR-0047 D8 `scope`).
+      properties:
+        as_of:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: As Of
+        kind:
+          default: all
+          enum:
+          - all
+          - meeting
+          - person
+          - as_of
+          title: Kind
+          type: string
+        meeting_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Meeting Id
+        person_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Person Id
+      title: MyteScope
+      type: object
+    MyteThread:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_message_at:
+          format: date-time
+          title: Last Message At
+          type: string
+        pinned:
+          title: Pinned
+          type: boolean
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        title:
+          title: Title
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - title
+      - pinned
+      - created_at
+      - last_message_at
+      - updated_at
+      title: MyteThread
+      type: object
+    MyteThreadCreate:
+      additionalProperties: false
+      properties:
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        title:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Title
+      title: MyteThreadCreate
+      type: object
+    MyteThreadDetail:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_message_at:
+          format: date-time
+          title: Last Message At
+          type: string
+        messages:
+          description: The latest 200 messages, oldest first.
+          items:
+            $ref: '#/components/schemas/MyteMessage'
+          title: Messages
+          type: array
+        pinned:
+          title: Pinned
+          type: boolean
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        title:
+          title: Title
+          type: string
+        updated_at:
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - id
+      - title
+      - pinned
+      - created_at
+      - last_message_at
+      - updated_at
+      - messages
+      title: MyteThreadDetail
+      type: object
+    MyteThreadPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MyteThreadSummary'
+          title: Items
+          type: array
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - items
+      title: MyteThreadPage
+      type: object
+    MyteThreadSummary:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_message_at:
+          format: date-time
+          title: Last Message At
+          type: string
+        pinned:
+          title: Pinned
+          type: boolean
+        title:
+          title: Title
+          type: string
+      required:
+      - id
+      - title
+      - pinned
+      - created_at
+      - last_message_at
+      title: MyteThreadSummary
+      type: object
+    MyteThreadUpdate:
+      additionalProperties: false
+      description: At least one field.
+      properties:
+        pinned:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Pinned
+        title:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Title
+      title: MyteThreadUpdate
+      type: object
     Note:
       additionalProperties: false
       properties:
@@ -22927,6 +23235,348 @@ paths:
       summary: Start Wrap Up
       tags:
       - meetings
+  /api/v1/myte/messages/{message_id}:
+    patch:
+      description: 1 helpful, -1 not helpful, 0 clears the rating (and its reason).
+      operationId: rate_message
+      parameters:
+      - in: path
+        name: message_id
+        required: true
+        schema:
+          format: uuid
+          title: Message Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteFeedback'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteMessage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Rate one of Myte's answers
+      tags:
+      - myte
+  /api/v1/myte/threads:
+    delete:
+      description: Deletes every conversation of yours and their messages, for good.
+      operationId: delete_all_threads
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete all your Ask Myte conversations
+      tags:
+      - myte
+    get:
+      description: Your own conversations with your Myte, pinned first and then the most recent. `q` matches
+        a title or any message's text. Keyset-paginated with `cursor`.
+      operationId: list_threads
+      parameters:
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 30
+          maximum: 100
+          minimum: 1
+          title: Limit
+          type: integer
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: q
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          title: Q
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteThreadPage'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List your Ask Myte conversations
+      tags:
+      - myte
+    post:
+      description: A new, empty conversation of yours. An empty title becomes "New question"; a title
+        is cut to 120 characters. Honours `Idempotency-Key`.
+      operationId: create_thread
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteThreadCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteThread'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Start an Ask Myte conversation
+      tags:
+      - myte
+  /api/v1/myte/threads/{thread_id}:
+    delete:
+      description: Deletes the conversation and every message in it, for good.
+      operationId: delete_thread
+      parameters:
+      - in: path
+        name: thread_id
+        required: true
+        schema:
+          format: uuid
+          title: Thread Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete an Ask Myte conversation
+      tags:
+      - myte
+    get:
+      description: One of your conversations with its latest 200 messages, oldest first.
+      operationId: get_thread
+      parameters:
+      - in: path
+        name: thread_id
+        required: true
+        schema:
+          format: uuid
+          title: Thread Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteThreadDetail'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Open an Ask Myte conversation
+      tags:
+      - myte
+    patch:
+      operationId: update_thread
+      parameters:
+      - in: path
+        name: thread_id
+        required: true
+        schema:
+          format: uuid
+          title: Thread Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteThreadUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteThread'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Rename or pin an Ask Myte conversation
+      tags:
+      - myte
+  /api/v1/myte/threads/{thread_id}/messages:
+    post:
+      description: Appends one or two messages (a question and its answer) in order and moves the conversation's
+        `last_message_at` to the newest. `payload` is at most 64 KB. Honours `Idempotency-Key`, so a retried
+        save stores the turn once.
+      operationId: append_messages
+      parameters:
+      - in: path
+        name: thread_id
+        required: true
+        schema:
+          format: uuid
+          title: Thread Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteMessagesAppend'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteMessageList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Save a turn to an Ask Myte conversation
+      tags:
+      - myte
   /api/v1/promises:
     get:
       description: 'Every promise you made, from every channel (meetings, phone recordings, Slack, email,
