@@ -1147,6 +1147,33 @@ components:
       - members
       title: PlaceCount
       type: object
+    PlanChangeRequest:
+      additionalProperties: false
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        plan_code:
+          enum:
+          - free
+          - pro
+          - ultra
+          - payg
+          - unlimited
+          title: Plan Code
+          type: string
+        reason:
+          anyOf:
+          - maxLength: 500
+            type: string
+          - type: 'null'
+          title: Reason
+      required:
+      - org_id
+      - plan_code
+      title: PlanChangeRequest
+      type: object
     PlanCount:
       properties:
         count:
@@ -1757,6 +1784,32 @@ components:
       required:
       - items
       title: TenantList
+      type: object
+    TenantPlan:
+      properties:
+        org_id:
+          format: uuid
+          title: Org Id
+          type: string
+        plan_code:
+          title: Plan Code
+          type: string
+        state:
+          title: State
+          type: string
+        token_quota:
+          title: Token Quota
+          type: integer
+        tokens_consumed:
+          title: Tokens Consumed
+          type: integer
+      required:
+      - org_id
+      - plan_code
+      - token_quota
+      - tokens_consumed
+      - state
+      title: TenantPlan
       type: object
     TenantSettings:
       properties:
@@ -2709,6 +2762,63 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Cancel Migration
+      tags:
+      - admin-ops
+  /admin/ops/tenants/plan:
+    post:
+      description: 'authz: staff. Put a workspace on any plan, Unlimited included, with no payment.
+
+
+        The write is billing-metering-service''s own code (`set_subscription_plan` +
+
+        `sync_budget_to_plan`) run in-process in its own transaction under the workspace''s RLS:
+
+        admin-ops never writes a billing table with SQL of its own. A staff-set plan has no paid
+
+        window, so it never lapses (recorded deviation: a direct call, not a service hop, because
+
+        both run the same codebase against the same database). The agent-tier mirror is rewritten
+
+        after commit, so the new allowance applies to the next AI call; the superadmins are emailed.'
+      operationId: change_tenant_plan
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanChangeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantPlan'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Change Tenant Plan
       tags:
       - admin-ops
   /admin/ops/tenants/reinstate:

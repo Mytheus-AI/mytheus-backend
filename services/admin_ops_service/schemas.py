@@ -178,6 +178,22 @@ class TenantStatus(BaseModel):
     status: Literal["active", "suspended"]
 
 
+class PlanChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    plan_code: Literal["free", "pro", "ultra", "payg", "unlimited"]
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class TenantPlan(BaseModel):
+    org_id: uuid.UUID
+    plan_code: str
+    token_quota: int
+    tokens_consumed: int
+    state: str
+
+
 class Flag(BaseModel):
     id: uuid.UUID
     key: str

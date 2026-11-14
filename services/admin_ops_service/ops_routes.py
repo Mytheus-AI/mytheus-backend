@@ -38,6 +38,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -47,7 +48,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from libs.shared.cache import get_redis
+from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
+from libs.shared.staff_mail import notify_staff_soon
 from libs.shared.tenancy import set_rls
 from services.admin_ops_service.common import (
     IdentityTransport,
@@ -72,16 +76,27 @@ from services.admin_ops_service.schemas import (
     FlagCreate,
     FlagList,
     FlagUpdate,
+    PlanChangeRequest,
     ReinstateRequest,
     SuspendRequest,
     TenantCost,
     TenantList,
+    TenantPlan,
     TenantStatus,
     TenantSummary,
     Whoami,
 )
+from services.billing_metering_service.budgets import (
+    period_of,
+    plan_for_tenant,
+    set_subscription_plan,
+    sync_budget_to_plan,
+    write_mirror,
+)
+from services.billing_metering_service.payments import PLAN_LABELS
 
 router = APIRouter(prefix="/admin/ops", tags=["admin-ops"])
+logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE = 100
 MAX_PAGE = 200
@@ -266,6 +281,66 @@ async def reinstate_tenant(
     """authz: staff. Reinstate through identity (no `admin-events` symbol exists for it)."""
     return await _change_status(
         ctx, session, transport, org_id=body.org_id, target="active", reason=body.reason
+    )
+
+
+@router.post("/tenants/plan", response_model=TenantPlan)
+async def change_tenant_plan(
+    body: PlanChangeRequest,
+    ctx: Annotated[StaffPrincipal, Depends(require_staff)],
+    session: Annotated[AsyncSession, Depends(ops_session)],
+) -> TenantPlan:
+    """authz: staff. Put a workspace on any plan, Unlimited included, with no payment.
+
+    The write is billing-metering-service's own code (`set_subscription_plan` +
+    `sync_budget_to_plan`) run in-process in its own transaction under the workspace's RLS:
+    admin-ops never writes a billing table with SQL of its own. A staff-set plan has no paid
+    window, so it never lapses (recorded deviation: a direct call, not a service hop, because
+    both run the same codebase against the same database). The agent-tier mirror is rewritten
+    after commit, so the new allowance applies to the next AI call; the superadmins are emailed.
+    """
+    previous: str | None = None
+    async with get_sessionmaker()() as billing, billing.begin():
+        org = (
+            await billing.execute(
+                text("SELECT name FROM organizations WHERE id = :o AND deleted_at IS NULL"),
+                {"o": str(body.org_id)},
+            )
+        ).scalar()
+        if org is None:
+            raise ProblemDetail(404, ErrorCode.NOT_FOUND, "Not found")
+        await set_rls(billing, body.org_id)
+        previous = str((await plan_for_tenant(billing, body.org_id))["code"])
+        await set_subscription_plan(billing, body.org_id, body.plan_code, paid_until=None)
+        snap = await sync_budget_to_plan(billing, body.org_id, period_of(datetime.now(UTC)))
+    try:
+        await write_mirror(get_redis(), snap)
+    except Exception:  # noqa: BLE001 - the next charge or read-through republishes it
+        logger.warning("budget mirror write after plan change failed org=%s", body.org_id)
+    await ops_log(
+        session,
+        staff_user_id=ctx.user_id,
+        action="tenant.plan",
+        target_org_id=body.org_id,
+        details={"from": previous, "to": body.plan_code, "reason": body.reason},
+    )
+    if previous != body.plan_code:
+        notify_staff_soon(
+            f"{org} moved to {PLAN_LABELS.get(body.plan_code, body.plan_code)}",
+            [
+                ("Workspace", str(org)),
+                ("From", PLAN_LABELS.get(previous or "", previous or "unknown")),
+                ("To", PLAN_LABELS.get(body.plan_code, body.plan_code)),
+                ("Changed by", "Mytheus staff, from the ops console"),
+                ("Reason", body.reason or "none given"),
+            ],
+        )
+    return TenantPlan(
+        org_id=body.org_id,
+        plan_code=body.plan_code,
+        token_quota=snap.token_quota,
+        tokens_consumed=snap.tokens_consumed,
+        state=snap.state,
     )
 
 
