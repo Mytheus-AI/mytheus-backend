@@ -19,7 +19,8 @@ Ask Myte's read aloud and voice mode, and the briefing player.
   `audio/mpeg` or `audio/wav`, at most 10 MB) -> `{text}`. Talk mode's ears, so it works in
   every browser. Self-hosted faster-whisper (`whisper-stt`, speaches, `WHISPER_URL`, default
   `http://whisper-stt:8000`, model `WHISPER_MODEL`, default
-  `Systran/faster-distil-whisper-small.en`, downloaded on first use). 30 per minute per person;
+  `Systran/faster-whisper-base.en`, about 3x faster than distil-small on CPU, downloaded on
+  first use). 30 per minute per person;
   503 `listening_not_connected` when the service is off.
 """
 
@@ -281,7 +282,7 @@ async def speak(
 WHISPER_URL_ENV = "WHISPER_URL"
 WHISPER_URL = "http://whisper-stt:8000"
 WHISPER_MODEL_ENV = "WHISPER_MODEL"
-WHISPER_MODEL = "Systran/faster-distil-whisper-small.en"
+WHISPER_MODEL = "Systran/faster-whisper-base.en"
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 AUDIO_TYPES = ("audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav")
 _model_ready: set[str] = set()
