@@ -557,6 +557,7 @@ async def search_audit(
             403,
             ErrorCode.FORBIDDEN_ROLE,
             "Reading a tenant's audit log needs an active support grant from that tenant",
+            extra={"reason": "no_support_grant"},
         )
     rows = (
         (
