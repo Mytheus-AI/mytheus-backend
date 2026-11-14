@@ -259,7 +259,7 @@ class KokoroS3(ElevenLabsS3):
         """A whole briefing: short pieces rendered three at a time and joined (MP3 frames
         concatenate cleanly). One long streamed request was cut off by Kokoro mid-body
         (`RemoteProtocolError`), and one piece at a time took as long as the briefing itself."""
-        pieces = split_for_speech(text[:MAX_CHARS], PIECE_CHARS)
+        pieces = split_for_speech(speakable(text[:MAX_CHARS]), PIECE_CHARS)
         if not pieces:
             raise TtsError("nothing to say")
         gate = asyncio.Semaphore(RENDER_CONCURRENCY)
@@ -273,6 +273,70 @@ class KokoroS3(ElevenLabsS3):
         if not data:
             raise TtsError("tts answered no audio")
         return data
+
+
+_MONTHS = {
+    "Jan": "January",
+    "Feb": "February",
+    "Mar": "March",
+    "Apr": "April",
+    "Jun": "June",
+    "Jul": "July",
+    "Aug": "August",
+    "Sep": "September",
+    "Sept": "September",
+    "Oct": "October",
+    "Nov": "November",
+    "Dec": "December",
+}
+_DAYS = {
+    "Mon": "Monday",
+    "Tue": "Tuesday",
+    "Tues": "Tuesday",
+    "Wed": "Wednesday",
+    "Thu": "Thursday",
+    "Thur": "Thursday",
+    "Thurs": "Thursday",
+    "Fri": "Friday",
+    "Sat": "Saturday",
+    "Sun": "Sunday",
+}
+_MONTH_RE = re.compile(r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True)) + r")\.?(?=\s+\d)")
+_DAY_RE = re.compile(
+    r"\b("
+    + "|".join(sorted(_DAYS, key=len, reverse=True))
+    + r")\.?(?=,?\s+(?:\d|"
+    + "|".join(list(_MONTHS.values()) + list(_MONTHS))
+    + r"))"
+)
+_AMPM = r"([AaPp])(?:\.\s?[Mm]\.|[Mm]\b)"
+_ON_THE_HOUR = re.compile(r"\b(\d{1,2}):00\s*" + _AMPM)
+_CLOCK_AMPM = re.compile(r"\b(\d{1,2}(?::\d{2})?)\s*" + _AMPM)
+_CITATION = re.compile(r"\s*\[\d+\](?:\[\d+\])*")
+_MARKDOWN = re.compile(r"[*_`#>]+")
+
+
+def speakable(text: str) -> str:
+    """Text as it should be read aloud: abbreviated months and weekdays next to a date are
+    spelled out ("Nov 13" -> "November 13", "Fri, Nov" -> "Friday, November"), times lose
+    ":00" and say "PM", citations and markdown go, and a few written shorthands are expanded.
+    Kokoro reads what it is given, so "Nov" was spoken as "Nov"."""
+    out = _CITATION.sub("", text)
+    out = _MARKDOWN.sub("", out)
+    out = _MONTH_RE.sub(lambda m: _MONTHS[m.group(1)], out)
+    out = _DAY_RE.sub(lambda m: _DAYS[m.group(1)], out)
+    out = _ON_THE_HOUR.sub(lambda m: f"{m.group(1)} {m.group(2).upper()}M", out)
+    out = _CLOCK_AMPM.sub(lambda m: f"{m.group(1)} {m.group(2).upper()}M", out)
+    for written, said in (
+        ("e.g.", "for example"),
+        ("i.e.", "that is"),
+        (" vs. ", " versus "),
+        (" vs ", " versus "),
+        (" & ", " and "),
+        ("UTC", "U T C"),
+    ):
+        out = out.replace(written, said)
+    return " ".join(out.split())
 
 
 RENDER_CONCURRENCY = 3
@@ -334,7 +398,7 @@ async def kokoro_stream(
 ) -> AsyncIterator[bytes]:
     """Live speech: the apps send a sentence or two at a time, so each piece is fetched whole
     (Kokoro's chunked replies were cut off mid-body) and yielded as one chunk."""
-    for piece in split_for_speech(text):
+    for piece in split_for_speech(speakable(text)):
         yield await kokoro_speech(base_url, piece, voice=voice, speed=speed)
 
 
