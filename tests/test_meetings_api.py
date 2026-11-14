@@ -357,7 +357,9 @@ def test_suspended_tenant_is_refused_at_the_checkpoint(client, tenant_a):
     )
     resp = client.get("/api/v1/meetings")
     assert resp.status_code == 401, "a suspended tenant must stop at the edge, not at a policy"
-    assert resp.json()["detail"] == "Token carries no usable organization"
+    # Its own (Clerk-verified) member is told why, so the web app can sign them out.
+    assert resp.json()["code"] == "AUTH_REQUIRED"
+    assert resp.json()["reason"] == "tenant_suspended"
 
 
 # --- pagination -----------------------------------------------------------------------------

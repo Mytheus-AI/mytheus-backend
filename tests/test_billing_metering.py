@@ -84,7 +84,8 @@ def seed_tenant(tier: str = "admin", plan: str | None = None) -> Tenant:
     if plan:
         _sql(
             "INSERT INTO subscriptions (org_id, plan_id) "
-            "SELECT %(o)s, id FROM plans WHERE code = %(p)s",
+            # Plans are versioned: the newest version of the code, as provisioning does.
+            "SELECT %(o)s, id FROM plans WHERE code = %(p)s ORDER BY version DESC LIMIT 1",
             {"o": str(org_id), "p": plan},
         )
     return Tenant(org_id, clerk_org, user_id, clerk_user)
@@ -188,8 +189,8 @@ async def test_a_message_is_metered_once_and_mirrored(env):
     b = budget_row(t.org_id)
     assert (b["tokens_consumed"], b["token_quota"], b["hard_cap"], b["state"]) == (
         1_000,
-        200_000,
-        200_000,
+        10_000,
+        10_000,
         "ok",
     )
     # Free subscription was provisioned lazily.
