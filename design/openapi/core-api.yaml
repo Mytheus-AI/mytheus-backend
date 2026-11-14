@@ -9984,14 +9984,13 @@ components:
       description: A rating, proposal states (ADR-0049 R2), or both. At least one of the two.
       properties:
         feedback:
-          anyOf:
-          - enum:
-            - 1
-            - -1
-            - 0
-            type: integer
-          - type: 'null'
+          default: 0
+          enum:
+          - 1
+          - -1
+          - 0
           title: Feedback
+          type: integer
         feedback_reason:
           anyOf:
           - maxLength: 500

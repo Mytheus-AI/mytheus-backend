@@ -202,7 +202,9 @@ class MyteFeedback(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    feedback: Literal[1, -1, 0] | None = None
+    # Not nullable: the schema keeps v1's plain enum (oasdiff reads `| None` as a removed enum).
+    # Whether it was sent is `model_fields_set`.
+    feedback: Literal[1, -1, 0] = 0
     feedback_reason: str | None = Field(default=None, max_length=MAX_FEEDBACK_REASON)
     proposal_states: dict[str, ProposalState] | None = Field(
         default=None,
@@ -227,9 +229,10 @@ class MyteFeedback(BaseModel):
 
     @model_validator(mode="after")
     def _something_to_change(self) -> MyteFeedback:
-        if self.feedback is None and not self.proposal_states:
+        rated = "feedback" in self.model_fields_set
+        if not rated and not self.proposal_states:
             raise ValueError("send feedback, proposal_states, or both")
-        if self.feedback is None and self.feedback_reason is not None:
+        if not rated and self.feedback_reason is not None:
             raise ValueError("feedback_reason needs feedback")
         return self
 
@@ -621,7 +624,7 @@ async def rate_message(
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Only Myte's answers take feedback")
     sets: list[str] = []
     params: dict[str, Any] = {"id": str(message_id), "u": str(me)}
-    if body.feedback is not None:
+    if "feedback" in body.model_fields_set:
         reason = None
         if body.feedback != 0 and body.feedback_reason is not None:
             reason = " ".join(body.feedback_reason.split()) or None
