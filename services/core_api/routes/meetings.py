@@ -19,7 +19,7 @@ import base64
 import binascii
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -42,6 +42,7 @@ from libs.shared.authz import (
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.events import EventEnvelope
 from libs.shared.outbox import enqueue
+from services.billing_metering_service.budgets import enforcement_mode, period_of
 from services.core_api import minutes
 from services.core_api.brain import latest_statuses, may_see_source
 from services.core_api.routes.invitations import schedule_change_after_commit
@@ -353,6 +354,29 @@ async def _fetch_meeting(
     return row
 
 
+async def _refuse_while_ai_paused(session: AsyncSession) -> None:
+    """ADR-0051 D2: at the allowance AI is paused for the whole workspace. A meeting is where the
+    Mytes listen, take notes and answer, so a new one does not start until credits or a bigger
+    plan turn AI back on. Reads this month's `agent_budgets` row under the caller's RLS (read
+    only; billing-metering-service is its one writer). No row yet means nothing used: allowed.
+    `alert_only` never refuses, the same as the agent tier's gate."""
+    if enforcement_mode() != "enforce":
+        return
+    state = (
+        await session.execute(
+            text("SELECT state FROM agent_budgets WHERE period = :p"),
+            {"p": period_of(datetime.now(UTC))},
+        )
+    ).scalar()
+    if state == "blocked":
+        raise ProblemDetail(
+            402,
+            ErrorCode.QUOTA_EXCEEDED,
+            "AI is paused: this workspace has used this month's AI allowance. "
+            "Buy credits or upgrade to start a meeting.",
+        )
+
+
 # --- routes ---------------------------------------------------------------------------------
 
 
@@ -371,6 +395,7 @@ async def create_meeting(
     not the host). Agenda owners must be participants. Every 422 below is raised before the
     first write.
     """
+    await _refuse_while_ai_paused(session)
     creator = ctx.user_id
     # De-duplicated, order preserved; the creator is added separately, so listing them is a
     # no-op.

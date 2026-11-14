@@ -164,6 +164,37 @@ def test_create_persists_event_and_audit_in_one_transaction(client, tenant_a):
     assert str(audit_rows[0]["actor_id"]) == str(tenant_a.user_id)
 
 
+def _set_budget_state(tenant: Tenant, state: str) -> None:
+    from datetime import UTC, datetime
+
+    period = datetime.now(UTC).strftime("%Y-%m")
+    _sql(
+        "INSERT INTO agent_budgets (org_id, period, token_quota, hard_cap, tokens_consumed, state) "
+        "VALUES (%(o)s, %(p)s, 10000, 10000, 10000, %(s)s) "
+        "ON CONFLICT (org_id, period) DO UPDATE SET state = EXCLUDED.state",
+        {"o": str(tenant.org_id), "p": period, "s": state},
+    )
+
+
+def test_create_refused_while_ai_is_paused(client, tenant_a, monkeypatch):
+    """ADR-0051 D2: at the allowance AI is paused for the workspace, and a meeting is where the
+    Mytes work, so no new meeting starts until credits or a bigger plan turn it back on."""
+    monkeypatch.setenv("BUDGET_ENFORCEMENT_MODE", "enforce")
+    _set_budget_state(tenant_a, "blocked")
+    resp = client.post("/api/v1/meetings", json={"title": "Paused"})
+    assert resp.status_code == 402, resp.text
+    assert resp.json()["code"] == "QUOTA_EXCEEDED"
+    rows = _sql("SELECT 1 FROM meetings WHERE org_id = %(o)s", {"o": str(tenant_a.org_id)})
+    assert rows == []
+
+
+def test_create_allowed_when_paused_but_only_alerting(client, tenant_a, monkeypatch):
+    monkeypatch.setenv("BUDGET_ENFORCEMENT_MODE", "alert_only")
+    _set_budget_state(tenant_a, "blocked")
+    resp = client.post("/api/v1/meetings", json={"title": "Alert only"})
+    assert resp.status_code == 201, resp.text
+
+
 def test_creator_is_the_host_without_being_listed(client, tenant_a):
     """The caller who creates a meeting can join it. The token route is deny-by-default and
     admits only `meeting_participants` rows, so a creator who had to remember to list
