@@ -784,3 +784,16 @@ def test_short_phrases_are_cached_so_fillers_come_back_instantly(client):
         assert len(fake.spoken) == spoken + 2  # long text is never cached
     finally:
         briefing_audio.reset_speaker()
+
+
+def test_speech_spells_out_dates_and_times_so_kokoro_reads_them_naturally():
+    say = briefing_audio.speakable
+    assert say("Due Nov 18th, before Fri, Nov 20 at 11:00 PM [2].") == (
+        "Due November 18th, before Friday, November 20 at 11 PM."
+    )
+    assert say("Starts 9:30 am, e.g. the sync & retro") == (
+        "Starts 9:30 AM, for example the sync and retro"
+    )
+    # Words that only look like abbreviations are left alone.
+    assert say("The Sun rose; Mar is a name") == "The Sun rose; Mar is a name"
+    assert say("**Pricing** vs the plan") == "Pricing versus the plan"
