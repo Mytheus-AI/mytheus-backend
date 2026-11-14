@@ -334,6 +334,8 @@ async def change_tenant_plan(
                 ("Changed by", "Mytheus staff, from the ops console"),
                 ("Reason", body.reason or "none given"),
             ],
+            "No payment: a staff-set plan takes effect now and does not lapse.",
+            kind="plan",
         )
     return TenantPlan(
         org_id=body.org_id,

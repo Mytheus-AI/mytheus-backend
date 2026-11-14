@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from libs.shared.audit import audit
 from libs.shared.authz import RequestContext, require_tier, tenant_session
 from libs.shared.errors import ErrorCode, ProblemDetail
+from libs.shared.staff_mail import notify_staff_soon
 from services.admin_ops_service.common import (
     StaffPrincipal,
     enable_ops_console,
@@ -111,6 +112,23 @@ async def submit_feedback(
         target_id=row["id"],
         metadata={"kind": body.kind},
         ip=ctx.ip,
+    )
+    org_name = (
+        await session.execute(
+            text("SELECT name FROM organizations WHERE id = :o"), {"o": str(ctx.org_id)}
+        )
+    ).scalar()
+    # A heads-up to every superadmin with the member's own words (best effort, not awaited).
+    notify_staff_soon(
+        f"{'Bug report' if body.kind == 'bug' else 'Feedback'} from {org_name or 'a workspace'}",
+        [
+            ("From", email or "unknown"),
+            ("Workspace", str(org_name or ctx.org_id)),
+            ("Page", page or "not given"),
+        ],
+        "Answer it from the feedback inbox; the reporter sees the status you set.",
+        kind="bug" if body.kind == "bug" else "feedback",
+        quote=message,
     )
     return FeedbackReport(**dict(row))
 

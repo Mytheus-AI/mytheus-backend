@@ -379,6 +379,8 @@ async def verify_checkout(
                     ("Razorpay payment", body.payment_id),
                     ("Workspace id", str(ctx.org_id)),
                 ],
+                "Paid through Razorpay. The new allowance applies now and the plan runs 30 days.",
+                kind="plan",
             )
         elif order["kind"] == "settlement":
             notify_staff_soon(
@@ -388,6 +390,7 @@ async def verify_checkout(
                     ("Paid", amount),
                     ("Razorpay payment", body.payment_id),
                 ],
+                kind="payment",
             )
         else:
             notify_staff_soon(
@@ -398,6 +401,8 @@ async def verify_checkout(
                     ("Paid", amount),
                     ("Razorpay payment", body.payment_id),
                 ],
+                "Added to this month's allowance; they end with the month.",
+                kind="credits",
             )
     return CheckoutResult(
         kind=order["kind"],

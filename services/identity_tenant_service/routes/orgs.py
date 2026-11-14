@@ -248,6 +248,7 @@ async def provision_org(
             ("Workspace id", str(created.org_id)),
         ],
         "Provisioned by a platform operator.",
+        kind="workspace",
     )
 
     return ProvisionedOrganization(
@@ -415,7 +416,8 @@ async def self_serve_provision(
             ("Plan", "Free"),
             ("Workspace id", str(created.org_id)),
         ],
-        "Open the ops console's Workspaces page to see it.",
+        "It starts on Free.",
+        kind="workspace",
     )
     return Organization(
         id=created.org_id, name=clerk.name[:200], slug=slug, status="active", clerk_org_id=clerk_org

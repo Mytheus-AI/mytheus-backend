@@ -42,3 +42,12 @@ async def test_a_failing_provider_never_raises(monkeypatch):
     monkeypatch.setattr(email_mod, "email_sender_from_env", lambda: Boom())
     monkeypatch.setenv("STAFF_ALERT_EMAILS", "a@mytheus.cloud")
     assert await staff_mail.notify_staff("x", [("k", "v")]) == 0
+
+
+def test_each_kind_has_its_own_look_and_quotes_the_members_words(monkeypatch):
+    monkeypatch.setenv("APP_BASE_URL", "https://app.mytheus.cloud")
+    bug = staff_mail.render_html("Bug report", [("From", "a@b.co")], kind="bug", quote="It <broke>")
+    plan = staff_mail.render_html("Moved to Ultra", [("To", "Ultra")], kind="plan")
+    assert "#c43d3d" in bug and "Bug report" in bug and "It &lt;broke&gt;" in bug
+    assert "https://app.mytheus.cloud/ops/feedback" in bug
+    assert "#3f8a5c" in plan and "Plan change" in plan and "/ops/workspaces" in plan
