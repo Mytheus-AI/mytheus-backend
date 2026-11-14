@@ -2,7 +2,8 @@
 
 - `list_my_schedule` `{days: 1..14 = 7}`: the caller's upcoming meetings.
 - `find_people` `{query, limit: 1..10 = 5}`: workspace members by name or email.
-- `list_my_inbox` `{limit: 1..20 = 10}`: unread notifications and detections waiting for review.
+- `list_my_inbox` `{limit: 1..20 = 10}`: unread notifications, detections waiting for review and
+  teammates' pending questions for the caller's Myte (ADR-0049 F1, kind `peer_question`).
 - `get_my_myte` `{}`: the caller's Myte persona, its listening settings, and how many notes it
   kept in the last 7 days.
 
@@ -97,8 +98,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "list_my_inbox",
         "title": "List my inbox",
         "description": (
-            "What is waiting for you, newest first: unread notifications, and decisions or tasks "
-            "your Myte detected in your meetings that wait for you to confirm or dismiss."
+            "What is waiting for you, newest first: unread notifications, decisions or tasks "
+            "your Myte detected in your meetings that wait for you to confirm or dismiss, and "
+            "teammates' questions waiting for your Myte."
         ),
         "inputSchema": {
             "type": "object",
@@ -353,6 +355,7 @@ async def list_my_inbox(ctx: RequestContext, limit: int) -> tuple[str, dict[str,
             ctx, session, meeting_id=None, status="unread", limit=limit, cursor=None
         )
         review = await load_needs_review(session, str(me), limit)
+        peers = await _pending_peer_questions(session, me, limit)
     items: list[dict[str, Any]] = [
         {
             "id": str(n.id),
@@ -380,16 +383,57 @@ async def list_my_inbox(ctx: RequestContext, limit: int) -> tuple[str, dict[str,
         }
         for r in review
     ]
+    items += peers
     items.sort(key=_created, reverse=True)
     items = items[:limit]
-    lines = [
-        f"- [{i['kind'] if i['kind'] == 'notification' else i['detection_kind'] + ' to review'}] "
-        f"{i['title'] if i['kind'] == 'notification' else i['body']}"
-        + (f": {i['body']}" if i["kind"] == "notification" and i["body"] else "")
-        + f" ({str(i['created_at'])[:10]}) `{i['id']}`"
-        for i in items
-    ]
+    lines = [_inbox_line(i) for i in items]
     return "\n".join(lines) or "Nothing is waiting for you.", {"items": items}
+
+
+def _inbox_line(i: dict[str, Any]) -> str:
+    if i["kind"] == "notification":
+        label, what = "notification", i["title"] + (f": {i['body']}" if i["body"] else "")
+    elif i["kind"] == "peer_question":
+        label, what = "question for your Myte", f"{i['title']}: {i['body']}"
+    else:
+        label, what = f"{i['detection_kind']} to review", i["body"]
+    return f"- [{label}] {what} ({str(i['created_at'])[:10]}) `{i['id']}`"
+
+
+async def _pending_peer_questions(
+    session: AsyncSession, me: uuid.UUID, limit: int
+) -> list[dict[str, Any]]:
+    """Teammates' questions waiting for the caller's Myte (ADR-0049 F1), as inbox items."""
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT q.id, q.question, q.created_at, u.id AS from_id, u.email, "
+                    "u.display_name FROM myte_peer_questions q JOIN users u "
+                    "ON u.id = q.from_user_id WHERE q.to_user_id = :u AND q.status = 'pending' "
+                    "ORDER BY q.created_at DESC, q.id DESC LIMIT :n"
+                ),
+                {"u": str(me), "n": limit},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        name = person_name(r["display_name"], r["email"]) or "A teammate"
+        out.append(
+            {
+                "id": str(r["id"]),
+                "kind": "peer_question",
+                "title": f"{name} asked your Myte",
+                "body": r["question"],
+                "created_at": _iso(r["created_at"]),
+                "from_user_id": str(r["from_id"]),
+                "from_name": name,
+            }
+        )
+    return out
 
 
 def _created(item: dict[str, Any]) -> datetime:
