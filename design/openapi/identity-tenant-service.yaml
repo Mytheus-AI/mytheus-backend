@@ -2135,6 +2135,11 @@ components:
           - type: string
           - type: 'null'
           title: Bio
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
         created_at:
           format: date-time
           title: Created At
@@ -2171,6 +2176,11 @@ components:
             type: string
           title: Skills
           type: array
+        subdivision:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Subdivision
         updated_at:
           format: date-time
           title: Updated At
@@ -2245,6 +2255,11 @@ components:
             type: string
           - type: 'null'
           title: Bio
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
         display_name:
           anyOf:
           - type: string
@@ -2280,6 +2295,11 @@ components:
             type: array
           - type: 'null'
           title: Skills
+        subdivision:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Subdivision
       title: UserProfileUpdate
       type: object
     ValidationError:

@@ -96,6 +96,9 @@ class User(Base, TimestampMixin):
         Text, nullable=False, server_default=text("'balanced'")
     )
     agent_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Where the person says they work: ISO 3166-1 alpha-2 and ISO 3166-2. Set by them only.
+    country: Mapped[str | None] = mapped_column(Text, nullable=True)
+    subdivision: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(

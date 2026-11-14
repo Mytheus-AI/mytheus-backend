@@ -53,7 +53,8 @@ router = APIRouter(tags=["users"])
 _USER_COLUMNS = (
     "id, email, display_name, role, skills, bio, avatar_url, listen_for, ignore_topics, "
     "agent_name, "
-    "agent_avatar_seed, agent_personality, agent_instructions, created_at, updated_at"
+    "agent_avatar_seed, agent_personality, agent_instructions, country, subdivision, "
+    "created_at, updated_at"
 )
 
 
@@ -160,7 +161,18 @@ async def update_user_profile(
             "Only the person themselves can change their name",
         )
 
+    # Where someone works is theirs to say, like their name.
+    if body.location_fields_set() and ctx.user_id != user_id:
+        raise ProblemDetail(
+            403,
+            ErrorCode.FORBIDDEN_ROLE,
+            "Only the person themselves can set where they work",
+        )
+
     fields = body.model_dump(exclude_unset=True)
+    # A new country clears a subdivision that belonged to the old one.
+    if "country" in fields and "subdivision" not in fields:
+        fields["subdivision"] = None
     set_clauses = ", ".join(f"{col} = :{col}" for col in fields)
     row = (
         (

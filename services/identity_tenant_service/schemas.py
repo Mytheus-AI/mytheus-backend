@@ -98,6 +98,11 @@ class UserProfileUpdate(BaseModel):
     agent_instructions: str | None = None
     # The person's real name. Self only (see the route); an empty string stores NULL.
     display_name: str | None = None
+    # Where the person says they work (self only): ISO 3166-1 alpha-2 and ISO 3166-2. Setting
+    # `country` without `subdivision` clears the subdivision; a subdivision needs its country in
+    # the same body. An empty string stores NULL.
+    country: str | None = None
+    subdivision: str | None = None
 
     @field_validator("listen_for", "ignore_topics")
     @classmethod
@@ -144,11 +149,42 @@ class UserProfileUpdate(BaseModel):
             raise ValueError(f"must be at most {MAX_AGENT_INSTRUCTIONS} characters")
         return value
 
+    @field_validator("country")
+    @classmethod
+    def _country(cls, v: str | None) -> str | None:
+        value = _blank_to_none(v)
+        if value is None:
+            return None
+        value = value.upper()
+        if not re.fullmatch(r"[A-Z]{2}", value):
+            raise ValueError("must be a two-letter ISO 3166-1 country code")
+        return value
+
+    @field_validator("subdivision")
+    @classmethod
+    def _subdivision(cls, v: str | None) -> str | None:
+        value = _blank_to_none(v)
+        if value is None:
+            return None
+        value = value.upper()
+        if not re.fullmatch(r"[A-Z]{2}-[A-Z0-9]{1,3}", value):
+            raise ValueError("must be an ISO 3166-2 code such as IN-KA")
+        return value
+
     @model_validator(mode="after")
     def _at_least_one_field(self) -> UserProfileUpdate:
         if not self.model_fields_set:
             raise ValueError("PATCH requires at least one field")
+        if "subdivision" in self.model_fields_set and self.subdivision is not None:
+            if "country" not in self.model_fields_set or self.country is None:
+                raise ValueError("subdivision needs its country in the same request")
+            if not self.subdivision.startswith(f"{self.country}-"):
+                raise ValueError("subdivision must belong to the country")
         return self
+
+    def location_fields_set(self) -> bool:
+        """True if the body touches where the person works, which only they may set."""
+        return bool(self.model_fields_set & {"country", "subdivision"})
 
     def agent_fields_set(self) -> bool:
         """True if the body touches the persona, which only the person themselves may edit."""
@@ -170,6 +206,8 @@ class UserProfile(BaseModel):
     agent_avatar_seed: str | None
     agent_personality: AgentPersonality
     agent_instructions: str | None
+    country: str | None = None
+    subdivision: str | None = None
     created_at: datetime
     updated_at: datetime
 

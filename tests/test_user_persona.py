@@ -278,3 +278,50 @@ def test_person_name_prefers_the_stored_name_then_the_email():
     assert person_name(None, "nnm23ad071@nmamit.in") == "Nnm23ad071"
     assert person_name("   ", "maya.patel@acme.com") == "Maya Patel"
     assert person_name(None, None) is None
+
+
+# --- where the person works: users.country and users.subdivision -----------------------------
+
+
+def test_location_round_trips_and_a_new_country_clears_the_state(client):
+    t = seed_tenant()
+    sign_in(t)
+    me = client.get("/users/me").json()
+    assert me["country"] is None and me["subdivision"] is None
+
+    resp = client.patch(f"/users/{t.user_id}", json={"country": "in", "subdivision": "in-ka"})
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["country"], resp.json()["subdivision"]) == ("IN", "IN-KA")
+
+    # A new country without a state clears the old state.
+    resp = client.patch(f"/users/{t.user_id}", json={"country": "DE"})
+    assert (resp.json()["country"], resp.json()["subdivision"]) == ("DE", None)
+
+
+def test_location_is_self_only_even_for_an_admin(client):
+    admin = seed_tenant(tier="admin")
+    member = _seed_user_row(admin.org_id, "member")
+    sign_in(admin)
+    resp = client.patch(f"/users/{member.user_id}", json={"country": "IN"})
+    assert resp.status_code == 403, resp.text
+    row = _sql("SELECT country FROM users WHERE id = %(u)s", {"u": str(member.user_id)})[0]
+    assert row["country"] is None
+
+
+def test_location_rules_are_checked_before_the_database():
+    """Pure: the request model refuses what the table's CHECKs would, with a 422 not a 500."""
+    from pydantic import ValidationError
+
+    from services.identity_tenant_service.schemas import UserProfileUpdate
+
+    ok = UserProfileUpdate(country=" in ", subdivision="in-mh")
+    assert (ok.country, ok.subdivision) == ("IN", "IN-MH")
+    assert UserProfileUpdate(country="").country is None
+    for bad in (
+        {"country": "IND"},
+        {"country": "IN", "subdivision": "KA"},
+        {"subdivision": "IN-KA"},
+        {"country": "US", "subdivision": "IN-KA"},
+    ):
+        with pytest.raises(ValidationError):
+            UserProfileUpdate(**bad)
