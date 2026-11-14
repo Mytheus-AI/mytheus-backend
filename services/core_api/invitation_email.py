@@ -25,6 +25,8 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from libs.shared.email_brand import brand_header
+
 Kind = Literal["invite", "update", "cancel"]
 
 # The product palette (mytheus-ui `globals.css` light tokens and `app-theme.css` dark tokens).
@@ -309,8 +311,10 @@ def render_html(c: InvitationContent) -> str:
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="max-width:600px">'
         '<tr><td style="padding:0 8px 16px">'
-        f'<span class="mx-ink" style="font:600 20px/24px {SERIF};color:{INK}">Mytheus</span>'
-        "</td></tr>"
+        + brand_header(
+            wordmark_style=f"font:600 20px/24px {SERIF};color:{INK}", wordmark_class="mx-ink"
+        )
+        + "</td></tr>"
         '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'class="mx-card" style="background:{SURFACE};border:1px solid {LINE};border-radius:20px"'
         f' bgcolor="{SURFACE}"><tr><td class="mx-pad" style="padding:36px 36px 32px">'
