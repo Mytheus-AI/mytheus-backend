@@ -763,3 +763,24 @@ def test_transcribe_turns_a_recording_into_text(client, monkeypatch):
         "/api/v1/voice/transcribe", content=b"a", headers={"content-type": "audio/webm"}
     )
     assert res.status_code == 503 and res.json()["reason"] == "listening_not_connected"
+
+
+def test_short_phrases_are_cached_so_fillers_come_back_instantly(client):
+    fake = briefing_audio.FakeSpeaker()
+    briefing_audio.set_speaker(fake)
+    try:
+        host, _member, _m = meeting()
+        sign_in(host)
+        phrase = f"Let me check, {uuid.uuid4().hex[:6]}."
+        first = client.post("/api/v1/voice/speech", json={"text": phrase})
+        assert first.status_code == 200 and "x-voice-cache" not in first.headers
+        spoken = len(fake.spoken)
+        again = client.post("/api/v1/voice/speech", json={"text": phrase})
+        assert again.status_code == 200 and again.headers["x-voice-cache"] == "hit"
+        assert again.content == first.content and len(fake.spoken) == spoken
+        long = "word " * 60
+        client.post("/api/v1/voice/speech", json={"text": long})
+        client.post("/api/v1/voice/speech", json={"text": long})
+        assert len(fake.spoken) == spoken + 2  # long text is never cached
+    finally:
+        briefing_audio.reset_speaker()
