@@ -10,12 +10,14 @@ Processes:
 - `python -m services.billing_metering_service.consumer`: the `usage-events` consumer
 - `python -m services.billing_metering_service.jobs`: the nightly derive + rollup
 
-Stripe checkout, the `/stripe/webhook` and dunning land in their own band (Plan 7-9 step 8).
+Checkout is Razorpay (`payments.py`: `POST /billing/checkout`, `/billing/checkout/verify`,
+`GET /billing/status`). A paid plan lasts 30 days and lapses back to Free unless bought again.
 """
 
 from libs.shared.app_factory import create_app
-from services.billing_metering_service import internal, routes
+from services.billing_metering_service import internal, payments, routes
 
 app = create_app("billing-metering-service")
 app.include_router(routes.router)
 app.include_router(internal.router)
+app.include_router(payments.router)

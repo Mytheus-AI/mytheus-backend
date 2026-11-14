@@ -32,6 +32,7 @@ from starlette.testclient import TestClient
 from libs.shared import auth as auth_mod
 from libs.shared import db as db_mod
 from libs.shared.app_factory import create_app
+from libs.shared.tenancy import set_rls
 from services.billing_metering_service import budgets, consumer, metering, routes
 from tests.conftest import APP_URL, BOOTSTRAP_URL
 
@@ -138,10 +139,10 @@ def outbox(org_id: uuid.UUID, topic: str) -> list[dict[str, Any]]:
 # --- pure functions ------------------------------------------------------------------------
 
 
-def test_budget_limits_are_per_tenant_and_pro_has_a_throttle_band():
-    assert budgets.budget_limits("free", 200_000) == (200_000, 200_000)
-    assert budgets.budget_limits("pro", 4_000_000) == (4_000_000, 8_000_000)
-    assert budgets.budget_limits("enterprise", 0) == (0, 0)
+def test_budget_limits_are_a_hard_stop_at_the_allowance_plus_credits():
+    assert budgets.budget_limits("free", 10_000) == (10_000, 10_000)
+    assert budgets.budget_limits("pro", 200_000) == (200_000, 200_000)
+    assert budgets.budget_limits("ultra", 2_000_000, 100_000) == (2_100_000, 2_100_000)
 
 
 def test_state_machine():
@@ -155,9 +156,9 @@ def test_period_end_rolls_the_year():
     assert budgets.period_end("2026-12") == datetime(2027, 1, 1, tzinfo=UTC)
 
 
-def test_enforcement_mode_defaults_to_alert_only_and_refuses_typos(monkeypatch):
+def test_enforcement_mode_defaults_to_enforce_and_refuses_typos(monkeypatch):
     monkeypatch.delenv("BUDGET_ENFORCEMENT_MODE", raising=False)
-    assert budgets.enforcement_mode() == "alert_only"
+    assert budgets.enforcement_mode() == "enforce"
     monkeypatch.setenv("BUDGET_ENFORCEMENT_MODE", "enforced")
     with pytest.raises(ValueError):
         budgets.enforcement_mode()
@@ -197,7 +198,7 @@ async def test_a_message_is_metered_once_and_mirrored(env):
     await consumer.process(sm, redis, usage_value(t.org_id, 500))
     mirror = await redis.hgetall(budgets.mirror_key(t.org_id, PERIOD))
     assert mirror[b"tokens_consumed"] == b"1500"
-    assert mirror[b"state"] == b"ok" and mirror[b"enforcement"] == b"alert_only"
+    assert mirror[b"state"] == b"ok" and mirror[b"enforcement"] == b"enforce"
     assert await redis.ttl(budgets.mirror_key(t.org_id, PERIOD)) > 0
 
 
@@ -215,60 +216,84 @@ async def test_occurred_at_as_a_decoded_datetime_is_accepted(env):
 async def test_alerts_are_flags_that_fire_once_each(env):
     sm, redis = env
     t = seed_tenant()
-    await consumer.process(sm, redis, usage_value(t.org_id, 170_000))  # 85%
+    await consumer.process(sm, redis, usage_value(t.org_id, 8_000))  # 80%
     b = budget_row(t.org_id)
-    assert b["alert_80_sent"] and not b["alert_95_sent"] and b["state"] == "ok"
+    assert b["alert_75_sent"] and not b["alert_90_sent"] and b["state"] == "ok"
 
-    await consumer.process(sm, redis, usage_value(t.org_id, 5_000))  # 87.5%: nothing new
-    await consumer.process(sm, redis, usage_value(t.org_id, 20_000))  # 97.5%
+    await consumer.process(sm, redis, usage_value(t.org_id, 500))  # 85%: nothing new
+    await consumer.process(sm, redis, usage_value(t.org_id, 600))  # 91%
+    await consumer.process(sm, redis, usage_value(t.org_id, 500))  # 96%
     b = budget_row(t.org_id)
-    assert b["alert_95_sent"] and b["state"] == "ok"
+    assert b["alert_90_sent"] and b["alert_95_sent"] and b["state"] == "ok"
 
     notes = outbox(t.org_id, "notifications")
-    assert [n["payload"]["title"] for n in notes] == ["AI budget 80% used", "AI budget 95% used"]
+    assert [n["payload"]["title"] for n in notes] == [
+        "AI budget 75% used",
+        "AI budget 90% used",
+        "AI budget 95% used",
+    ]
     assert all(n["payload"]["user_id"] == str(t.user_id) for n in notes)
     assert outbox(t.org_id, "billing-events") == []
 
 
-async def test_one_big_charge_fires_both_alerts(env):
+async def test_one_big_charge_fires_every_alert_it_crosses(env):
     sm, redis = env
     t = seed_tenant()
-    await consumer.process(sm, redis, usage_value(t.org_id, 195_000))
+    await consumer.process(sm, redis, usage_value(t.org_id, 9_600))
     b = budget_row(t.org_id)
-    assert b["alert_80_sent"] and b["alert_95_sent"]
-    assert len(outbox(t.org_id, "notifications")) == 2
+    assert b["alert_75_sent"] and b["alert_90_sent"] and b["alert_95_sent"]
+    assert len(outbox(t.org_id, "notifications")) == 3
 
 
 async def test_free_goes_straight_to_blocked_at_its_cap(env):
     sm, redis = env
     t = seed_tenant()
-    await consumer.process(sm, redis, usage_value(t.org_id, 200_000))
+    await consumer.process(sm, redis, usage_value(t.org_id, 10_000))
     assert budget_row(t.org_id)["state"] == "blocked"
     events = outbox(t.org_id, "billing-events")
     assert len(events) == 1
     detail = json.loads(events[0]["payload"]["detail_json"])
     assert events[0]["payload"]["event_type"] == "quota_exceeded" and detail["state"] == "blocked"
     titles = [n["payload"]["title"] for n in outbox(t.org_id, "notifications")]
-    assert "AI budget exhausted" in titles
+    assert "AI budget used up" in titles
 
     # Further usage is still recorded (durable facts are never shed) but emits nothing new.
     await consumer.process(sm, redis, usage_value(t.org_id, 10))
-    assert budget_row(t.org_id)["tokens_consumed"] == 200_010
+    assert budget_row(t.org_id)["tokens_consumed"] == 10_010
     assert len(outbox(t.org_id, "billing-events")) == 1
 
 
-async def test_pro_throttles_at_quota_and_blocks_at_twice_quota(env):
+async def test_pro_blocks_at_its_allowance(env):
     sm, redis = env
     t = seed_tenant(plan="pro")
-    await consumer.process(sm, redis, usage_value(t.org_id, 4_000_000))
+    await consumer.process(sm, redis, usage_value(t.org_id, 199_999))
     b = budget_row(t.org_id)
-    assert (b["token_quota"], b["hard_cap"], b["state"]) == (4_000_000, 8_000_000, "throttled")
-    await consumer.process(sm, redis, usage_value(t.org_id, 4_000_000))
+    assert (b["token_quota"], b["hard_cap"], b["state"]) == (200_000, 200_000, "ok")
+    await consumer.process(sm, redis, usage_value(t.org_id, 1))
     assert budget_row(t.org_id)["state"] == "blocked"
     states = [
         json.loads(e["payload"]["detail_json"])["state"] for e in outbox(t.org_id, "billing-events")
     ]
-    assert states == ["throttled", "blocked"]
+    assert states == ["blocked"]
+
+
+async def test_credits_and_a_plan_change_unblock_and_rescale_the_month(env):
+    sm, redis = env
+    t = seed_tenant()
+    await consumer.process(sm, redis, usage_value(t.org_id, 10_000))
+    assert budget_row(t.org_id)["state"] == "blocked"
+    async with sm() as session, session.begin():
+        await set_rls(session, t.org_id)
+        snap = await budgets.add_credit_tokens(session, t.org_id, 100_000, PERIOD)
+    assert (snap.token_quota, snap.state, snap.credit_tokens) == (110_000, "ok", 100_000)
+    async with sm() as session, session.begin():
+        await set_rls(session, t.org_id)
+        await budgets.set_subscription_plan(session, t.org_id, "ultra", paid_until=None)
+        snap = await budgets.sync_budget_to_plan(session, t.org_id, PERIOD)
+    # The credits bought stay on top of the new plan's allowance.
+    assert (snap.token_quota, snap.hard_cap, snap.state) == (2_100_000, 2_100_000, "ok")
+    # Alerts fired on Free no longer hold at the bigger allowance, so they re-arm.
+    assert not snap.alert_75_sent
 
 
 async def test_a_failed_transaction_unmarks_the_message_for_redelivery(env, monkeypatch):
@@ -448,8 +473,8 @@ def test_usage_is_admin_only_and_shows_the_live_budget(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["period"] == PERIOD and body["plan"]["code"] == "free"
-    assert body["budget"]["token_quota"] == 200_000 and body["budget"]["state"] == "ok"
-    assert body["budget"]["enforcement"] == "alert_only"
+    assert body["budget"]["token_quota"] == 10_000 and body["budget"]["state"] == "ok"
+    assert body["budget"]["enforcement"] == "enforce"
 
     sign_in(seed_tenant("member"))
     assert client.get("/usage").status_code == 403
@@ -459,7 +484,14 @@ def test_plans_lists_the_catalog(client):
     sign_in(seed_tenant("member"))
     r = client.get("/plans")
     assert r.status_code == 200
-    assert [p["code"] for p in r.json()] == ["free", "pro", "enterprise"]
+    assert [p["code"] for p in r.json()] == [
+        "free",
+        "pro",
+        "ultra",
+        "payg",
+        "unlimited",
+        "enterprise",
+    ]
 
 
 # --- storage sweep -------------------------------------------------------------------------
@@ -583,7 +615,7 @@ async def test_internal_budget_provisions_and_publishes_the_mirror(internal_clie
     r = c.post("/billing/internal/budget", headers=_headers(t.org_id))
     assert r.status_code == 200, r.text
     body = r.json()
-    assert (body["token_quota"], body["tokens_consumed"], body["state"]) == (200_000, 0, "ok")
+    assert (body["token_quota"], body["tokens_consumed"], body["state"]) == (10_000, 0, "ok")
     mirror = await redis.hgetall(budgets.mirror_key(t.org_id, PERIOD))
-    assert mirror[b"hard_cap"] == b"200000" and mirror[b"enforcement"] == b"alert_only"
-    assert budget_row(t.org_id)["token_quota"] == 200_000
+    assert mirror[b"hard_cap"] == b"10000" and mirror[b"enforcement"] == b"enforce"
+    assert budget_row(t.org_id)["token_quota"] == 10_000

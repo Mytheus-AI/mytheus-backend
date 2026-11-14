@@ -25,8 +25,9 @@ from sqlalchemy import text
 
 from libs.shared.db import get_sessionmaker
 from libs.shared.tenancy import set_rls
-from services.billing_metering_service.budgets import period_of
+from services.billing_metering_service.budgets import period_of, plan_for_tenant
 from services.billing_metering_service.metering import derive_meeting_usage, rollup_period
+from services.billing_metering_service.payg import refund_remainder
 from services.billing_metering_service.storage import make_s3_client, sweep_storage
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ async def run_nightly(now: datetime | None = None, s3: Any | None = _UNSET) -> d
             .all()
         )
 
-    summary = {"tenants": 0, "derived_rows": 0, "storage_rows": 0, "failed": 0}
+    summary = {"tenants": 0, "derived_rows": 0, "storage_rows": 0, "refunds": 0, "failed": 0}
     for org_id in org_ids:
         try:
             async with sessionmaker() as session, session.begin():
@@ -64,6 +65,10 @@ async def run_nightly(now: datetime | None = None, s3: Any | None = _UNSET) -> d
                     summary["storage_rows"] += await sweep_storage(session, org_id, s3, now.date())
                 for period in periods:
                     await rollup_period(session, org_id, period)
+                # A lapsed paid month moves to Free here even if nobody signs in; a Pay as you go
+                # window is settled on the way, and any remainder owed back is refunded.
+                await plan_for_tenant(session, uuid.UUID(str(org_id)))
+                summary["refunds"] += await refund_remainder(session)
             summary["tenants"] += 1
         except Exception:
             summary["failed"] += 1

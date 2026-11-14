@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.authz import RequestContext, require_tier, tenant_session
+from services.billing_metering_service import payg
 from services.billing_metering_service.budgets import (
     current_budget,
     enforcement_mode,
@@ -48,6 +49,9 @@ class BudgetOut(BaseModel):
     alert_80_sent: bool
     alert_95_sent: bool
     enforcement: str
+    alert_75_sent: bool = False
+    alert_90_sent: bool = False
+    credit_tokens: int = 0
 
 
 class DimensionOut(BaseModel):
@@ -57,11 +61,39 @@ class DimensionOut(BaseModel):
     updated_at: datetime
 
 
+class PaygWindowOut(BaseModel):
+    """The running Pay as you go window: usage so far, priced, against the deposit."""
+
+    window_start: datetime
+    window_end: datetime
+    tokens: int
+    cost_cents: int
+    deposit_cents: int
+    cents_per_million: int
+
+
+class SettlementOut(BaseModel):
+    id: str
+    window_start: datetime
+    window_end: datetime
+    tokens: int
+    cost_cents: int
+    deposit_cents: int
+    # > 0 owed by the workspace, < 0 refunded to it
+    balance_cents: int
+    status: str
+
+
 class UsageOut(BaseModel):
     period: str
     plan: PlanOut
     budget: BudgetOut
     dimensions: list[DimensionOut]
+    # When a bought month of Pro, Ultra or Pay as you go ends (it then lapses to Free).
+    paid_until: datetime | None = None
+    payg: PaygWindowOut | None = None
+    balance_due: SettlementOut | None = None
+    last_settlement: SettlementOut | None = None
 
 
 _PLAN_FIELDS = (
@@ -74,6 +106,12 @@ _PLAN_FIELDS = (
 )
 _PLAN_COLUMNS = ", ".join(_PLAN_FIELDS)
 _TENANT_PLAN_COLUMNS = ", ".join(f"p.{f}" for f in _PLAN_FIELDS)
+
+
+def _settlement(row: dict[str, Any] | None) -> SettlementOut | None:
+    if row is None:
+        return None
+    return SettlementOut(**{**row, "id": str(row["id"]), "status": str(row.get("status") or "due")})
 
 
 @router.get("/plans", response_model=list[PlanOut])
@@ -90,7 +128,7 @@ async def list_plans(
             )
         )
     ).mappings()
-    order = {"free": 0, "pro": 1, "enterprise": 2}
+    order = {"free": 0, "pro": 1, "ultra": 2, "payg": 3, "unlimited": 4, "enterprise": 5}
     return sorted((PlanOut(**r) for r in rows), key=lambda p: order.get(p.code, 99))
 
 
@@ -101,7 +139,7 @@ async def get_usage(
 ) -> UsageOut:
     period = period_of(datetime.now(UTC))
     budget = await current_budget(session, ctx.org_id, period)
-    await plan_for_tenant(session, ctx.org_id)  # ensures the subscription exists
+    tenant_plan = await plan_for_tenant(session, ctx.org_id)  # ensures the subscription exists
     plan = (
         (
             await session.execute(
@@ -135,7 +173,25 @@ async def get_usage(
             alert_80_sent=budget.alert_80_sent,
             alert_95_sent=budget.alert_95_sent,
             enforcement=enforcement_mode(),
+            alert_75_sent=budget.alert_75_sent,
+            alert_90_sent=budget.alert_90_sent,
+            credit_tokens=budget.credit_tokens,
         ),
+        paid_until=tenant_plan.get("current_period_end"),
+        payg=(
+            PaygWindowOut(**window)
+            if tenant_plan["code"] == "payg"
+            and (
+                window := await payg.window_view(
+                    session,
+                    tenant_plan.get("current_period_start"),
+                    tenant_plan.get("current_period_end"),
+                )
+            )
+            else None
+        ),
+        balance_due=_settlement(await payg.open_balance(session)),
+        last_settlement=_settlement(await payg.last_settlement(session)),
         dimensions=[
             DimensionOut(
                 dimension=d["dimension"],
