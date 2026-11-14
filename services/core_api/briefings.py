@@ -224,7 +224,7 @@ def settings_view(prefs: BriefingPreferences) -> BriefingSettings:
         server_voice_connected=briefing_audio.connected(),
         server_voices=[
             ServerVoiceOption(id=v.id, name=v.name, description=v.description)
-            for v in briefing_audio.SERVER_VOICES
+            for v in briefing_audio.server_voices()
         ],
         languages=[BriefingLanguage(code=c, name=n) for c, n in LANGUAGES.items()],
     )
@@ -1274,7 +1274,9 @@ async def render_audio(org_id: uuid.UUID, briefing_id: uuid.UUID) -> AudioStatus
         key = voice = None
         size = 0
     else:
-        voice = briefing_audio.voice_for(prefs.server_voice, briefing.agent.personality)
+        voice = briefing_audio.voice_for(
+            prefs.server_voice, briefing.agent.personality, briefing.language
+        )
         key = briefing_audio.audio_key(org_id, row["user_id"], briefing_id)
         try:
             data = await backend.synthesize(
