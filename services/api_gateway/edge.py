@@ -272,7 +272,7 @@ async def _authenticated(
             org_id = await resolve_org_id(session, clerk_org)
     except ProblemDetail as exc:
         # No service worker is touched. This is the DDoS-shield half of the gateway's job.
-        return problem_response(exc.status, exc.code, exc.detail)
+        return problem_response(exc.status, exc.code, exc.detail, extra=exc.extra)
 
     _attach_internal_headers(request, str(org_id), user_id)
     return await call_next(request)

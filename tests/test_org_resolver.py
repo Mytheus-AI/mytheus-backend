@@ -56,7 +56,7 @@ async def test_resolves_an_active_org(migrated_db):
 
 @pytest.mark.parametrize(
     "case",
-    ["unknown", "suspended", "soft_deleted", "empty_claim"],
+    ["unknown", "soft_deleted", "empty_claim"],
 )
 async def test_all_negative_outcomes_are_byte_identical(migrated_db, case):
     """ADR-0010 D2: one response for all of them.
@@ -69,9 +69,6 @@ async def test_all_negative_outcomes_are_byte_identical(migrated_db, case):
     su = create_async_engine(migrated_db)
     if case == "unknown":
         claim = f"org_{uuid.uuid4().hex}"
-    elif case == "suspended":
-        claim = f"org_{uuid.uuid4().hex[:16]}"
-        await _make_org(su, clerk_org_id=claim, status="suspended")
     elif case == "soft_deleted":
         claim = f"org_{uuid.uuid4().hex[:16]}"
         await _make_org(su, clerk_org_id=claim, deleted=True)
@@ -121,6 +118,25 @@ async def test_resolve_org_by_id_resolves_an_active_org(migrated_db):
     sessions = _app_sessions()
     async with sessions() as session:
         assert await resolve_org_by_id(session, org_id) == org_id
+
+
+async def test_a_suspended_organization_tells_its_own_member(migrated_db):
+    """Still 401 AUTH_REQUIRED, but with `reason: tenant_suspended` so the web app can sign
+    the member out and say why. Only a Clerk-verified holder of that org's claim reaches this,
+    so it reveals nothing to an outsider."""
+    su = create_async_engine(migrated_db)
+    claim = f"org_{uuid.uuid4().hex[:16]}"
+    await _make_org(su, clerk_org_id=claim, status="suspended")
+    await su.dispose()
+
+    sessions = _app_sessions()
+    with pytest.raises(ProblemDetail) as exc:
+        async with sessions() as session:
+            await resolve_org_id(session, claim)
+
+    assert exc.value.status == 401
+    assert exc.value.code is ErrorCode.AUTH_REQUIRED
+    assert exc.value.extra == {"reason": "tenant_suspended"}
 
 
 @pytest.mark.parametrize("case", ["unknown", "suspended", "soft_deleted"])

@@ -67,6 +67,25 @@ def _denied() -> ProblemDetail:
     return ProblemDetail(401, ErrorCode.AUTH_REQUIRED, "Token carries no usable organization")
 
 
+# The one deliberate exception to "one response for every negative outcome": a SUSPENDED
+# workspace tells its own members so. `resolve_org_id` only ever sees a Clerk-verified token,
+# and that token's `org` claim is Clerk's proof the caller belongs to that organization, so
+# the caller already knows the workspace exists; saying it is suspended reveals nothing to an
+# outsider. Same status and code as `_denied()` (clients branching on `code` are unaffected);
+# only the `reason` differs, which lets the web app sign the member out and explain why
+# instead of failing every read. Unknown and soft-deleted stay byte-identical to each other.
+TENANT_SUSPENDED_REASON = "tenant_suspended"
+
+
+def _suspended() -> ProblemDetail:
+    return ProblemDetail(
+        401,
+        ErrorCode.AUTH_REQUIRED,
+        "This workspace is suspended",
+        extra={"reason": TENANT_SUSPENDED_REASON},
+    )
+
+
 async def resolve_org_id(session: AsyncSession, clerk_org_id: str) -> uuid.UUID:
     """Resolve Clerk's opaque organization id to our `org_id`, or fail closed.
 
@@ -78,7 +97,11 @@ async def resolve_org_id(session: AsyncSession, clerk_org_id: str) -> uuid.UUID:
         raise _denied()
 
     row = (await session.execute(_RESOLVE, {"clerk_org_id": clerk_org_id})).mappings().first()
-    if row is None or row["deleted_at"] is not None or row["status"] != "active":
+    if row is None or row["deleted_at"] is not None:
+        raise _denied()
+    if row["status"] == "suspended":
+        raise _suspended()
+    if row["status"] != "active":
         raise _denied()
 
     return row["id"] if isinstance(row["id"], uuid.UUID) else uuid.UUID(str(row["id"]))

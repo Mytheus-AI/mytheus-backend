@@ -198,6 +198,8 @@ def test_a_suspended_organization_is_401(client, keys):
         "/api/v1/echo", headers={"Authorization": f"Bearer {_token(priv, clerk_org)}"}
     )
     assert resp.status_code == 401
+    # The member is told why, so the web app can sign them out with an explanation.
+    assert resp.json()["reason"] == "tenant_suspended"
 
 
 # --- resolution and header integrity -----------------------------------------------------------
