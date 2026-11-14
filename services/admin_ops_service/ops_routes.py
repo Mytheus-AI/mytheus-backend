@@ -62,6 +62,7 @@ from services.admin_ops_service.common import (
     set_tenant_status,
     staff_refusal,
 )
+from services.admin_ops_service.pipeline import read_pipeline
 from services.admin_ops_service.schemas import (
     AuditEntry,
     AuditPage,
@@ -498,7 +499,10 @@ async def cost_report(
         action="costs.read",
         details={"period": period, "tenants": len(tenants)},
     )
-    return CostReport(period=period, tenants=tenants, next_cursor=next_cursor)
+    dlq, lag = await read_pipeline()
+    return CostReport(
+        period=period, tenants=tenants, dlq=dlq, consumer_lag=lag, next_cursor=next_cursor
+    )
 
 
 def _encode_cursor(occurred_at: datetime, row_id: uuid.UUID) -> str:

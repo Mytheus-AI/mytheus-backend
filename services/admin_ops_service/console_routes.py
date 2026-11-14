@@ -53,6 +53,7 @@ from services.admin_ops_service.common import (
     staff_id_for,
 )
 from services.admin_ops_service.ops_routes import current_period
+from services.admin_ops_service.pipeline import read_pipeline
 from services.admin_ops_service.schemas import (
     CellCount,
     DayCount,
@@ -518,7 +519,9 @@ async def health(
 ) -> Health:
     """authz: staff. Service probes and the outbox backlog (counts per workspace only)."""
     async with httpx.AsyncClient(transport=transport, timeout=PROBE_TIMEOUT) as client:
-        probes = await asyncio.gather(*(_probe(client, s) for s in PROBED_SERVICES))
+        probes, (dlq, lag) = await asyncio.gather(
+            asyncio.gather(*(_probe(client, s) for s in PROBED_SERVICES)), read_pipeline()
+        )
     services = [ServiceProbe(service=SELF, status="up", latency_ms=0), *probes]
 
     rows = await _rollup(session, current_period())
@@ -543,6 +546,8 @@ async def health(
             )
             for r in backlog[:10]
         ],
+        dlq=dlq,
+        consumer_lag=lag,
     )
     await ops_log(
         session,
