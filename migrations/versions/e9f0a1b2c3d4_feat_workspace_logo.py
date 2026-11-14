@@ -1,4 +1,4 @@
-"""feat(identity): the workspace logo on tenant_settings (ADR-0047)
+"""feat(identity): the workspace logo on tenant_settings (ADR-0048)
 
 Seven nullable/defaulted columns on `tenant_settings`, so no existing row changes meaning. The
 table is already `tenant_isolation`-policied (RLS on org_id), and the columns inherit its

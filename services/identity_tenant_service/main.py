@@ -45,7 +45,7 @@ app.include_router(internal_status.router)
 # The company brain (ADR-0039 Part A): /api/v1/org/{profile,glossary,topic-owners,goals,
 # ground-rules,readiness,welcome} and /api/v1/users/me/topic-watches.
 app.include_router(brain_routes.router)
-# The workspace logo (ADR-0047): GET/PUT/DELETE /api/v1/org/logo, GET /api/v1/org/logo/image.
+# The workspace logo (ADR-0048): GET/PUT/DELETE /api/v1/org/logo, GET /api/v1/org/logo/image.
 app.include_router(branding_routes.router)
 app.include_router(api_tokens.router)  # /api/v1/api-tokens (personal access tokens, Phase 4)
 # OAuth for the MCP server (Claude custom connectors): the authorization server. Public protocol

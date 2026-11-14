@@ -4,7 +4,7 @@ Every service that touches a bucket reads the same `S3_*` variables: `S3_ACCESS_
 `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL` (the R2 account endpoint), `S3_REGION` (`auto` on R2)
 and `S3_FORCE_PATH_STYLE` (MinIO). The client construction below was copied into
 billing-metering-service (`storage.py`) and integration-service (`storage.py`) line for line;
-both now call this, and identity-tenant-service's workspace logo store (ADR-0047) does too, so
+both now call this, and identity-tenant-service's workspace logo store (ADR-0048) does too, so
 there is one place that decides how Mytheus talks to R2.
 
 Returns None when the credentials are not set: object storage is "not connected", and each

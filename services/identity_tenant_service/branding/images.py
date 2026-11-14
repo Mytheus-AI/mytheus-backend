@@ -1,4 +1,4 @@
-"""What a workspace logo upload really is, decided from its bytes (ADR-0047 D3).
+"""What a workspace logo upload really is, decided from its bytes (ADR-0048 D3).
 
 The declared `Content-Type` and any file name are the client's claim. This module reads the
 magic bytes and the image header instead, so a script renamed `logo.png` is refused, and the

@@ -1,4 +1,4 @@
-"""The workspace logo (ADR-0047): upload, read, serve and remove.
+"""The workspace logo (ADR-0048): upload, read, serve and remove.
 
 - `PUT /api/v1/org/logo` (admin): the image bytes are the request body, with the image's
   `Content-Type`. No multipart: `python-multipart` is not a runtime dependency, and a raw body

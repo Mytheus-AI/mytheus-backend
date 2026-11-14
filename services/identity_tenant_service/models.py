@@ -240,7 +240,7 @@ class TenantSettings(Base, TimestampMixin):
     never_record_topics: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default=text("'{}'")
     )
-    # ADR-0047: the workspace logo. The object lives in the private `mytheus-branding` bucket
+    # ADR-0048: the workspace logo. The object lives in the private `mytheus-branding` bucket
     # under `{org_id}/branding/logo-{version}.{ext}`; written only by `/api/v1/org/logo`.
     logo_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_content_type: Mapped[str | None] = mapped_column(Text, nullable=True)

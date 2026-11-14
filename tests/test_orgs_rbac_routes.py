@@ -158,7 +158,7 @@ _BODY = {
 def test_get_orgs_returns_only_the_callers_own_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if "FROM organizations" not in sql:
-            # The tenant binding and the logo read (ADR-0047): no logo for this tenant.
+            # The tenant binding and the logo read (ADR-0048): no logo for this tenant.
             return []
         assert params == {"id": str(CUSTOMER_ORG)}
         return [

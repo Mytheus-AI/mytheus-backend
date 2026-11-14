@@ -1,1 +1,1 @@
-"""Workspace branding: the organisation logo (ADR-0047)."""
+"""Workspace branding: the organisation logo (ADR-0048)."""

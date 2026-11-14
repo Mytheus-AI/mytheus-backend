@@ -1,4 +1,4 @@
-"""The `mytheus-branding` bucket: workspace logos (ADR-0047 D2).
+"""The `mytheus-branding` bucket: workspace logos (ADR-0048 D2).
 
 identity-tenant-service is the bucket's one writer, as it is the one writer of
 `tenant_settings`, whose `logo_*` columns point here. Keys are tenant-first like every key in

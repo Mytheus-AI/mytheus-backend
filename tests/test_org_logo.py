@@ -1,4 +1,4 @@
-"""The workspace logo (ADR-0047): `/api/v1/org/logo` and the `logo_url` on `GET /orgs`.
+"""The workspace logo (ADR-0048): `/api/v1/org/logo` and the `logo_url` on `GET /orgs`.
 
 Real Postgres (as `mytheus_app`, so RLS applies) and real Redis (the per-workspace upload
 limit); the bucket is the in-memory `FakeLogoStore`, as the recording and briefing tests fake
