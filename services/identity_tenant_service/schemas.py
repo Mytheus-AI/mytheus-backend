@@ -301,6 +301,11 @@ class Organization(BaseModel):
     slug: str
     status: str
     clerk_org_id: str | None
+    # ADR-0047, additive: the workspace logo, from `tenant_settings`. `logo_url` is the
+    # versioned, gateway-relative `GET /api/v1/org/logo/image?v={n}` (bearer required), or
+    # null when the workspace has no logo.
+    logo_url: str | None = None
+    logo_updated_at: datetime | None = None
 
 
 class ProvisionedOrganization(Organization):

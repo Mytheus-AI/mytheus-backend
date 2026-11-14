@@ -1270,6 +1270,51 @@ components:
           title: Title
       title: OrgGoalUpdate
       type: object
+    OrgLogo:
+      properties:
+        content_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: image/png, image/jpeg or image/webp
+          title: Content Type
+        height:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Height
+        logo_updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Logo Updated At
+        logo_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Gateway-relative URL of the logo image (send the bearer token), or null when the
+            workspace has no logo. Versioned, so it is safe to cache for good.
+          title: Logo Url
+        logo_version:
+          default: 0
+          description: Bumped on every upload; part of the URL so caches never go stale.
+          title: Logo Version
+          type: integer
+        size_bytes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Size Bytes
+        width:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Width
+      required:
+      - logo_url
+      title: OrgLogo
+      type: object
     OrgOwner:
       additionalProperties: false
       description: 'The tenant''s first owner. Becomes a `users` mirror row plus an `owner` `rbac_grants`
@@ -1369,6 +1414,17 @@ components:
           format: uuid
           title: Id
           type: string
+        logo_updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Logo Updated At
+        logo_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Logo Url
         name:
           title: Name
           type: string
@@ -1430,6 +1486,17 @@ components:
           format: uuid
           title: Id
           type: string
+        logo_updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Logo Updated At
+        logo_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Logo Url
         name:
           title: Name
           type: string
@@ -3166,6 +3233,165 @@ paths:
       summary: Put Ground Rules
       tags:
       - company-brain
+  /api/v1/org/logo:
+    delete:
+      description: 'authz: admin. Idempotent: a workspace with no logo answers 204 too.'
+      operationId: delete_org_logo
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Object storage is not connected.
+      summary: Remove the workspace logo
+      tags:
+      - workspace-logo
+    get:
+      description: 'authz: member. `logo_url` is null when the workspace has no logo.'
+      operationId: read_org_logo
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgLogo'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: The workspace logo
+      tags:
+      - workspace-logo
+    put:
+      description: 'authz: admin. The body is the image; the type is decided from its bytes.'
+      operationId: put_org_logo
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          image/jpeg:
+            schema:
+              format: binary
+              type: string
+          image/png:
+            schema:
+              format: binary
+              type: string
+          image/webp:
+            schema:
+              format: binary
+              type: string
+        description: The image bytes (PNG, JPEG or WebP, 2 MB at most). SVG is refused.
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgLogo'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '413':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Larger than 2 MB.
+        '415':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Not a PNG, JPEG or WebP (SVG is refused).
+        '429':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Too many uploads this hour.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+        '503':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Object storage is not connected.
+      summary: Upload or replace the workspace logo
+      tags:
+      - workspace-logo
+  /api/v1/org/logo/image:
+    get:
+      description: 'authz: member. 404 when the workspace has no logo, or `v` names a replaced version.'
+      operationId: org_logo_image
+      parameters:
+      - description: The version from logo_url
+        in: query
+        name: v
+        required: false
+        schema:
+          anyOf:
+          - minimum: 0
+            type: integer
+          - type: 'null'
+          description: The version from logo_url
+          title: V
+      responses:
+        '200':
+          content:
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+          description: The image. Immutable when `v` names the current version.
+        '304':
+          description: Not modified (If-None-Match).
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: The workspace logo image
+      tags:
+      - workspace-logo
   /api/v1/org/profile:
     get:
       description: 'authz: member. An org that never saved a profile reads as empty, not 404.'
