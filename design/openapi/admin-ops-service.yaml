@@ -1034,6 +1034,13 @@ components:
             $ref: '#/components/schemas/WeekCount'
           title: Meetings By Week
           type: array
+        member_zones:
+          description: Members by saved time zone across every workspace, largest first. Members with
+            no listening preferences row are not counted here.
+          items:
+            $ref: '#/components/schemas/ZoneCount'
+          title: Member Zones
+          type: array
         ops_activity_by_day:
           items:
             $ref: '#/components/schemas/DayCount'
@@ -1918,6 +1925,22 @@ components:
       required:
       - staff
       title: Whoami
+      type: object
+    ZoneCount:
+      description: 'Members whose saved time zone (`listening_preferences.time_zone`) is this IANA zone.
+
+        `UTC` is also the column default, so it mostly means "never set".'
+      properties:
+        members:
+          title: Members
+          type: integer
+        time_zone:
+          title: Time Zone
+          type: string
+      required:
+      - time_zone
+      - members
+      title: ZoneCount
       type: object
   securitySchemes:
     HTTPBearer:

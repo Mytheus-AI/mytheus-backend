@@ -82,6 +82,7 @@ from services.admin_ops_service.schemas import (
     TenantTarget,
     TokenLeader,
     WeekCount,
+    ZoneCount,
 )
 
 router = APIRouter(prefix="/admin/ops", tags=["admin-ops"])
@@ -153,6 +154,23 @@ _OPS_ACTION_COLUMNS = "id, staff_user_id, action, target_org_id, details, create
 
 
 UNPLACED = "unplaced"
+
+
+async def _member_zones(session: AsyncSession, rows: list[Any]) -> list[ZoneCount]:
+    """Members by saved time zone, summed over every workspace. Each workspace is read under its
+    own RLS binding (`listening_preferences` is tenant-policied), one GROUP BY each, and only the
+    counts leave the query. The binding is cleared afterwards, so the statements that follow run
+    with no workspace bound (fail-closed), as they did before."""
+    counts: Counter[str] = Counter()
+    for r in rows:
+        await set_rls(session, r["org_id"])
+        result = await session.execute(
+            text("SELECT time_zone, count(*) AS n FROM listening_preferences GROUP BY time_zone")
+        )
+        for tz, n in result.all():
+            counts[str(tz)] += int(n)
+    await session.execute(text("SELECT set_config('app.current_org', '', true)"))
+    return [ZoneCount(time_zone=tz, members=n) for tz, n in counts.most_common()]
 
 
 def _regions(rows: list[Any]) -> list[RegionCount]:
@@ -232,6 +250,7 @@ async def overview(
         ],
         ops_activity_by_day=await _activity_by_day(session, now),
         regions=_regions(rows),
+        member_zones=await _member_zones(session, rows),
     )
     await enable_ops_console(session)
     result.totals.feedback_new = int(

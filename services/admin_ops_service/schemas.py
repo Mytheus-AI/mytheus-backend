@@ -312,6 +312,14 @@ class RegionCount(BaseModel):
     cells: list[CellCount]
 
 
+class ZoneCount(BaseModel):
+    """Members whose saved time zone (`listening_preferences.time_zone`) is this IANA zone.
+    `UTC` is also the column default, so it mostly means "never set"."""
+
+    time_zone: str
+    members: int
+
+
 class Overview(BaseModel):
     period: str
     totals: OverviewTotals
@@ -321,6 +329,11 @@ class Overview(BaseModel):
     token_leaders: list[TokenLeader]
     ops_activity_by_day: list[DayCount]
     regions: list[RegionCount] = Field(default_factory=list)
+    member_zones: list[ZoneCount] = Field(
+        default_factory=list,
+        description="Members by saved time zone across every workspace, largest first. "
+        "Members with no listening preferences row are not counted here.",
+    )
 
 
 class TenantTarget(BaseModel):
