@@ -147,6 +147,14 @@ _PERSON_DELETES: tuple[tuple[str, str], ...] = (
     # Beyond the meeting: their agent's briefings (audio too, below) and briefing settings.
     ("briefings", "DELETE FROM agent_briefings WHERE user_id = :t"),
     ("briefing_preferences", "DELETE FROM briefing_preferences WHERE user_id = :t"),
+    # Ask Myte v2 (ADR-0049): every question they asked a teammate's Myte or were asked, what
+    # their Myte remembers and their routines. Before their threads, which these point at.
+    (
+        "myte_peer_questions",
+        "DELETE FROM myte_peer_questions WHERE from_user_id = :t OR to_user_id = :t",
+    ),
+    ("myte_memories", "DELETE FROM myte_memories WHERE user_id = :t"),
+    ("myte_routines", "DELETE FROM myte_routines WHERE user_id = :t"),
     # Ask Myte (ADR-0047): their conversations with their Myte; messages cascade.
     ("myte_threads", "DELETE FROM myte_threads WHERE user_id = :t"),
 )

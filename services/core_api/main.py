@@ -52,6 +52,8 @@ from services.core_api.routes import (
     minutes,
     my_tasks,
     myte,
+    myte_memory,
+    myte_peers,
     off_record,
     org_hierarchy,
     promises,
@@ -155,6 +157,9 @@ app.include_router(internal_bets.router)
 app.include_router(time_machine.router)
 # ADR-0047 Ask Myte: the caller's own conversations with their Myte (`/api/v1/myte/*`).
 app.include_router(myte.router)
+# ADR-0049 Ask Myte v2: peer questions, memories and routines (`/api/v1/myte/*`).
+app.include_router(myte_peers.router)
+app.include_router(myte_memory.router)
 
 # Confirm/edit/dismiss for /decisions and /actions (the only producers of those topics) are in
 # candidates; My Tasks (GET /api/v1/actions?assignee_id=me, POST /api/v1/actions/{id}/done) is in

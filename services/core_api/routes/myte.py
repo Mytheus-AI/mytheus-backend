@@ -22,8 +22,10 @@ caller's business.
   thread's `last_message_at` and `updated_at` move to the newest one. `Idempotency-Key` is
   honoured by the shared middleware, so a retried save stores the turn once. A payload over
   64 KB (compact UTF-8 JSON) is a 422; a thread holds at most 2000 messages.
-- `PATCH /messages/{id}` `{feedback: 1|-1|0, feedback_reason?}`: on Myte's answers only; 0 clears
-  the reason.
+- `PATCH /messages/{id}` `{feedback?: 1|-1|0, feedback_reason?, proposal_states?}`: on Myte's
+  answers only; 0 clears the reason. `proposal_states` `{<proposal_id>: "confirmed"|"dismissed"}`
+  (ADR-0049 R2) is merged into `payload.proposal_states` under a row lock, so Confirm never
+  reappears on another device; keys 1 to 64 characters, at most 20 per message in total.
 
 Session principals only: `/api/v1/myte` is not in the personal-access-token surface
 (`libs/shared/pat.py`), so an API token is refused before this runs. `require_tier("member")`.
@@ -35,6 +37,7 @@ import base64
 import binascii
 import json
 import uuid
+from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
@@ -57,6 +60,8 @@ MAX_MESSAGES_SERVED = 200
 MAX_MESSAGES_PER_THREAD = 2_000
 DEFAULT_LIMIT = 30
 MAX_LIMIT = 100
+MAX_PROPOSAL_STATES = 20
+MAX_PROPOSAL_ID = 64
 
 Role = Literal["user", "myte"]
 ScopeKind = Literal["all", "meeting", "person", "as_of"]
@@ -83,6 +88,11 @@ class MyteScope(BaseModel):
     meeting_id: uuid.UUID | None = None
     person_id: uuid.UUID | None = None
     as_of: date | None = None
+    label: str | None = Field(
+        default=None,
+        max_length=200,
+        description="How the UI names the scope, e.g. the meeting title (ADR-0049).",
+    )
 
 
 class MyteThreadSummary(BaseModel):
@@ -184,11 +194,47 @@ class MyteMessageList(BaseModel):
     items: list[MyteMessage]
 
 
+ProposalState = Literal["confirmed", "dismissed"]
+
+
 class MyteFeedback(BaseModel):
+    """A rating, proposal states (ADR-0049 R2), or both. At least one of the two."""
+
     model_config = ConfigDict(extra="forbid")
 
-    feedback: Literal[1, -1, 0]
+    # Not nullable: the schema keeps v1's plain enum (oasdiff reads `| None` as a removed enum).
+    # Whether it was sent is `model_fields_set`.
+    feedback: Literal[1, -1, 0] = 0
     feedback_reason: str | None = Field(default=None, max_length=MAX_FEEDBACK_REASON)
+    proposal_states: dict[str, ProposalState] | None = Field(
+        default=None,
+        description=(
+            '`{<proposal_id>: "confirmed"|"dismissed"}`, merged into '
+            "`payload.proposal_states` (a key already there is overwritten). Keys are 1 to 64 "
+            "characters; the message holds at most 20 in total."
+        ),
+    )
+
+    @field_validator("proposal_states")
+    @classmethod
+    def _proposal_keys(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > MAX_PROPOSAL_STATES:
+            raise ValueError(f"at most {MAX_PROPOSAL_STATES} proposal states")
+        for key in value:
+            if not 1 <= len(key) <= MAX_PROPOSAL_ID:
+                raise ValueError(f"a proposal id is 1 to {MAX_PROPOSAL_ID} characters")
+        return value
+
+    @model_validator(mode="after")
+    def _something_to_change(self) -> MyteFeedback:
+        rated = "feedback" in self.model_fields_set
+        if not rated and not self.proposal_states:
+            raise ValueError("send feedback, proposal_states, or both")
+        if not rated and self.feedback_reason is not None:
+            raise ValueError("feedback_reason needs feedback")
+        return self
 
 
 # --- helpers ------------------------------------------------------------------------------------
@@ -543,8 +589,13 @@ async def append_messages(
 @router.patch(
     "/messages/{message_id}",
     response_model=MyteMessage,
-    summary="Rate one of Myte's answers",
-    description="1 helpful, -1 not helpful, 0 clears the rating (and its reason).",
+    summary="Rate one of Myte's answers or record what happened to its proposals",
+    description=(
+        "`feedback`: 1 helpful, -1 not helpful, 0 clears the rating (and its reason). "
+        '`proposal_states` (ADR-0049 R2): `{<proposal_id>: "confirmed"|"dismissed"}`, '
+        "merged into `payload.proposal_states`, at most 20 per message. Either or both; on "
+        "Myte's answers only."
+    ),
 )
 async def rate_message(
     message_id: uuid.UUID,
@@ -554,32 +605,68 @@ async def rate_message(
 ) -> MyteMessage:
     me = _me(ctx)
     found = (
-        await session.execute(
-            text(
-                "SELECT m.role FROM myte_messages m JOIN myte_threads t ON t.id = m.thread_id "
-                "WHERE m.id = :id AND m.user_id = :u AND t.user_id = :u"
-            ),
-            {"id": str(message_id), "u": str(me)},
+        (
+            await session.execute(
+                text(
+                    "SELECT m.role, m.payload FROM myte_messages m "
+                    "JOIN myte_threads t ON t.id = m.thread_id "
+                    "WHERE m.id = :id AND m.user_id = :u AND t.user_id = :u FOR UPDATE OF m"
+                ),
+                {"id": str(message_id), "u": str(me)},
+            )
         )
-    ).first()
+        .mappings()
+        .first()
+    )
     if found is None:
         raise not_found()
-    if found[0] != "myte":
+    if found["role"] != "myte":
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Only Myte's answers take feedback")
-    reason = None
-    if body.feedback != 0 and body.feedback_reason is not None:
-        reason = " ".join(body.feedback_reason.split()) or None
+    sets: list[str] = []
+    params: dict[str, Any] = {"id": str(message_id), "u": str(me)}
+    if "feedback" in body.model_fields_set:
+        reason = None
+        if body.feedback != 0 and body.feedback_reason is not None:
+            reason = " ".join(body.feedback_reason.split()) or None
+        sets.append("feedback = :f, feedback_reason = :fr")
+        params.update(f=body.feedback, fr=reason)
+    if body.proposal_states:
+        payload = _loads(found["payload"]) or {}
+        merged = merge_proposal_states(payload, body.proposal_states)
+        if len(merged["proposal_states"]) > MAX_PROPOSAL_STATES:
+            raise ProblemDetail(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"An answer records at most {MAX_PROPOSAL_STATES} proposal states",
+            )
+        if payload_size(merged) > MAX_PAYLOAD_BYTES:
+            raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "payload must be at most 64 KB")
+        # A jsonb merge: only `proposal_states` is replaced (by the merge computed above under
+        # the row lock), nothing else in the payload is rewritten.
+        sets.append(
+            "payload = COALESCE(payload, '{}'::jsonb) "
+            "|| jsonb_build_object('proposal_states', CAST(:ps AS jsonb))"
+        )
+        params["ps"] = _jsonb(merged["proposal_states"])
     row = (
         (
             await session.execute(
                 text(
-                    "UPDATE myte_messages SET feedback = :f, feedback_reason = :fr "
+                    f"UPDATE myte_messages SET {', '.join(sets)} "
                     f"WHERE id = :id AND user_id = :u RETURNING {_MESSAGE_COLUMNS}"
                 ),
-                {"f": body.feedback, "fr": reason, "id": str(message_id), "u": str(me)},
+                params,
             )
         )
         .mappings()
         .one()
     )
     return _message(row)
+
+
+def merge_proposal_states(payload: dict[str, Any], states: Mapping[str, str]) -> dict[str, Any]:
+    """The payload with `states` merged into its `proposal_states` (what the SQL does)."""
+    current = payload.get("proposal_states")
+    merged = dict(current) if isinstance(current, dict) else {}
+    merged.update(states)
+    return {**payload, "proposal_states": merged}

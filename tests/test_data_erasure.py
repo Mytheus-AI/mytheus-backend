@@ -209,6 +209,9 @@ def test_person_erasure_removes_their_data_keeps_org_records_and_is_recorded(cli
         "agreement_checks": 0,
         "briefings": 0,
         "briefing_preferences": 0,
+        "myte_peer_questions": 0,
+        "myte_memories": 0,
+        "myte_routines": 0,
         "myte_threads": 0,
     }
     assert out["anonymized"]["decisions"] == 1
