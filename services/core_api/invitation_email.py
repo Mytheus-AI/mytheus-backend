@@ -25,13 +25,14 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from libs.shared.email_brand import brand_header
+from libs.shared.email_brand import brand_header, logo_url
 
 Kind = Literal["invite", "update", "cancel"]
 
 # The product palette (mytheus-ui `globals.css` light tokens and `app-theme.css` dark tokens).
 BG, SURFACE, SURFACE_2, LINE = "#f0eee6", "#ffffff", "#faf9f4", "#e6e2d6"
 INK, INK_2, INK_3, ACCENT = "#1f1e1d", "#3a352f", "#6b645b", "#a8472a"
+ACCENT_SOFT, D_ACCENT_SOFT = "#f7e9e1", "#3a2a22"
 D_BG, D_SURFACE, D_SURFACE_2, D_LINE = "#1a1816", "#232120", "#2a2725", "#38342f"
 D_INK, D_INK_3, D_ACCENT = "#f3f0e8", "#a9a296", "#e0805f"
 
@@ -187,6 +188,9 @@ a{{color:{ACCENT}}}
   .mx-pad{{padding:24px 20px!important}}
   .mx-title{{font-size:26px!important;line-height:32px!important}}
   .mx-cal td{{display:block!important;padding:0 0 8px!important}}
+  .mx-rl{{display:block!important;width:auto!important;padding:8px 0 0!important}}
+  .mx-rv{{display:block!important;padding:0 0 6px!important}}
+  .mx-tile-td{{padding:0 14px 0 0!important}}
 }}
 @media (prefers-color-scheme:dark){{
   .mx-bg{{background:{D_BG}!important}}
@@ -197,6 +201,10 @@ a{{color:{ACCENT}}}
   .mx-line{{border-color:{D_LINE}!important}}
   .mx-link{{color:{D_ACCENT}!important}}
   .mx-chip{{background:{D_SURFACE_2}!important;color:{D_INK}!important;border-color:{D_LINE}!important}}
+  .mx-tile{{background:{D_ACCENT_SOFT}!important}}
+  .mx-tile-m{{color:{D_ACCENT}!important}}
+  .mx-num{{background:{D_SURFACE_2}!important;border-color:{D_LINE}!important;color:{D_INK}!important}}
+  .mx-quote{{border-color:{D_ACCENT_SOFT}!important}}
 }}
 [data-ogsc] .mx-ink{{color:{D_INK}!important}}
 [data-ogsc] .mx-muted{{color:{D_INK_3}!important}}
@@ -210,9 +218,9 @@ a{{color:{ACCENT}}}
 def _row(label: str, value: str) -> str:
     e = html.escape
     return (
-        '<tr><td class="mx-muted" style="padding:6px 16px 6px 0;vertical-align:top;'
-        f'width:84px;font:600 14px/22px {SANS};color:{INK_3}">{e(label)}</td>'
-        f'<td class="mx-ink" style="padding:6px 0;vertical-align:top;font:400 15px/22px {SANS};'
+        '<tr><td class="mx-muted mx-rl" style="padding:7px 16px 7px 0;vertical-align:top;'
+        f'width:72px;font:600 14px/22px {SANS};color:{INK_3}">{e(label)}</td>'
+        f'<td class="mx-ink mx-rv" style="padding:7px 0;vertical-align:top;font:400 15px/22px {SANS};'
         f'color:{INK}">{e(value)}</td></tr>'
     )
 
@@ -225,6 +233,31 @@ def _cal_button(label: str, url: str) -> str:
         f"padding:9px 14px;border:1px solid {LINE};border-radius:999px;background:{SURFACE};"
         f'color:{INK};font:600 14px/20px {SANS};text-decoration:none">{e(label)}</a></td>'
     )
+
+
+def _date_tile(c: InvitationContent) -> str:
+    """The month and day, like the app's "When" card. Empty when no time is set."""
+    if c.start is None:
+        return ""
+    zone, _, _ = _zone(c.time_zone)
+    start = c.start.astimezone(zone)
+    tint = SURFACE_2 if c.kind == "cancel" else ACCENT_SOFT
+    ink = INK_3 if c.kind == "cancel" else ACCENT
+    return (
+        '<td width="64" style="width:64px;padding:0 18px 0 0;vertical-align:top">'
+        f'<table role="presentation" width="64" cellpadding="0" cellspacing="0" class="mx-tile" '
+        f'style="width:64px;background:{tint};border-radius:14px" bgcolor="{tint}"><tr>'
+        '<td align="center" style="padding:9px 0 10px">'
+        f'<div class="mx-tile-m" style="font:700 12px/14px {SANS};color:{ink};'
+        f'letter-spacing:0.04em">{html.escape(start.strftime("%b"))}</div>'
+        f'<div class="mx-ink" style="font:500 30px/34px {SERIF};color:{INK}">{start.day}</div>'
+        "</td></tr></table></td>"
+    )
+
+
+def _initial(name: str) -> str:
+    name = name.strip()
+    return html.escape(name[:1].upper() or "M")
 
 
 def render_html(c: InvitationContent) -> str:
@@ -240,39 +273,65 @@ def render_html(c: InvitationContent) -> str:
     if c.message:
         note = "<br>".join(e(line) for line in c.message.replace("\r\n", "\n").split("\n"))
         blocks.append(
-            '<tr><td style="padding:0 0 24px">'
-            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-            f'class="mx-soft" style="background:{SURFACE_2};border:1px solid {LINE};'
-            'border-radius:12px"><tr><td style="padding:16px 18px">'
-            f'<p class="mx-muted" style="margin:0 0 6px;font:600 13px/18px {SANS};'
-            f'color:{INK_3}">A note from {e(c.inviter_name)}</p>'
-            f'<p class="mx-ink" style="margin:0;font:400 15px/23px {SANS};color:{INK_2}">'
+            '<tr><td style="padding:0 0 26px">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+            '<td width="36" style="width:36px;padding:2px 12px 0 0;vertical-align:top">'
+            f'<div style="width:32px;height:32px;border-radius:16px;background:{ACCENT};'
+            f'color:#ffffff;font:700 14px/32px {SANS};text-align:center">'
+            f"{_initial(c.inviter_name)}</div></td>"
+            f'<td class="mx-quote" style="vertical-align:top;border-left:3px solid {ACCENT_SOFT};'
+            'padding:0 0 0 14px">'
+            f'<p class="mx-muted" style="margin:0 0 4px;font:600 13px/18px {SANS};'
+            f'color:{INK_3}">{e(c.inviter_name)} wrote</p>'
+            f'<p class="mx-ink" style="margin:0;font:400 16px/25px {SANS};color:{INK_2}">'
             f"{note}</p></td></tr></table></td></tr>"
         )
     if c.agenda and c.kind != "cancel":
         items = "".join(
-            f'<li class="mx-ink" style="margin:0 0 6px;font:400 15px/22px {SANS};'
-            f'color:{INK_2}">{e(item)}</li>'
-            for item in c.agenda
+            "<tr>"
+            '<td width="30" style="width:30px;padding:9px 12px 9px 0;vertical-align:top">'
+            f'<div class="mx-num" style="width:24px;height:24px;border-radius:12px;'
+            f"background:{SURFACE_2};border:1px solid {LINE};color:{INK_2};"
+            f'font:700 12px/24px {SANS};text-align:center">{i}</div></td>'
+            f'<td class="mx-ink mx-line" style="padding:10px 0;vertical-align:top;'
+            f'border-bottom:{"0" if i == len(c.agenda) else "1px solid " + LINE};'
+            f'font:400 15px/22px {SANS};color:{INK}">{e(item)}</td></tr>'
+            for i, item in enumerate(c.agenda, 1)
         )
         blocks.append(
-            '<tr><td style="padding:0 0 24px">'
-            f'<p class="mx-ink" style="margin:0 0 8px;font:500 18px/24px {SERIF};color:{INK}">'
-            f'Agenda</p><ol style="margin:0;padding:0 0 0 22px">{items}</ol></td></tr>'
+            '<tr><td style="padding:0 0 26px">'
+            f'<p class="mx-ink" style="margin:0 0 4px;font:500 19px/26px {SERIF};color:{INK}">'
+            "Agenda</p>"
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{items}'
+            "</table></td></tr>"
         )
     if c.kind != "cancel":
         blocks.append(
-            '<tr><td style="padding:4px 0 24px">'
-            '<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
-            f'<td style="border-radius:12px;background:{ACCENT}" bgcolor="{ACCENT}">'
-            f'<a href="{e(c.join_url, quote=True)}" style="display:inline-block;'
-            f"padding:15px 28px;border-radius:12px;background:{ACCENT};color:#ffffff;"
-            f'font:700 17px/22px {SANS};text-decoration:none">Join meeting</a>'
+            '<tr><td style="padding:2px 0 14px">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+            f'<td align="center" style="border-radius:14px;background:{ACCENT}" bgcolor="{ACCENT}">'
+            f'<a href="{e(c.join_url, quote=True)}" style="display:block;'
+            f"padding:16px 28px;border-radius:14px;background:{ACCENT};color:#ffffff;"
+            f'font:700 17px/22px {SANS};text-decoration:none;text-align:center">Join meeting</a>'
             "</td></tr></table>"
             f'<p class="mx-muted" style="margin:12px 0 0;font:400 13px/20px {SANS};'
-            f'color:{INK_3}">Or open <a class="mx-link" href="{e(c.join_url, quote=True)}" '
-            f'style="color:{ACCENT};word-break:break-all">{e(c.join_url)}</a></p>'
-            "</td></tr>"
+            f'color:{INK_3};text-align:center">Or open <a class="mx-link" '
+            f'href="{e(c.join_url, quote=True)}" style="color:{ACCENT};word-break:break-all">'
+            f"{e(c.join_url)}</a></p></td></tr>"
+        )
+        blocks.append(
+            '<tr><td style="padding:10px 0 24px">'
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            f'class="mx-soft" style="background:{SURFACE_2};border:1px solid {LINE};'
+            'border-radius:14px"><tr>'
+            '<td width="22" style="width:22px;padding:15px 0 15px 16px;vertical-align:top">'
+            f'<div style="width:8px;height:8px;margin-top:7px;border-radius:4px;'
+            f'background:{ACCENT}"></div></td>'
+            '<td style="padding:13px 16px 13px 10px">'
+            f'<p class="mx-ink" style="margin:0;font:400 14px/21px {SANS};color:{INK_2}">'
+            "<strong>Your Myte comes with you.</strong> It takes private notes only you see, "
+            "and nothing is saved to your workspace until you confirm it.</p>"
+            "</td></tr></table></td></tr>"
         )
         cal = [
             (label, url)
@@ -287,17 +346,25 @@ def render_html(c: InvitationContent) -> str:
             blocks.append(
                 f'<tr><td class="mx-line" style="padding:20px 0 0;border-top:1px solid {LINE}">'
                 f'<p class="mx-muted" style="margin:0 0 10px;font:600 13px/18px {SANS};'
-                f'color:{INK_3}">Add to your calendar</p>'
+                f'color:{INK_3}">Add it to your calendar</p>'
                 '<table role="presentation" class="mx-cal" cellpadding="0" cellspacing="0"><tr>'
                 + "".join(_cal_button(label, url) for label, url in cal)
                 + "</tr></table></td></tr>"
             )
 
     kicker = _lead(c)
-    title_style = f"margin:0 0 20px;font:500 30px/36px {SERIF};color:{INK};letter-spacing:-0.01em"
+    title_style = f"margin:0;font:500 30px/36px {SERIF};color:{INK};letter-spacing:-0.01em"
     if c.kind == "cancel":
         title_style += ";text-decoration:line-through"
     preheader = f"{_lead(c)} {when_line(c)}"
+    workspace = (
+        f'<td align="right" style="vertical-align:middle">'
+        f'<span class="mx-chip" style="display:inline-block;padding:6px 12px;border:1px solid '
+        f"{LINE};border-radius:999px;background:{SURFACE};color:{INK_2};font:600 13px/18px "
+        f'{SANS}">{e(c.workspace)}</span></td>'
+        if c.workspace
+        else ""
+    )
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -310,25 +377,46 @@ def render_html(c: InvitationContent) -> str:
         f'style="background:{BG}" bgcolor="{BG}"><tr><td align="center" style="padding:32px 12px">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="max-width:600px">'
-        '<tr><td style="padding:0 8px 16px">'
+        '<tr><td style="padding:0 6px 18px">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        '<td style="vertical-align:middle">'
         + brand_header(
             wordmark_style=f"font:600 20px/24px {SERIF};color:{INK}", wordmark_class="mx-ink"
         )
-        + "</td></tr>"
+        + "</td>"
+        + workspace
+        + "</tr></table></td></tr>"
         '<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        f'class="mx-card" style="background:{SURFACE};border:1px solid {LINE};border-radius:20px"'
-        f' bgcolor="{SURFACE}"><tr><td class="mx-pad" style="padding:36px 36px 32px">'
+        f'class="mx-card" style="background:{SURFACE};border:1px solid {LINE};border-radius:22px;'
+        f'border-top:4px solid {ACCENT}" bgcolor="{SURFACE}">'
+        '<tr><td class="mx-pad" style="padding:34px 36px 32px">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
-        f'<tr><td><p class="mx-muted" style="margin:0 0 8px;font:600 14px/20px {SANS};'
+        '<tr><td style="padding:0 0 24px"><table role="presentation" width="100%" '
+        'cellpadding="0" cellspacing="0"><tr>'
+        + _date_tile(c)
+        + '<td style="vertical-align:middle">'
+        f'<p class="mx-muted" style="margin:0 0 6px;font:600 14px/20px {SANS};'
         f'color:{INK_3}">{e(kicker)}</p>'
-        f'<h1 class="mx-title mx-ink" style="{title_style}">{e(c.title)}</h1></td></tr>'
-        '<tr><td style="padding:0 0 24px"><table role="presentation" cellpadding="0" '
-        f'cellspacing="0">{"".join(rows)}</table></td></tr>'
-        + "".join(blocks)
-        + "</table></td></tr></table></td></tr>"
-        '<tr><td style="padding:20px 8px 0">'
-        f'<p class="mx-muted" style="margin:0;font:400 13px/20px {SANS};color:{INK_3}">'
-        f"{e(_footer_text(c))}</p></td></tr>"
+        f'<h1 class="mx-title mx-ink" style="{title_style}">{e(c.title)}</h1>'
+        "</td></tr></table></td></tr>"
+        '<tr><td style="padding:0 0 26px">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'class="mx-soft" style="background:{SURFACE_2};border:1px solid {LINE};'
+        'border-radius:14px"><tr><td style="padding:10px 18px">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0">{"".join(rows)}</table>'
+        "</td></tr></table></td></tr>" + "".join(blocks) + "</table></td></tr></table></td></tr>"
+        '<tr><td style="padding:22px 6px 0">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        '<td style="vertical-align:top;padding:0 12px 0 0" width="34">'
+        f'<img src="{e(logo_url(), quote=True)}" width="31" height="16" alt="" '
+        'style="display:block;border:0;margin-top:2px;opacity:0.8"></td>'
+        '<td style="vertical-align:top">'
+        f'<p class="mx-muted" style="margin:0 0 4px;font:400 13px/20px {SANS};color:{INK_3}">'
+        f"{e(_footer_text(c))}</p>"
+        f'<p class="mx-muted" style="margin:0;font:400 12px/18px {SANS};color:{INK_3}">'
+        f'Mytheus, every meeting on repeat. <a class="mx-link" href="https://mytheus.cloud" '
+        f'style="color:{ACCENT};text-decoration:none">mytheus.cloud</a></p>'
+        "</td></tr></table></td></tr>"
         "</table></td></tr></table></body></html>"
     )
 
