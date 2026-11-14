@@ -309,7 +309,8 @@ def test_patch_updates_role_and_bio_and_returns_the_canonical_resource(client, m
     assert body["bio"] == "builds things"
     assert body["id"] == str(member.user_id)
     # Not a partial echo: avatar_url/email/created_at/updated_at all come back too, and since
-    # ADR-0038 the working profile and the agent persona, and the person's real name.
+    # ADR-0038 the working profile and the agent persona, the person's real name, and where
+    # they say they work.
     assert {
         "id",
         "email",
@@ -324,6 +325,8 @@ def test_patch_updates_role_and_bio_and_returns_the_canonical_resource(client, m
         "agent_avatar_seed",
         "agent_personality",
         "agent_instructions",
+        "country",
+        "subdivision",
         "created_at",
         "updated_at",
     } == set(body)
