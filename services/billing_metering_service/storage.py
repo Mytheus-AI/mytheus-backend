@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
@@ -32,6 +31,8 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from libs.shared import object_storage
 
 logger = logging.getLogger(__name__)
 
@@ -41,28 +42,9 @@ _BYTES_PER_GB = 1_000_000_000
 
 def make_s3_client(env: Mapping[str, str] | None = None) -> Any | None:
     """A boto3 S3 client from the same `S3_*` variables `meeting-service` uses, or None when
-    object storage is not configured (the sweep is then skipped, not failed)."""
-    source = env if env is not None else os.environ
-    endpoint = source.get("S3_ENDPOINT_URL") or None
-    key, secret = source.get("S3_ACCESS_KEY_ID"), source.get("S3_SECRET_ACCESS_KEY")
-    if not key or not secret:
-        return None
-    import boto3
-    from botocore.config import Config
-
-    path_style = (source.get("S3_FORCE_PATH_STYLE") or "").lower() in ("1", "true", "yes")
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        region_name=source.get("S3_REGION") or "auto",
-        aws_access_key_id=key,
-        aws_secret_access_key=secret,
-        config=Config(
-            s3={"addressing_style": "path" if path_style else "auto"},
-            request_checksum_calculation="when_required",
-            response_checksum_validation="when_required",
-        ),
-    )
+    object storage is not configured (the sweep is then skipped, not failed). The client itself
+    comes from the shared factory (`libs.shared.object_storage`)."""
+    return object_storage.make_s3_client(env)
 
 
 def tenant_bytes(s3: Any, org_id: uuid.UUID, buckets: tuple[str, ...] = TENANT_BUCKETS) -> int:

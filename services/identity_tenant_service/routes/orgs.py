@@ -53,6 +53,7 @@ from libs.shared.clerk_admin import ClerkUnavailable, membership_of, org_for_adm
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
 from libs.shared.tenancy import set_rls
+from services.identity_tenant_service.branding import routes as branding_routes
 from services.identity_tenant_service.provisioning import (
     PRODUCER,
     ProvisionResult,
@@ -150,10 +151,13 @@ async def read_own_org(
     """
     async with get_sessionmaker()() as session, session.begin():
         row = (await session.execute(_SELECT_OWN_ORG, {"id": str(ctx.org_id)})).mappings().first()
-    if row is None:
-        # Resolved a moment ago, gone now (soft-deleted between the two reads).
-        raise not_found()
-    return Organization(**dict(row))
+        if row is None:
+            # Resolved a moment ago, gone now (soft-deleted between the two reads).
+            raise not_found()
+        # The logo lives on the RLS-policied `tenant_settings`, so the tenant is bound first.
+        await set_rls(session, ctx.org_id)
+        logo = branding_routes.to_model(await branding_routes.read_logo_row(session, ctx.org_id))
+    return Organization(**dict(row), logo_url=logo.logo_url, logo_updated_at=logo.logo_updated_at)
 
 
 @router.post("/orgs", status_code=status.HTTP_201_CREATED, response_model=ProvisionedOrganization)
