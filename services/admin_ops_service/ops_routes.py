@@ -96,9 +96,14 @@ _PLAN = text("SELECT p.code FROM subscriptions s JOIN plans p ON p.id = s.plan_i
 
 # The cost view's statements. Their tables (`COST_TABLES`) are aggregate tables only; a test
 # asserts nothing else is touched while the route runs.
+# The live counter (`agent_budgets.tokens_consumed`, charged per call by the usage-events
+# consumer, the number enforcement reads) or the nightly rollup, whichever is larger. Reading the
+# rollup alone showed 0 until the nightly job ran, which looked like usage being reset.
 _TOKENS = text(
-    "SELECT COALESCE(sum(quantity), 0) FROM usage_aggregates "
-    "WHERE dimension = 'agent_token' AND billing_period = :p"
+    "SELECT GREATEST("
+    "(SELECT COALESCE(max(tokens_consumed), 0) FROM agent_budgets WHERE period = :p), "
+    "(SELECT COALESCE(sum(quantity), 0) FROM usage_aggregates "
+    "WHERE dimension = 'agent_token' AND billing_period = :p))"
 )
 _QUOTA = text("SELECT token_quota FROM agent_budgets WHERE period = :p LIMIT 1")
 COST_TABLES = frozenset({"organizations", "usage_aggregates", "agent_budgets"})

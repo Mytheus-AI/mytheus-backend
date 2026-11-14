@@ -377,9 +377,12 @@ async def tenant_detail(
             )
         ).all()
     }
+    # Live counter or nightly rollup, whichever is larger (see ops_routes._TOKENS).
     tokens = await scalar(
-        "SELECT COALESCE(sum(quantity), 0) FROM usage_aggregates "
-        "WHERE dimension = 'agent_token' AND billing_period = :p",
+        "SELECT GREATEST("
+        "(SELECT COALESCE(max(tokens_consumed), 0) FROM agent_budgets WHERE period = :p), "
+        "(SELECT COALESCE(sum(quantity), 0) FROM usage_aggregates "
+        "WHERE dimension = 'agent_token' AND billing_period = :p))",
         p=period,
     )
     quota = await scalar(
