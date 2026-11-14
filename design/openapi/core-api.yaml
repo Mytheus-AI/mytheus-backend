@@ -14815,6 +14815,15 @@ components:
       - missed
       title: Totals
       type: object
+    Transcript:
+      properties:
+        text:
+          title: Text
+          type: string
+      required:
+      - text
+      title: Transcript
+      type: object
     TranscriptChunk:
       description: 'One persisted final from `transcript_chunks`, owned by `transcription-service`.
 
@@ -27179,6 +27188,51 @@ paths:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
       summary: Speak
+      tags:
+      - voice
+  /api/v1/voice/transcribe:
+    post:
+      operationId: transcribe
+      parameters:
+      - in: query
+        name: language
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transcript'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Transcribe
       tags:
       - voice
   /api/v1/voice/voices:

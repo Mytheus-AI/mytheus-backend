@@ -14,6 +14,12 @@ Ask Myte's read aloud and voice mode, and the briefing player.
   arrives quickly). 30 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`), counted in
   Redis at `nexus:{org_id}:ratelimit:voice:{user_id}:{minute}`. Server voice off or Kokoro
   unreachable: 503 `voice_not_connected` before any audio is sent.
+- `POST /api/v1/voice/transcribe`: the raw recording (`audio/webm`, `audio/ogg`, `audio/mp4`,
+  `audio/mpeg` or `audio/wav`, at most 10 MB) -> `{text}`. Talk mode's ears, so it works in
+  every browser. Self-hosted faster-whisper (`whisper-stt`, speaches, `WHISPER_URL`, default
+  `http://whisper-stt:8000`, model `WHISPER_MODEL`, default
+  `Systran/faster-distil-whisper-small.en`, downloaded on first use). 30 per minute per person;
+  503 `listening_not_connected` when the service is off.
 """
 
 from __future__ import annotations
@@ -25,7 +31,8 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -140,10 +147,10 @@ def _per_minute() -> int:
         return DEFAULT_PER_MINUTE
 
 
-async def _take(org_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+async def _take(org_id: uuid.UUID, user_id: uuid.UUID, kind: str = "voice") -> bool:
     """A fixed one-minute window per person. Redis down: allowed (the voice is self-hosted, so
     an outage of the counter costs CPU time, never money) and logged."""
-    key = redis_key(org_id, "ratelimit", "voice", user_id, int(time.time() // 60))
+    key = redis_key(org_id, "ratelimit", kind, user_id, int(time.time() // 60))
     try:
         redis = get_redis()
         used = int(await redis.incr(key))
@@ -212,3 +219,102 @@ async def speak(
         media_type=briefing_audio.MIME,
         headers={"Cache-Control": "no-store", "X-Myte-Voice": voice},
     )
+
+
+# --- ears: speech to text for Talk mode ------------------------------------------------------
+
+WHISPER_URL_ENV = "WHISPER_URL"
+WHISPER_URL = "http://whisper-stt:8000"
+WHISPER_MODEL_ENV = "WHISPER_MODEL"
+WHISPER_MODEL = "Systran/faster-distil-whisper-small.en"
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
+AUDIO_TYPES = ("audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav")
+_model_ready: set[str] = set()
+
+
+class Transcript(BaseModel):
+    text: str
+
+
+def _whisper() -> tuple[str, str]:
+    return (
+        (os.environ.get(WHISPER_URL_ENV) or WHISPER_URL).rstrip("/"),
+        os.environ.get(WHISPER_MODEL_ENV) or WHISPER_MODEL,
+    )
+
+
+def _not_listening() -> ProblemDetail:
+    return ProblemDetail(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        "Your Myte can't hear right now",
+        extra={"reason": "listening_not_connected"},
+    )
+
+
+async def _ensure_model(client: httpx.AsyncClient, base: str, model: str) -> None:
+    """speaches serves only downloaded models; the first call downloads it into its volume."""
+    if model in _model_ready:
+        return
+    res = await client.post(f"{base}/v1/models/{model}", timeout=httpx.Timeout(600.0, connect=5.0))
+    if res.status_code not in (200, 201):
+        raise httpx.HTTPError(f"model download answered {res.status_code}")
+    _model_ready.add(model)
+
+
+async def transcribe_audio(data: bytes, content_type: str, language: str | None) -> str:
+    base, model = _whisper()
+    ext = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3"}.get(
+        content_type, "wav"
+    )
+    form = {"model": model, "response_format": "json"}
+    if language:
+        form["language"] = language
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
+        await _ensure_model(client, base, model)
+        res = await client.post(
+            f"{base}/v1/audio/transcriptions",
+            data=form,
+            files={"file": (f"speech.{ext}", data, content_type)},
+        )
+        if res.status_code == 404:
+            _model_ready.discard(model)
+            await _ensure_model(client, base, model)
+            res = await client.post(
+                f"{base}/v1/audio/transcriptions",
+                data=form,
+                files={"file": (f"speech.{ext}", data, content_type)},
+            )
+    if res.status_code != 200:
+        raise httpx.HTTPError(f"transcription answered {res.status_code}")
+    return str(res.json().get("text") or "").strip()
+
+
+@router.post("/api/v1/voice/transcribe", response_model=Transcript)
+async def transcribe(
+    request: Request,
+    ctx: Annotated[RequestContext, Depends(require_tier("member"))],
+    language: str | None = None,
+) -> Transcript:
+    me = _me(ctx)
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type not in AUDIO_TYPES:
+        raise ProblemDetail(
+            422, ErrorCode.VALIDATION_FAILED, "Send audio (webm, ogg, mp4, mp3, wav)"
+        )
+    data = await request.body()
+    if not data:
+        raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "The recording is empty")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise ProblemDetail(413, ErrorCode.VALIDATION_FAILED, "The recording is too long")
+    if not await _take(ctx.org_id, me, "voice-stt"):
+        raise ProblemDetail(429, ErrorCode.RATE_LIMITED, "Too many recordings at once; slow down")
+    lang = (language or "").split("-")[0].lower() or None
+    try:
+        text_out = await transcribe_audio(
+            data, content_type, lang if lang and len(lang) == 2 else None
+        )
+    except httpx.HTTPError:
+        logger.warning("voice: transcription failed", exc_info=True)
+        raise _not_listening() from None
+    return Transcript(text=text_out)

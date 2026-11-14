@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -255,22 +256,62 @@ class KokoroS3(ElevenLabsS3):
         self._kokoro = (env.get(KOKORO_URL_ENV) or KOKORO_URL).rstrip("/")
 
     async def synthesize(self, text: str, *, voice: str, language: str) -> bytes:
-        chunks = [c async for c in kokoro_stream(self._kokoro, text[:MAX_CHARS], voice=voice)]
-        data = b"".join(chunks)
+        """A whole briefing: short pieces rendered three at a time and joined (MP3 frames
+        concatenate cleanly). One long streamed request was cut off by Kokoro mid-body
+        (`RemoteProtocolError`), and one piece at a time took as long as the briefing itself."""
+        pieces = split_for_speech(text[:MAX_CHARS], PIECE_CHARS)
+        if not pieces:
+            raise TtsError("nothing to say")
+        gate = asyncio.Semaphore(RENDER_CONCURRENCY)
+
+        async def one(piece: str) -> bytes:
+            async with gate:
+                return await kokoro_speech(self._kokoro, piece, voice=voice)
+
+        parts = await asyncio.gather(*(one(p) for p in pieces))
+        data = b"".join(parts)
         if not data:
             raise TtsError("tts answered no audio")
         return data
 
 
-async def kokoro_stream(
-    base_url: str, text: str, *, voice: str, speed: float = 1.0
-) -> AsyncIterator[bytes]:
-    """Stream MP3 from Kokoro-FastAPI (`POST /v1/audio/speech`, OpenAI-style)."""
+RENDER_CONCURRENCY = 3
+PIECE_CHARS = 320
+_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+
+
+def split_for_speech(text: str, limit: int | None = None) -> list[str]:
+    """Sentences grouped into pieces of at most `limit` characters (a sentence longer than the
+    limit is split at commas, then at spaces)."""
+    limit = limit or PIECE_CHARS
+    sentences = [s.strip() for s in _SENTENCE.split(" ".join(text.split())) if s.strip()]
+    out: list[str] = []
+    current = ""
+    for sentence in sentences:
+        while len(sentence) > limit:
+            cut = sentence.rfind(", ", 0, limit)
+            cut = cut + 1 if cut > limit // 3 else sentence.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            head, sentence = sentence[:cut].strip(), sentence[cut:].strip()
+            if current:
+                out.append(current)
+                current = ""
+            out.append(head)
+        if current and len(current) + 1 + len(sentence) > limit:
+            out.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        out.append(current)
+    return out
+
+
+async def kokoro_speech(base_url: str, text: str, *, voice: str, speed: float = 1.0) -> bytes:
+    """One short piece of MP3 from Kokoro-FastAPI (`POST /v1/audio/speech`, not streamed)."""
     try:
-        async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client,
-            client.stream(
-                "POST",
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
+            res = await client.post(
                 f"{base_url}/v1/audio/speech",
                 json={
                     "model": "kokoro",
@@ -278,17 +319,23 @@ async def kokoro_stream(
                     "voice": voice,
                     "response_format": "mp3",
                     "speed": speed,
-                    "stream": True,
+                    "stream": False,
                 },
-            ) as res,
-        ):
-            if res.status_code != 200:
-                raise TtsError(f"tts answered {res.status_code}")
-            async for chunk in res.aiter_bytes():
-                if chunk:
-                    yield chunk
+            )
     except httpx.HTTPError as exc:
         raise TtsError(f"tts unreachable: {type(exc).__name__}") from None
+    if res.status_code != 200 or not res.content:
+        raise TtsError(f"tts answered {res.status_code}")
+    return res.content
+
+
+async def kokoro_stream(
+    base_url: str, text: str, *, voice: str, speed: float = 1.0
+) -> AsyncIterator[bytes]:
+    """Live speech: the apps send a sentence or two at a time, so each piece is fetched whole
+    (Kokoro's chunked replies were cut off mid-body) and yielded as one chunk."""
+    for piece in split_for_speech(text):
+        yield await kokoro_speech(base_url, piece, voice=voice, speed=speed)
 
 
 class Speaker(Protocol):
