@@ -701,3 +701,65 @@ def test_speech_without_a_voice_service_is_a_clear_503(client):
         assert client.get("/api/v1/voice/voices").json()["connected"] is False
     finally:
         briefing_audio.reset_speaker()
+
+
+def test_briefing_speech_is_split_into_short_ordered_pieces():
+    text = (
+        "Someone asked for an update on the login API, which is due November 18th. "
+        "It's the earliest deadline on your list. " * 6
+    )
+    pieces = briefing_audio.split_for_speech(text, limit=160)
+    assert len(pieces) > 3 and all(len(p) <= 160 for p in pieces)
+    assert " ".join(pieces) == " ".join(text.split())
+    long = "word " * 120
+    assert all(len(p) <= 160 for p in briefing_audio.split_for_speech(long, limit=160))
+
+
+async def test_kokoro_renders_pieces_concurrently_and_joins_them_in_order(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_speech(base_url, text, *, voice, speed=1.0):  # type: ignore[no-untyped-def]
+        calls.append(text)
+        return f"<{text[:6]}>".encode()
+
+    monkeypatch.setattr(briefing_audio, "kokoro_speech", fake_speech)
+    backend = briefing_audio.KokoroS3(
+        {"S3_ACCESS_KEY_ID": "k", "S3_SECRET_ACCESS_KEY": "s", "S3_ENDPOINT_URL": "http://s3.test"}
+    )
+    text = "First one here. Second one here. Third one here."
+    monkeypatch.setattr(briefing_audio, "PIECE_CHARS", 16)
+    data = await backend.synthesize(text, voice="af_heart", language="en")
+    assert data == b"<First ><Second><Third >"
+    assert len(calls) == 3
+
+
+def test_transcribe_turns_a_recording_into_text(client, monkeypatch):
+    host, _member, _m = meeting()
+    sign_in(host)
+
+    async def fake(data, content_type, language):  # type: ignore[no-untyped-def]
+        assert data == b"webm-bytes" and content_type == "audio/webm"
+        return "What did we decide about pricing?"
+
+    monkeypatch.setattr(voice_routes, "transcribe_audio", fake)
+    res = client.post(
+        "/api/v1/voice/transcribe",
+        content=b"webm-bytes",
+        headers={"content-type": "audio/webm;codecs=opus"},
+    )
+    assert res.status_code == 200 and res.json() == {"text": "What did we decide about pricing?"}
+    bad = client.post(
+        "/api/v1/voice/transcribe", content=b"x", headers={"content-type": "text/plain"}
+    )
+    assert bad.status_code == 422
+
+    async def down(data, content_type, language):  # type: ignore[no-untyped-def]
+        import httpx
+
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(voice_routes, "transcribe_audio", down)
+    res = client.post(
+        "/api/v1/voice/transcribe", content=b"a", headers={"content-type": "audio/webm"}
+    )
+    assert res.status_code == 503 and res.json()["reason"] == "listening_not_connected"
