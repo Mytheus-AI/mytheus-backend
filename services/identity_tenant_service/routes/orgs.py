@@ -52,6 +52,7 @@ from libs.shared.authz import RequestContext, _client_ip, not_found, require_tie
 from libs.shared.clerk_admin import ClerkUnavailable, membership_of, org_for_admin
 from libs.shared.db import get_sessionmaker
 from libs.shared.errors import ErrorCode, ProblemDetail
+from libs.shared.staff_mail import notify_staff_soon
 from libs.shared.tenancy import set_rls
 from services.identity_tenant_service.branding import routes as branding_routes
 from services.identity_tenant_service.provisioning import (
@@ -238,6 +239,16 @@ async def provision_org(
     await sync_internal_org_id_to_clerk(
         ProvisionResult(org_id=created.org_id, created=True), body.clerk_org_id
     )
+    notify_staff_soon(
+        "A new workspace was created",
+        [
+            ("Workspace", body.name),
+            ("Owner", body.owner.email or "unknown"),
+            ("Plan", "Free"),
+            ("Workspace id", str(created.org_id)),
+        ],
+        "Provisioned by a platform operator.",
+    )
 
     return ProvisionedOrganization(
         id=created.org_id,
@@ -394,6 +405,17 @@ async def self_serve_provision(
 
     await sync_internal_org_id_to_clerk(
         ProvisionResult(org_id=created.org_id, created=True), clerk_org
+    )
+    # After COMMIT: a heads-up to the superadmins (best effort, never awaited by the request).
+    notify_staff_soon(
+        "A new workspace was created",
+        [
+            ("Workspace", clerk.name[:200]),
+            ("Created by", clerk.owner_email or "unknown"),
+            ("Plan", "Free"),
+            ("Workspace id", str(created.org_id)),
+        ],
+        "Open the ops console's Workspaces page to see it.",
     )
     return Organization(
         id=created.org_id, name=clerk.name[:200], slug=slug, status="active", clerk_org_id=clerk_org
