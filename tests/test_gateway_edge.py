@@ -287,6 +287,12 @@ def test_the_clerk_webhook_is_public_at_the_edge(client):
         ("/api/v1/myte/threads", "core-api"),
         ("/api/v1/myte/threads/abc-123/messages", "core-api"),
         ("/api/v1/myte/messages/abc-123", "core-api"),
+        # ADR-0049 Ask Myte v2: peer questions, memories and routines are core-api's too.
+        ("/api/v1/myte/peer-questions", "core-api"),
+        ("/api/v1/myte/peer-questions/abc-123/answer", "core-api"),
+        ("/api/v1/myte/memories/abc-123", "core-api"),
+        ("/api/v1/myte/routines/due", "core-api"),
+        ("/api/v1/myte/routines/abc-123/ran", "core-api"),
         ("/api/rag/myte", "rag-service"),
         ("/scim/v2/Users", "identity-tenant-service"),
         ("/clerk/webhook", "identity-tenant-service"),

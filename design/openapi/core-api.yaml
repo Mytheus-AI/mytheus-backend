@@ -9981,23 +9981,90 @@ components:
       type: object
     MyteFeedback:
       additionalProperties: false
+      description: A rating, proposal states (ADR-0049 R2), or both. At least one of the two.
       properties:
         feedback:
-          enum:
-          - 1
-          - -1
-          - 0
+          anyOf:
+          - enum:
+            - 1
+            - -1
+            - 0
+            type: integer
+          - type: 'null'
           title: Feedback
-          type: integer
         feedback_reason:
           anyOf:
           - maxLength: 500
             type: string
           - type: 'null'
           title: Feedback Reason
-      required:
-      - feedback
+        proposal_states:
+          anyOf:
+          - additionalProperties:
+              enum:
+              - confirmed
+              - dismissed
+              type: string
+            type: object
+          - type: 'null'
+          description: '`{<proposal_id>: "confirmed"|"dismissed"}`, merged into `payload.proposal_states`
+            (a key already there is overwritten). Keys are 1 to 64 characters; the message holds at most
+            20 in total.'
+          title: Proposal States
       title: MyteFeedback
+      type: object
+    MyteMemory:
+      properties:
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        source_thread_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Source Thread Id
+        text:
+          title: Text
+          type: string
+      required:
+      - id
+      - text
+      - created_at
+      title: MyteMemory
+      type: object
+    MyteMemoryCreate:
+      additionalProperties: false
+      properties:
+        source_thread_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Source Thread Id
+        text:
+          maxLength: 1200
+          title: Text
+          type: string
+      required:
+      - text
+      title: MyteMemoryCreate
+      type: object
+    MyteMemoryList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MyteMemory'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MyteMemoryList
       type: object
     MyteMessage:
       properties:
@@ -10097,6 +10164,330 @@ components:
       - messages
       title: MyteMessagesAppend
       type: object
+    MytePeerAnswer:
+      additionalProperties: false
+      properties:
+        answer:
+          maxLength: 32000
+          title: Answer
+          type: string
+      required:
+      - answer
+      title: MytePeerAnswer
+      type: object
+    MytePeerDecline:
+      additionalProperties: false
+      properties:
+        reason:
+          anyOf:
+          - maxLength: 2000
+            type: string
+          - type: 'null'
+          title: Reason
+      title: MytePeerDecline
+      type: object
+    MytePeerQuestion:
+      properties:
+        answer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Answer
+        answered_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: When it was answered or declined.
+          title: Answered At
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        decline_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Decline Reason
+        from_user:
+          $ref: '#/components/schemas/MytePerson'
+        id:
+          format: uuid
+          title: Id
+          type: string
+        question:
+          title: Question
+          type: string
+        status:
+          enum:
+          - pending
+          - answered
+          - declined
+          title: Status
+          type: string
+        thread_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: The asker's own thread the question came from; null for the recipient.
+          title: Thread Id
+        to_user:
+          $ref: '#/components/schemas/MytePerson'
+      required:
+      - id
+      - from_user
+      - to_user
+      - question
+      - status
+      - created_at
+      title: MytePeerQuestion
+      type: object
+    MytePeerQuestionCreate:
+      additionalProperties: false
+      properties:
+        question:
+          maxLength: 4000
+          title: Question
+          type: string
+        thread_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Thread Id
+        to_user_id:
+          format: uuid
+          title: To User Id
+          type: string
+      required:
+      - to_user_id
+      - question
+      title: MytePeerQuestionCreate
+      type: object
+    MytePeerQuestionList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MytePeerQuestion'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MytePeerQuestionList
+      type: object
+    MytePerson:
+      description: A person and their Myte, as a peer question shows them.
+      properties:
+        agent_avatar_seed:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Their Myte's plush seed; null when they never chose one.
+          title: Agent Avatar Seed
+        agent_name:
+          description: Their Myte's name; "{first name}'s Myte" when unset.
+          title: Agent Name
+          type: string
+        id:
+          format: uuid
+          title: Id
+          type: string
+        name:
+          description: Their display name (or the name guessed from their email).
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - agent_name
+      title: MytePerson
+      type: object
+    MyteRoutine:
+      properties:
+        cadence:
+          enum:
+          - daily
+          - weekdays
+          - weekly
+          title: Cadence
+          type: string
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        enabled:
+          title: Enabled
+          type: boolean
+        hour:
+          description: 0 to 23, on the hour, in `timezone`.
+          title: Hour
+          type: integer
+        id:
+          format: uuid
+          title: Id
+          type: string
+        last_run_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Run At
+        last_thread_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          title: Last Thread Id
+        next_run_at:
+          format: date-time
+          title: Next Run At
+          type: string
+        question:
+          title: Question
+          type: string
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        timezone:
+          description: An IANA timezone, e.g. Europe/London.
+          title: Timezone
+          type: string
+        weekday:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: 0 Monday to 6 Sunday; weekly only.
+          title: Weekday
+      required:
+      - id
+      - question
+      - cadence
+      - hour
+      - timezone
+      - enabled
+      - next_run_at
+      - created_at
+      title: MyteRoutine
+      type: object
+    MyteRoutineCreate:
+      additionalProperties: false
+      properties:
+        cadence:
+          enum:
+          - daily
+          - weekdays
+          - weekly
+          title: Cadence
+          type: string
+        enabled:
+          default: true
+          title: Enabled
+          type: boolean
+        hour:
+          maximum: 23.0
+          minimum: 0.0
+          title: Hour
+          type: integer
+        question:
+          maxLength: 4000
+          title: Question
+          type: string
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        timezone:
+          maxLength: 64
+          title: Timezone
+          type: string
+        weekday:
+          anyOf:
+          - maximum: 6.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Weekday
+      required:
+      - question
+      - cadence
+      - hour
+      - timezone
+      title: MyteRoutineCreate
+      type: object
+    MyteRoutineList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/MyteRoutine'
+          title: Items
+          type: array
+      required:
+      - items
+      title: MyteRoutineList
+      type: object
+    MyteRoutineRan:
+      additionalProperties: false
+      properties:
+        thread_id:
+          format: uuid
+          title: Thread Id
+          type: string
+      required:
+      - thread_id
+      title: MyteRoutineRan
+      type: object
+    MyteRoutineUpdate:
+      additionalProperties: false
+      description: At least one field. `weekday` may be sent with a move to `weekly`, or alone on one.
+      properties:
+        cadence:
+          anyOf:
+          - enum:
+            - daily
+            - weekdays
+            - weekly
+            type: string
+          - type: 'null'
+          title: Cadence
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+        hour:
+          anyOf:
+          - maximum: 23.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Hour
+        question:
+          anyOf:
+          - maxLength: 4000
+            type: string
+          - type: 'null'
+          title: Question
+        scope:
+          anyOf:
+          - $ref: '#/components/schemas/MyteScope'
+          - type: 'null'
+        timezone:
+          anyOf:
+          - maxLength: 64
+            type: string
+          - type: 'null'
+          title: Timezone
+        weekday:
+          anyOf:
+          - maximum: 6.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          title: Weekday
+      title: MyteRoutineUpdate
+      type: object
     MyteScope:
       additionalProperties: false
       description: What the question was asked about (ADR-0047 D8 `scope`).
@@ -10116,6 +10507,13 @@ components:
           - as_of
           title: Kind
           type: string
+        label:
+          anyOf:
+          - maxLength: 200
+            type: string
+          - type: 'null'
+          description: How the UI names the scope, e.g. the meeting title (ADR-0049).
+          title: Label
         meeting_id:
           anyOf:
           - format: uuid
@@ -23235,9 +23633,112 @@ paths:
       summary: Start Wrap Up
       tags:
       - meetings
+  /api/v1/myte/memories:
+    get:
+      description: Your own memories, newest first (at most 100 exist).
+      operationId: list_memories
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteMemoryList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: What your Myte remembers about you
+      tags:
+      - myte
+    post:
+      description: Text 1 to 300 characters (trimmed). The same text again returns the memory already
+        stored. At most 100 per person (422). `source_thread_id` must be one of your threads. Honours
+        `Idempotency-Key`.
+      operationId: create_memory
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteMemoryCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteMemory'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask your Myte to remember something
+      tags:
+      - myte
+  /api/v1/myte/memories/{memory_id}:
+    delete:
+      operationId: delete_memory
+      parameters:
+      - in: path
+        name: memory_id
+        required: true
+        schema:
+          format: uuid
+          title: Memory Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Make your Myte forget something
+      tags:
+      - myte
   /api/v1/myte/messages/{message_id}:
     patch:
-      description: 1 helpful, -1 not helpful, 0 clears the rating (and its reason).
+      description: '`feedback`: 1 helpful, -1 not helpful, 0 clears the rating (and its reason). `proposal_states`
+        (ADR-0049 R2): `{<proposal_id>: "confirmed"|"dismissed"}`, merged into `payload.proposal_states`,
+        at most 20 per message. Either or both; on Myte''s answers only.'
       operationId: rate_message
       parameters:
       - in: path
@@ -23283,7 +23784,514 @@ paths:
             application/problem+json:
               schema: *id001
           description: Unhandled server error. Carries a `trace_id` and no internals.
-      summary: Rate one of Myte's answers
+      summary: Rate one of Myte's answers or record what happened to its proposals
+      tags:
+      - myte
+  /api/v1/myte/peer-questions:
+    get:
+      description: '`box=inbox` (default): questions teammates asked your Myte. `box=sent`: questions
+        you asked theirs. Newest first; `status` filters.'
+      operationId: list_peer_questions
+      parameters:
+      - in: query
+        name: box
+        required: false
+        schema:
+          default: inbox
+          enum:
+          - inbox
+          - sent
+          title: Box
+          type: string
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - pending
+            - answered
+            - declined
+            type: string
+          - type: 'null'
+          title: Status
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 100
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MytePeerQuestionList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: List questions for your Myte, or the ones you asked
+      tags:
+      - myte
+    post:
+      description: Stores the question and notifies the teammate in-app. 404 for someone who is not a
+        member of this workspace (or a `thread_id` that is not yours); 422 for yourself or past 20 pending
+        questions. Honours `Idempotency-Key`.
+      operationId: ask_peer
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MytePeerQuestionCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MytePeerQuestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Ask a teammate's Myte a question
+      tags:
+      - myte
+  /api/v1/myte/peer-questions/{question_id}:
+    delete:
+      description: The asker only, while it is pending (409 otherwise). Deleted for good.
+      operationId: withdraw_peer_question
+      parameters:
+      - in: path
+        name: question_id
+        required: true
+        schema:
+          format: uuid
+          title: Question Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Withdraw a question you asked
+      tags:
+      - myte
+    get:
+      description: Visible to the person who asked and the person asked; anyone else gets 404.
+      operationId: get_peer_question
+      parameters:
+      - in: path
+        name: question_id
+        required: true
+        schema:
+          format: uuid
+          title: Question Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MytePeerQuestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Open a question between you and a teammate's Myte
+      tags:
+      - myte
+  /api/v1/myte/peer-questions/{question_id}/answer:
+    post:
+      description: The person asked only, once (409 after it was answered or declined). The asker is notified
+        in-app.
+      operationId: answer_peer_question
+      parameters:
+      - in: path
+        name: question_id
+        required: true
+        schema:
+          format: uuid
+          title: Question Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MytePeerAnswer'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MytePeerQuestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Send your reviewed answer to a teammate's question
+      tags:
+      - myte
+  /api/v1/myte/peer-questions/{question_id}/decline:
+    post:
+      description: The person asked only, while it is pending (409 otherwise). The asker is notified in-app,
+        with the reason when one is given.
+      operationId: decline_peer_question
+      parameters:
+      - in: path
+        name: question_id
+        required: true
+        schema:
+          format: uuid
+          title: Question Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MytePeerDecline'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MytePeerQuestion'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Decline a teammate's question
+      tags:
+      - myte
+  /api/v1/myte/routines:
+    get:
+      description: Your recurring questions, oldest first (at most 10 exist).
+      operationId: list_routines
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteRoutineList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Your Ask Myte routines
+      tags:
+      - myte
+    post:
+      description: Runs at `hour:00` in `timezone`, daily, on weekdays, or weekly on `weekday` (0 Monday).
+        `next_run_at` is computed. At most 10 per person (422). Honours `Idempotency-Key`.
+      operationId: create_routine
+      parameters:
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteRoutineCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteRoutine'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Make a question a routine
+      tags:
+      - myte
+  /api/v1/myte/routines/due:
+    get:
+      description: Enabled routines whose `next_run_at` has passed, the most overdue first.
+      operationId: list_due_routines
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteRoutineList'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Your routines that are due to run
+      tags:
+      - myte
+  /api/v1/myte/routines/{routine_id}:
+    delete:
+      operationId: delete_routine
+      parameters:
+      - in: path
+        name: routine_id
+        required: true
+        schema:
+          format: uuid
+          title: Routine Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Delete a routine
+      tags:
+      - myte
+    patch:
+      description: Any of question, scope, cadence, weekday, hour, timezone, enabled. `next_run_at` is
+        recomputed when the timing changes or a disabled routine is enabled again.
+      operationId: update_routine
+      parameters:
+      - in: path
+        name: routine_id
+        required: true
+        schema:
+          format: uuid
+          title: Routine Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteRoutineUpdate'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteRoutine'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Change a routine
+      tags:
+      - myte
+  /api/v1/myte/routines/{routine_id}/ran:
+    post:
+      description: Sets `last_run_at` to now and `last_thread_id`, and moves `next_run_at` to the next
+        slot strictly after now. `thread_id` must be one of your threads.
+      operationId: routine_ran
+      parameters:
+      - in: path
+        name: routine_id
+        required: true
+        schema:
+          format: uuid
+          title: Routine Id
+          type: string
+      - description: Client-generated key making this write safe to retry. A replay with the same key
+          replays the original response; a replay with a different body is `409 IDEMPOTENCY_KEY_REUSED`.
+          Scoped per tenant and per route.
+        in: header
+        name: Idempotency-Key
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyteRoutineRan'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyteRoutine'
+          description: Successful Response
+        '401':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: No bearer token, or a token that is expired, malformed or fails JWKS verification.
+        '422':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Validation Error
+        '500':
+          content:
+            application/problem+json:
+              schema: *id001
+          description: Unhandled server error. Carries a `trace_id` and no internals.
+      summary: Record that a routine ran
       tags:
       - myte
   /api/v1/myte/threads:

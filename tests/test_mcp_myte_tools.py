@@ -286,6 +286,38 @@ async def test_a_default_myte_name_and_an_empty_week(apps):  # noqa: F811
         assert bad.is_error
 
 
+async def test_the_inbox_lists_teammates_pending_questions_for_my_myte(apps):  # noqa: F811
+    me = seed_tenant()
+    samar = add_user(me)
+    _name(samar, "Samar Khan", "samar@example.com")
+    stranger = add_user(me)
+    params = {"o": str(me.org_id), "me": str(me.user_id), "s": str(samar.user_id)}
+    _sql(
+        "INSERT INTO myte_peer_questions (org_id, from_user_id, to_user_id, question, created_at) "
+        "VALUES (%(o)s, %(s)s, %(me)s, 'What did the client say?', now() - interval '1 hour')",
+        params,
+    )
+    _sql(
+        "INSERT INTO myte_peer_questions (org_id, from_user_id, to_user_id, question, status, "
+        "answer, answered_at) VALUES (%(o)s, %(s)s, %(me)s, 'Old one', 'answered', 'Done', now())",
+        params,
+    )
+    _sql(
+        "INSERT INTO myte_peer_questions (org_id, from_user_id, to_user_id, question) "
+        "VALUES (%(o)s, %(me)s, %(x)s, 'Mine, sent')",
+        {**params, "x": str(stranger.user_id)},
+    )
+    async with session_for(apps, mint(me, scope="read")) as session:
+        inbox = await session.call_tool("list_my_inbox", {})
+        assert not inbox.is_error
+        [item] = inbox.structured_content["items"]
+        assert item["kind"] == "peer_question"
+        assert item["title"] == "Samar Khan asked your Myte"
+        assert item["body"] == "What did the client say?"
+        assert item["from_user_id"] == str(samar.user_id)
+        assert "question for your Myte" in inbox.content[0].text
+
+
 def _ctx(user_id: uuid.UUID | None) -> RequestContext:
     return RequestContext(
         org_id=uuid.uuid4(), user_id=user_id, clerk_user_id="user_x", rbac_tier="member", ip=None
