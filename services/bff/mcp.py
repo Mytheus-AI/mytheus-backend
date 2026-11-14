@@ -27,7 +27,12 @@ believed and promised on a date, optionally for one topic), `list_my_open_action
 `list_my_promises` (the promise ledger, every channel), `check_my_capacity` (the capacity
 check before a deadline is accepted), `check_against_decisions` (a draft checked against the
 confirmed decisions of the caller's meetings: core-api's `POST /api/v1/decisions/check`,
-read-only),
+read-only), and Ask Myte's four (ADR-0047 D6, `myte_tools.py`): `list_my_schedule` (the
+caller's upcoming meetings with their attendance choice), `find_people` (members by name or
+email, with role, teams and department), `list_my_inbox` (unread notifications and detections
+waiting for review) and `get_my_myte` (the caller's Myte persona, listening settings and notes
+kept in the last 7 days); those four read in-process under the caller's tenant in a READ ONLY
+transaction, because a personal access token may not reach the routes they read over HTTP.
 `create_action` (a confirmed task for the caller, the caller's own explicit request; needs a
 `read_write` token) and `add_promise` (a manual promise in the caller's ledger; `read_write`).
 Resources: `mytheus://meetings/{meeting_id}/recap` (a meeting summary as
@@ -51,6 +56,7 @@ from fastapi.responses import JSONResponse, Response
 from libs.shared.authz import RequestContext, require_tier
 from libs.shared.errors import ErrorCode, ProblemDetail
 from services.bff import ask as ask_mod
+from services.bff import myte_tools
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +268,8 @@ TOOLS: list[dict[str, Any]] = [
         },
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },
+    # ADR-0047 D6: Ask Myte's four read tools (schedule, people, inbox, the caller's Myte).
+    *myte_tools.TOOLS,
     {
         "name": "add_promise",
         "title": "Add a promise",
@@ -595,6 +603,11 @@ async def call_tool(
     name: str, args: dict[str, Any], ctx: RequestContext, core: CoreClient
 ) -> tuple[str, Any]:
     """Run one tool -> (Markdown text, structured result)."""
+    if name in myte_tools.NAMES:
+        try:
+            return await myte_tools.call(name, args, ctx)
+        except myte_tools.MyteToolError as exc:
+            raise ToolError(str(exc)) from None
     if name == "search_meetings":
         params: dict[str, Any] = {"limit": int(args.get("limit") or 10)}
         if args.get("query"):
@@ -856,6 +869,7 @@ _OPENAPI_BODY = {
         "(OAuth: discovery at `/.well-known/oauth-protected-resource`). Tools: "
         "search_meetings, ask_meetings, get_meeting_outcome, get_decision_record, "
         "list_my_open_actions, list_my_promises, check_against_decisions, check_my_capacity, "
+        "list_my_schedule, find_people, list_my_inbox, get_my_myte, "
         "create_action and add_promise (read_write tokens). Resources: meeting summaries and "
         "decision records."
     ),
