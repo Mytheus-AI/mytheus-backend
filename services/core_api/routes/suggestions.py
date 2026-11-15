@@ -48,7 +48,8 @@ router = APIRouter(prefix="/api/v1")
 
 _COLS = (
     "id, meeting_id, question, priority, status, confidence, rationale, citations, created_at, "
-    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms, prompt_version, "
+    "model_id"
 )
 MAX_OPEN = 200  # bounded by windows x 2 per meeting
 MAX_SAVED = 50

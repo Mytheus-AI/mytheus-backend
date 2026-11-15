@@ -77,7 +77,10 @@ PRODUCER = "core-api"
 _EPOCH = date(1970, 1, 1)
 
 # polish program (one card per moment): the moment, the words and the why line ride every read
-_MOMENT_COLS = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
+_MOMENT_COLS = (
+    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms, prompt_version, "
+    "model_id"
+)
 _DECISION_COLS = (
     "id, meeting_id, content, rationale, confidence, status, confirmed_by, supersedes, created_at, "
     + _MOMENT_COLS
@@ -308,7 +311,16 @@ async def get_candidate(
     return CandidateState(kind="action", **{k: action[k] for k in _STATE_ACTION})
 
 
-_MOMENT = ("moment_id", "why", "quote", "quote_speaker_id", "quote_start_ms", "quote_end_ms")
+_MOMENT = (
+    "moment_id",
+    "why",
+    "quote",
+    "quote_speaker_id",
+    "quote_start_ms",
+    "quote_end_ms",
+    "prompt_version",
+    "model_id",
+)
 _STATE_DECISION = ("id", "meeting_id", "status", "content", "rationale", "confirmed_by", *_MOMENT)
 _STATE_ACTION = (
     "id",

@@ -4,9 +4,10 @@ Same caller-token scheme as every core-api internal route (`internal_meetings.au
 secrets in `MYTHEUS_CORE_CALLER_TOKENS`). Not routed by api-gateway (`/internal` never is).
 
 - `POST /internal/retrieval/decisions/search` (rag-service): the lexical arm of the check's
-  hybrid retrieval. Postgres full-text search (`ix_decisions_fts`) over the CONFIRMED decisions of
-  the meetings `user_id` is a participant of, any term matching, best rank first. Same scope rule
-  as `/internal/retrieval/records` (ADR-0033 D1).
+  hybrid retrieval. Postgres full-text search (`decisions.search_tsv`, index
+  `ix_decisions_org_search_tsv`) over the CONFIRMED decisions of the meetings `user_id` is a
+  participant of, any term matching, best rank first. Same scope rule as
+  `/internal/retrieval/records` (ADR-0033 D1).
 - `POST /internal/decisions/check` (integration-service): a Slack message. The author is named by
   email (integration-service resolved the Slack user); an author with no Mytheus account in this
   tenant gets no check (404 `reason: unknown_author`): retrieval is participant-scoped, so there
@@ -107,12 +108,10 @@ async def lexical_decisions(
                         "WITH q AS (SELECT to_tsquery('english', :q) AS q) "
                         "SELECT d.id, d.meeting_id, d.content, d.rationale, m.title AS "
                         "meeting_title, COALESCE(d.status_changed_at, d.created_at) AS decided_at, "
-                        "ts_rank_cd(to_tsvector('english', d.content || ' ' || "
-                        "coalesce(d.rationale, '')), q.q) AS rank "
+                        "ts_rank_cd(d.search_tsv, q.q) AS rank "
                         "FROM decisions d JOIN meetings m ON m.id = d.meeting_id, q "
                         "WHERE d.status = 'confirmed' AND d.deleted_at IS NULL "
-                        "AND to_tsvector('english', d.content || ' ' || coalesce(d.rationale, '')) "
-                        "@@ q.q AND EXISTS (SELECT 1 FROM meeting_participants p "
+                        "AND d.search_tsv @@ q.q AND EXISTS (SELECT 1 FROM meeting_participants p "
                         "WHERE p.meeting_id = d.meeting_id AND p.user_id = :u) "
                         "ORDER BY rank DESC, d.created_at DESC, d.id LIMIT :n"
                     ),

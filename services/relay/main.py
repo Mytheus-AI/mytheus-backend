@@ -31,6 +31,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from libs.shared.db_guard import install_role_guard, verify_role
 from libs.shared.metrics import serve_metrics, set_service
 from libs.shared.relay import relay_once
 
@@ -92,6 +93,10 @@ async def run() -> None:
     set_service("relay")
     serve_metrics()  # no-op unless METRICS_PORT is set (internal scrape port)
     engine = create_async_engine(url)
+    # Refuse to start as a role that bypasses RLS: the relay already reaches every tenant
+    # through one scoped policy, and a bypass role would add every other table to that.
+    install_role_guard(engine)
+    await verify_role(engine)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     producer = ConfluentRelayProducer(
         os.environ["REDPANDA_BROKERS"], os.environ["SCHEMA_REGISTRY_URL"]

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import identity_pb2
 import identity_pb2_grpc
+from libs.shared.db_guard import install_role_guard, verify_role
 from libs.shared.tenancy import set_rls
 from services.identity_tenant_service.a2a.pdp import authorize
 from services.identity_tenant_service.brain.context import get_org_context
@@ -224,6 +225,8 @@ class IdentityService(identity_pb2_grpc.IdentityServiceServicer):  # type: ignor
 
 async def serve(port: int = 50051) -> None:
     engine = create_async_engine(os.environ["DATABASE_URL"])
+    install_role_guard(engine)
+    await verify_role(engine)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     server = grpc.aio.server()
     identity_pb2_grpc.add_IdentityServiceServicer_to_server(

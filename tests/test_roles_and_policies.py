@@ -652,6 +652,170 @@ async def test_relay_role_is_scoped_to_outbox_alone(migrated_db):
         await relay.dispose()
 
 
+async def test_relay_can_update_only_the_drain_columns(migrated_db):
+    """Journal plan Part 3 fix 4. The drain policy is `USING (true) WITH CHECK (true)` across
+    every tenant, so before `c9f1d3e5a7b2` the relay could re-key a pending event into another
+    tenant (`org_id`), retarget it (`topic`) or forge it (`payload`). Only `published_at` and
+    `attempts` may change; the rest is immutable at the ACL layer."""
+    org, other = uuid.uuid4(), uuid.uuid4()
+    su = create_async_engine(migrated_db)
+    async with su.begin() as conn:
+        for o in (org, other):
+            await conn.execute(
+                text("INSERT INTO organizations (id, name, slug) VALUES (:id, 'Org', :slug)"),
+                {"id": str(o), "slug": f"relaycol-{o}"},
+            )
+        outbox_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO outbox (org_id, topic, partition_key, idempotency_key, "
+                    "schema_subject, payload) VALUES (:o, 'meeting-events', :pk, :ik, "
+                    "'meeting-events-value', '{}'::jsonb) RETURNING id"
+                ),
+                {"o": str(org), "pk": str(org), "ik": str(uuid.uuid4())},
+            )
+        ).scalar_one()
+    await su.dispose()
+
+    relay = create_async_engine(RELAY_URL)
+    try:
+        for column, value in (
+            ("org_id", f"'{other}'"),
+            ("topic", "'decisions'"),
+            ("payload", "'{\"forged\": true}'::jsonb"),
+            ("partition_key", "'x'"),
+            ("idempotency_key", "'x'"),
+            ("schema_subject", "'x'"),
+        ):
+            with pytest.raises(ProgrammingError, match="permission denied"):
+                async with relay.connect() as conn, conn.begin():
+                    await conn.execute(
+                        text(f"UPDATE outbox SET {column} = {value} WHERE id = :id"),  # noqa: S608
+                        {"id": outbox_id},
+                    )
+        # The drain itself still works: lock, mark published, count the attempt.
+        async with relay.connect() as conn, conn.begin():
+            locked = (
+                await conn.execute(
+                    text("SELECT id FROM outbox WHERE id = :id FOR UPDATE SKIP LOCKED"),
+                    {"id": outbox_id},
+                )
+            ).scalar_one()
+            assert locked == outbox_id
+            await conn.execute(
+                text(
+                    "UPDATE outbox SET published_at = now(), attempts = attempts + 1 "
+                    "WHERE id = :id"
+                ),
+                {"id": outbox_id},
+            )
+    finally:
+        await relay.dispose()
+
+
+# --- Every login role the database holds ----------------------------------------------------
+
+# The only login roles allowed to bypass isolation: the image's own superuser and the schema
+# owner that runs migrations. Neither is ever a service's DATABASE_URL (the pool guard in
+# libs/shared/db_guard.py refuses both at connect time).
+OPERATOR_ROLES = frozenset({"postgres", "supabase_admin"})
+
+
+async def test_no_login_role_bypasses_isolation(migrated_db):
+    """Journal plan Part 3 fixes 3 and 7. Every `pg_roles WHERE rolcanlogin`, not only the
+    roles this program created: a superuser, a BYPASSRLS holder, or a member (direct or
+    inherited, via `pg_has_role`) of a predefined role that bypasses table ACLs or reaches the
+    server's files is a login that ignores every tenant policy. On supabase/postgres that is
+    exactly what `supabase_read_only_user` shipped as (BYPASSRLS + pg_read_all_data), and the
+    application-role check above could not see it."""
+    risky = (
+        "pg_read_all_data",
+        "pg_write_all_data",
+        "pg_execute_server_program",
+        "pg_read_server_files",
+        "pg_write_server_files",
+    )
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT r.rolname, r.rolsuper, r.rolbypassrls, "
+                            "  ARRAY(SELECT p FROM unnest(CAST(:risky AS text[])) p "
+                            "        WHERE pg_has_role(r.oid, p, 'MEMBER')) AS members, "
+                            "  ARRAY(SELECT b.rolname::text FROM pg_roles b "
+                            "        WHERE b.oid <> r.oid AND (b.rolsuper OR b.rolbypassrls) "
+                            "          AND pg_has_role(r.oid, b.oid, 'MEMBER')) AS via "
+                            "FROM pg_roles r WHERE r.rolcanlogin ORDER BY 1"
+                        ),
+                        {"risky": list(risky)},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+
+    assert rows, "no login roles found at all"
+    offenders = [
+        f"{r['rolname']}: super={r['rolsuper']} bypassrls={r['rolbypassrls']} "
+        f"member_of={list(r['members'])} via={list(r['via'])}"
+        for r in rows
+        if r["rolname"] not in OPERATOR_ROLES
+        and (r["rolsuper"] or r["rolbypassrls"] or r["members"] or r["via"])
+    ]
+    assert not offenders, "login roles that bypass tenant isolation:\n" + "\n".join(offenders)
+
+
+# Base tables in `public` / `intelligence` allowed to have no row-level security, each with the
+# reason. Anything else without ENABLE + FORCE fails the build. `ops_audit_log` is NOT here: it
+# was, until d2e4f6a8b0c1 found it readable across tenants by the request role.
+NO_RLS_BY_DESIGN = {
+    # Alembic bookkeeping: no tenant data, and no application role holds any grant on them.
+    "alembic_version",
+    "alembic_version_transcription_service",
+    "alembic_version_intelligence",
+    # The tenant root itself (id IS the org_id). NO FORCE so the owner's SECURITY DEFINER
+    # set_organization_status works; mytheus_app holds only column-level SELECT/INSERT
+    # (a1c4e7f20b18, e2b6c4a8f913) and no UPDATE/DELETE on any column.
+    "organizations",
+    # Global price list (canon: no org_id). SELECT only for the app roles.
+    "plans",
+    # OAuth Dynamic Client Registration happens before sign-in, so there is no tenant to key it
+    # by (e7f8a9b0c1d2). Holds client metadata only; every grant it receives is tenant-scoped.
+    "oauth_clients",
+}
+
+
+async def test_every_table_without_rls_is_a_recorded_exception(migrated_db):
+    engine = create_async_engine(migrated_db)
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT c.relname FROM pg_class c "
+                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                            "WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition "
+                            "AND n.nspname IN ('public', 'intelligence') "
+                            "AND NOT (c.relrowsecurity AND c.relforcerowsecurity) "
+                            "ORDER BY 1"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+    unexpected = sorted(set(rows) - NO_RLS_BY_DESIGN)
+    assert unexpected == [], f"tables without ENABLE+FORCE RLS and no recorded reason: {unexpected}"
+
+
 async def test_admin_role_is_still_subject_to_rls(migrated_db):
     """The elevated role is elevated in grants, not in isolation.
 
