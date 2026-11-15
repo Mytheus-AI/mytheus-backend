@@ -398,11 +398,23 @@ async def _apply_agent_result(
         )
     if is_suggestion:
         return await _persist_suggestions(
-            session, org_id, meeting_id, user_id, silent, value.get("payload_json")
+            session,
+            org_id,
+            meeting_id,
+            user_id,
+            silent,
+            value.get("payload_json"),
+            attribution=_attribution(value),
         )
     if candidate_table is not None:
         return await _persist_candidates(
-            session, org_id, meeting_id, candidate_table, silent, value.get("payload_json")
+            session,
+            org_id,
+            meeting_id,
+            candidate_table,
+            silent,
+            value.get("payload_json"),
+            attribution=_attribution(value),
         )
     confidence = float(value.get("confidence") or 0.0)
     content = str(value.get("content") or "").strip()
@@ -424,6 +436,7 @@ async def _apply_agent_result(
             ),
             {
                 **await _moment(session, _payload_object(value.get("payload_json"))),
+                **_attribution(value),
                 "o": str(org_id),
                 "m": str(meeting_id),
                 "u": str(user_id),
@@ -466,8 +479,24 @@ def _optional_date(raw: Any) -> date | None:
 
 MAX_WHY_CHARS = 200
 MAX_QUOTE_CHARS = 300
-_MOMENT_SQL = "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms"
-_MOMENT_VALUES = ":mo, :why, :qt, :qs, :qa, :qb"
+# The four card tables (worklogs, decisions, action_items, agent_suggestions) also store the
+# result's attribution (journal plan Part 3 fix 11, migration e3f5a7b9c1d2): `:pv :mid` come
+# from `_attribution(value)`, every insert below passes them.
+_MOMENT_SQL = (
+    "moment_id, why, quote, quote_speaker_id, quote_start_ms, quote_end_ms, prompt_version, "
+    "model_id"
+)
+_MOMENT_VALUES = ":mo, :why, :qt, :qs, :qa, :qb, :pv, :mid"
+MAX_ATTRIBUTION_CHARS = 120
+
+
+def _attribution(value: dict[str, Any]) -> dict[str, str | None]:
+    """`agent-results`' optional `prompt_version` / `model_id` as SQL params (`:pv :mid`), each
+    null when absent (a producer on the previous schema) or not a string."""
+    return {
+        "pv": _bounded_text(value.get("prompt_version"), MAX_ATTRIBUTION_CHARS),
+        "mid": _bounded_text(value.get("model_id"), MAX_ATTRIBUTION_CHARS),
+    }
 
 
 def _ms(raw: Any) -> int | None:
@@ -502,6 +531,8 @@ async def _persist_candidates(
     table: str,
     silent: float,
     payload_json: Any,
+    *,
+    attribution: dict[str, str | None] | None = None,
 ) -> bool:
     """Insert each decision/action candidate as `status = 'proposed'`. True if any row is new.
 
@@ -546,6 +577,7 @@ async def _persist_candidates(
             "c": content,
             "conf": confidence,
             **await _moment(session, cand),
+            **(attribution or {"pv": None, "mid": None}),
         }
         if table == "decisions":
             rationale = cand.get("rationale")
@@ -765,6 +797,8 @@ async def _persist_suggestions(
     user_id: uuid.UUID,
     silent: float,
     payload_json: Any,
+    *,
+    attribution: dict[str, str | None] | None = None,
 ) -> bool:
     """Insert each QuestionAgent suggestion as an `open` `agent_suggestions` row for `user_id`
     (the participant the agent ran for). True if any row is new. ADR-0034 D3-D5.
@@ -805,6 +839,7 @@ async def _persist_suggestions(
                 ),
                 {
                     **await _moment(session, s),
+                    **(attribution or {"pv": None, "mid": None}),
                     "id": str(sid),
                     "o": str(org_id),
                     "u": str(user_id),

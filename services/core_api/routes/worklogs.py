@@ -53,7 +53,8 @@ async def list_my_worklogs(
                 text(
                     "SELECT id, meeting_id, user_id, window_id, content, relevance_score, "
                     "confidence, source_chunk_ids, created_at, moment_id, why, quote, "
-                    "quote_speaker_id, quote_start_ms, quote_end_ms FROM worklogs "
+                    "quote_speaker_id, quote_start_ms, quote_end_ms, prompt_version, model_id "
+                    "FROM worklogs "
                     "WHERE meeting_id = :m AND user_id = :u AND surfaced AND deleted_at IS NULL "
                     "ORDER BY created_at ASC, id ASC LIMIT :limit"
                 ),

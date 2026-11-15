@@ -133,12 +133,22 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Id
         moment_id:
           anyOf:
           - format: uuid
             type: string
           - type: 'null'
           title: Moment Id
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
         quote:
           anyOf:
           - type: string
@@ -2566,12 +2576,22 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Id
         moment_id:
           anyOf:
           - format: uuid
             type: string
           - type: 'null'
           title: Moment Id
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
         quote:
           anyOf:
           - type: string
@@ -4515,12 +4535,22 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Id
         moment_id:
           anyOf:
           - format: uuid
             type: string
           - type: 'null'
           title: Moment Id
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
         quote:
           anyOf:
           - type: string
@@ -14295,6 +14325,11 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Id
         moment_id:
           anyOf:
           - format: uuid
@@ -14306,6 +14341,11 @@ components:
           minimum: 1.0
           title: Priority
           type: integer
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
         question:
           title: Question
           type: string
@@ -15768,12 +15808,22 @@ components:
           format: uuid
           title: Meeting Id
           type: string
+        model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Id
         moment_id:
           anyOf:
           - format: uuid
             type: string
           - type: 'null'
           title: Moment Id
+        prompt_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prompt Version
         quote:
           anyOf:
           - type: string

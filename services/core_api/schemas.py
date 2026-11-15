@@ -584,8 +584,9 @@ class CardMoment(BaseModel):
     same for every card, note and promise about the same words (uuid5 over the meeting and the
     quoted transcript final); `quote` the words, `quote_speaker_id` who said them (a
     `users.id`), `quote_start_ms` / `quote_end_ms` when (meeting time, the transcript's clock);
-    `why` one line saying why the card exists or why the person sees it. All null for rows
-    written before the agents sent them."""
+    `why` one line saying why the card exists or why the person sees it. `prompt_version` and
+    `model_id` say which prompt and model produced it. All null for rows written before the
+    agents sent them."""
 
     moment_id: uuid.UUID | None = None
     why: str | None = None
@@ -593,6 +594,11 @@ class CardMoment(BaseModel):
     quote_speaker_id: uuid.UUID | None = None
     quote_start_ms: int | None = None
     quote_end_ms: int | None = None
+    # Attribution (journal plan Part 3 fix 11): the agent prompt `key@version` and the exact
+    # model id(s) that produced the card. Null for cards written before the agents sent them,
+    # and for cards no model produced.
+    prompt_version: str | None = None
+    model_id: str | None = None
 
 
 class Worklog(CardMoment):

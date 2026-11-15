@@ -281,6 +281,9 @@ def test_get_serves_my_open_surfaced_ones_and_my_saved_ones(client, migrated_db)
         "quote_speaker_id",
         "quote_start_ms",
         "quote_end_ms",
+        # attribution (journal plan Part 3 fix 11, e3f5a7b9c1d2)
+        "prompt_version",
+        "model_id",
     }
 
 
