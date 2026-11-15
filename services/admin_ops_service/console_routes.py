@@ -132,6 +132,9 @@ async def _rollup(session: AsyncSession, period: str) -> list[Any]:
 
 
 async def _activity_by_day(session: AsyncSession, now: datetime) -> list[DayCount]:
+    # ops_audit_log is readable only inside a console transaction (migration d2e4f6a8b0c1);
+    # every caller is a staff-gated route.
+    await enable_ops_console(session)
     rows = (
         await session.execute(
             text(
@@ -572,6 +575,7 @@ async def staff_report(
     clerk_ids = sorted(staff_clerk_ids())
     now = datetime.now(UTC)
     ids = [staff_id_for(c) for c in clerk_ids]
+    await enable_ops_console(session)  # ops_audit_log reads (migration d2e4f6a8b0c1)
     activity = {
         r["staff_user_id"]: r
         for r in (

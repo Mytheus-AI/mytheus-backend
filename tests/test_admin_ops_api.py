@@ -499,6 +499,43 @@ async def test_ops_audit_log_is_append_only_for_the_app_role():
         await engine.dispose()
 
 
+async def test_ops_audit_log_is_unreadable_outside_a_console_transaction(migrated_db):
+    """Isolation-probe finding: the staff log about every tenant was readable by any tenant's
+    request session. Since d2e4f6a8b0c1 only a transaction that set `app.ops_console` (which
+    only staff-gated routes do) can read it; appending still works for everyone, so a refused
+    staff call is logged before the caller is known."""
+    other = uuid.uuid4()
+    marker = f"probe.{uuid.uuid4().hex[:8]}"
+    _sql(
+        "INSERT INTO ops_audit_log (action, target_org_id, details) "
+        'VALUES (%(a)s, %(t)s, \'{"reason": "probe"}\'::jsonb) RETURNING id',
+        {"a": marker, "t": str(other)},
+    )
+    engine = create_async_engine(APP_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("SELECT set_config('app.current_org', :o, true)"), {"o": str(uuid.uuid4())}
+            )
+            seen = (
+                await conn.execute(
+                    text("SELECT count(*) FROM ops_audit_log WHERE action = :a"), {"a": marker}
+                )
+            ).scalar_one()
+            assert seen == 0, "a tenant request session must not read the staff log"
+            await conn.execute(text("INSERT INTO ops_audit_log (action) VALUES ('probe.append')"))
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT set_config('app.ops_console', 'on', true)"))
+            seen = (
+                await conn.execute(
+                    text("SELECT count(*) FROM ops_audit_log WHERE action = :a"), {"a": marker}
+                )
+            ).scalar_one()
+            assert seen == 1, "the staff console transaction reads it"
+    finally:
+        await engine.dispose()
+
+
 # --- internal ops ------------------------------------------------------------------------------
 
 
