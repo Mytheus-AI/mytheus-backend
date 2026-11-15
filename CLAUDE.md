@@ -125,9 +125,13 @@ Add a table + Alembic migration (with RLS policy).
    ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
    ALTER TABLE <t> FORCE ROW LEVEL SECURITY;
    CREATE POLICY tenant_isolation ON <t>
-     USING (org_id = current_setting('app.current_org')::uuid)
-     WITH CHECK (org_id = current_setting('app.current_org')::uuid);
+     USING (org_id = (SELECT NULLIF(current_setting('app.current_org', true), '')::uuid))
+     WITH CHECK (org_id = (SELECT NULLIF(current_setting('app.current_org', true), '')::uuid));
    ```
+   The `(SELECT ...)` makes the predicate an InitPlan, evaluated once per statement, and the
+   `NULLIF(..., true), '')` keeps it fail-closed when the setting is unset or empty
+   (migration `b8e2c4f6a1d3`). A full-text column must be a stored `tsvector` column, never
+   `to_tsvector(...)` in the query: under RLS only a leakproof qual can use an index.
 4. Migrations are forward-only and reviewed. Add an RLS-isolation test (a query under tenant A must not see tenant B's rows).
 
 Add a gRPC method.

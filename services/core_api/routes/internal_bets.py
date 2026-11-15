@@ -283,10 +283,8 @@ async def _internal_evidence(session: AsyncSession, org_id: uuid.UUID, bet: Any)
                     "WHERE d.deleted_at IS NULL AND d.status IN ('confirmed', 'superseded') "
                     "AND d.id <> :d AND d.created_at > :since "
                     "AND (d.supersedes IS NULL OR d.supersedes <> :d) "
-                    "AND to_tsvector('english', d.content || ' ' || coalesce(d.rationale, '')) "
-                    "  @@ to_tsquery('english', :q) "
-                    "ORDER BY ts_rank(to_tsvector('english', d.content || ' ' || "
-                    "  coalesce(d.rationale, '')), to_tsquery('english', :q)) DESC, "
+                    "AND d.search_tsv @@ to_tsquery('english', :q) "
+                    "ORDER BY ts_rank(d.search_tsv, to_tsquery('english', :q)) DESC, "
                     "  d.created_at DESC LIMIT :lim"
                 ),
                 {
