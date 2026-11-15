@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
+from libs.shared.db_guard import install_role_guard
+
 # Deterministic constraint/index names for reproducible autogenerate output.
 NAMING = {
     "ix": "ix_%(column_0_label)s",
@@ -46,7 +48,9 @@ def get_engine() -> AsyncEngine:
     Pointing it at a superuser or any role holding BYPASSRLS silently disables tenant
     isolation everywhere at once, which is exactly what defect D1 was.
     """
-    return create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    engine = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    install_role_guard(engine)  # refuses a superuser / BYPASSRLS / pg_read_all_data role
+    return engine
 
 
 @lru_cache(maxsize=1)
@@ -69,7 +73,9 @@ def get_admin_engine() -> AsyncEngine:
     `services/workflow_service/workflows/rtbf.py`). Deliberately NOT in the web process env -
     a request handler must never be able to reach for this engine instead of `get_engine()`.
     """
-    return create_async_engine(os.environ["ADMIN_DATABASE_URL"], pool_pre_ping=True)
+    engine = create_async_engine(os.environ["ADMIN_DATABASE_URL"], pool_pre_ping=True)
+    install_role_guard(engine)
+    return engine
 
 
 @lru_cache(maxsize=1)
