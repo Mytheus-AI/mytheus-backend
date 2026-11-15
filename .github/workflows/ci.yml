@@ -43,17 +43,22 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        # The PRODUCTION image, not postgres:15 (journal plan Part 3 fix 8). They differ exactly
+        # where isolation lives: on supabase/postgres `postgres` is not a superuser but holds
+        # BYPASSRLS + pg_read_all_data, `service_role` holds BYPASSRLS, and the image ships
+        # extra login roles (supabase_read_only_user, authenticator, ...). A role test that
+        # passes on postgres:15 says nothing about those.
+        image: supabase/postgres:15.8.1.060
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: mytheus
         ports:
           - 5443:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -h localhost"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 40
       redis:
         image: redis:7-alpine
         ports:
@@ -67,6 +72,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: uv sync
+      - name: bootstrap the production image as production does
+        # What deploy/postgres-init does in mytheus-platform, run as the image's superuser:
+        # the postgres password and `public` ownership (prod-bootstrap.sql), then the role
+        # hardening (docker/harden-roles.sql, a copy of the platform's harden-roles.sql) whose
+        # last statement lists any login that still bypasses isolation.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for i in $(seq 1 30); do
+            psql -h localhost -p 5443 -U supabase_admin -d mytheus -c "select 1" >/dev/null 2>&1 && break
+            sleep 2
+          done
+          psql -v ON_ERROR_STOP=1 -h localhost -p 5443 -U supabase_admin -d mytheus \
+            -c "ALTER USER postgres WITH PASSWORD 'postgres';" \
+            -c "ALTER SCHEMA public OWNER TO postgres;" \
+            -c "GRANT ALL ON SCHEMA public TO postgres;"
+          psql -v ON_ERROR_STOP=1 -h localhost -p 5443 -U supabase_admin -d mytheus \
+            -f docker/harden-roles.sql
       # The gRPC stubs are gitignored ("regenerate in CI"), so without this pytest fails at
       # COLLECTION on a clean checkout and the gate never reaches a real test.
       - run: make proto
@@ -76,17 +99,25 @@ jobs:
         # nothing, which is precisely how defect D7 survived.
         env:
           MYTHEUS_REQUIRE_DB: "1"
+          # The pool-guard tests create throwaway BYPASSRLS / pg_read_all_data roles, which
+          # takes the image's superuser (the schema owner `postgres` is not one here).
+          SUPERUSER_DATABASE_URL: postgresql+asyncpg://supabase_admin:postgres@localhost:5443/mytheus
         run: uv run pytest -q
       - name: assert the isolation tests actually executed
         # Belt and braces on the guard above. If someone marks these xfail, renames the file,
         # or the collection silently changes, this fails loudly. These six are the ones that
         # prove tenant isolation for the role the application really connects as.
         #
-        # The last two arrived with migration 9b2c4d1e6f30. The four above them all passed
+        # The next two arrived with migration 9b2c4d1e6f30. The four above them all passed
         # while `service_role` - which `supabase/postgres` ships holding `rolbypassrls`, and
         # grants the full DML set on every new table in `public` - could read and delete every
         # tenant's `audit_logs` rows with no `app.current_org` set. They were each scoped to
         # the three roles this program creates, so none of them could see it.
+        #
+        # The last four arrived with the journal-plan Part 3 fixes: EVERY login role (the
+        # image's included) is checked for superuser / BYPASSRLS / predefined-role membership;
+        # every table without RLS is a recorded exception (ops_audit_log was not); the relay
+        # can rewrite only the drain columns; and the pool guard refuses the schema owner.
         env:
           MYTHEUS_REQUIRE_DB: "1"
         run: |
@@ -97,8 +128,12 @@ jobs:
             tests/test_rls.py::test_outbox_fails_closed_with_no_guc \
             tests/test_roles_and_policies.py::test_public_schema_grants_nothing_by_default \
             tests/test_roles_and_policies.py::test_no_bypassrls_role_holds_privileges_on_a_public_table \
+            tests/test_roles_and_policies.py::test_no_login_role_bypasses_isolation \
+            tests/test_roles_and_policies.py::test_every_table_without_rls_is_a_recorded_exception \
+            tests/test_roles_and_policies.py::test_relay_can_update_only_the_drain_columns \
+            tests/test_db_role_guard.py::test_guard_refuses_the_schema_owner \
             | tee /tmp/isolation.txt
-          grep -qE "6 passed" /tmp/isolation.txt || {
+          grep -qE "10 passed" /tmp/isolation.txt || {
             echo "::error::the tenant-isolation assertions did not all run and pass"; exit 1; }
 
   migrations:

@@ -16,6 +16,11 @@ services:
       # post-bootstrap hook for exactly this. Never mount over docker-entrypoint-initdb.d:
       # that shadows the image's bootstrap and the container dies. See the file's header.
       - ./docker/postgres-dev-password.sql:/etc/postgresql.schema.sql:ro
+      # Role hardening on a NEW volume (copy of mytheus-platform's): neutralises the image's
+      # supabase_read_only_user (BYPASSRLS + pg_read_all_data) and the PostgREST/Storage logins,
+      # and makes FTS under RLS index-usable. One file added to the dir, not a mount over it.
+      - ./docker/zz-mytheus-harden-roles.sh:/docker-entrypoint-initdb.d/zz-mytheus-harden-roles.sh:ro
+      - ./docker/harden-roles.sql:/etc/mytheus/harden-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
