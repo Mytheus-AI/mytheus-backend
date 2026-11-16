@@ -31,6 +31,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate
+from libs.shared.kafka_auth import kafka_conf, registry_conf
 from libs.shared.metrics import (
     observe_consumer_lag,
     record_dlq,
@@ -158,18 +159,20 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness
         os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=False
     )
     consumer = Consumer(
-        {
-            "bootstrap.servers": brokers,
-            "group.id": CONSUMER_GROUP,
-            "enable.auto.commit": False,
-            "auto.offset.reset": "earliest",
-        }
+        kafka_conf(
+            {
+                "bootstrap.servers": brokers,
+                "group.id": CONSUMER_GROUP,
+                "enable.auto.commit": False,
+                "auto.offset.reset": "earliest",
+            }
+        )
     )
     consumer.subscribe([TOPIC])
     dlq_producer = KafkaProducer(
-        {"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True}
+        kafka_conf({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
     )
-    deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
+    deserializer = AvroDeserializer(SchemaRegistryClient(registry_conf({"url": sr_url})))
     session_factory = get_sessionmaker()
     try:
         while True:

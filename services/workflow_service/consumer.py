@@ -51,6 +51,7 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
+from libs.shared.kafka_auth import kafka_conf, registry_conf
 from services.workflow_service.actions_consumer import TOPIC as ACTIONS_TOPIC
 from services.workflow_service.actions_consumer import PoisonAction, handle_action_event
 from services.workflow_service.workflows.meeting_lifecycle import (
@@ -165,18 +166,22 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, like the o
         namespace=os.environ.get("TEMPORAL_NAMESPACE", "default"),
     )
     consumer = Consumer(
-        {
-            "bootstrap.servers": brokers,
-            "group.id": CONSUMER_GROUP,
-            "enable.auto.commit": False,
-            "auto.offset.reset": "earliest",
-        }
+        kafka_conf(
+            {
+                "bootstrap.servers": brokers,
+                "group.id": CONSUMER_GROUP,
+                "enable.auto.commit": False,
+                "auto.offset.reset": "earliest",
+            }
+        )
     )
     consumer.subscribe([TOPIC, ACTIONS_TOPIC])
-    dlq = KafkaProducer({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
+    dlq = KafkaProducer(
+        kafka_conf({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
+    )
     deserializer = AvroDeserializer(
         SchemaRegistryClient(
-            {"url": os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8085")}
+            registry_conf({"url": os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8085")})
         )
     )
     try:

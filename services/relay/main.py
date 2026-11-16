@@ -32,6 +32,7 @@ from confluent_kafka.serialization import MessageField, SerializationContext
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from libs.shared.db_guard import install_role_guard, verify_role
+from libs.shared.kafka_auth import kafka_conf, registry_conf
 from libs.shared.metrics import serve_metrics, set_service
 from libs.shared.relay import relay_once
 
@@ -49,9 +50,9 @@ class ConfluentRelayProducer:
 
     def __init__(self, brokers: str, sr_url: str) -> None:
         self._producer = KafkaProducer(
-            {"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True}
+            kafka_conf({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
         )
-        self._sr = SchemaRegistryClient({"url": sr_url})
+        self._sr = SchemaRegistryClient(registry_conf({"url": sr_url}))
         self._serializers: dict[str, AvroSerializer] = {}
 
     def _serializer(self, subject: str) -> AvroSerializer:
