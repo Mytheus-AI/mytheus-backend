@@ -17,11 +17,20 @@ BIGSERIAL; the unique index (topic, idempotency_key) makes a double-confirm a no
 from __future__ import annotations
 
 import json
+import uuid
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.events import EventEnvelope
+
+
+def _json_default(value: object) -> str:
+    """Envelope values come from decoded events too, where the Avro reader yields uuid.UUID for
+    `uuid` logical types. Write those as their canonical text; anything else is still an error."""
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 async def enqueue(session: AsyncSession, envelope: EventEnvelope) -> int:
@@ -45,7 +54,7 @@ async def enqueue(session: AsyncSession, envelope: EventEnvelope) -> int:
             "partition_key": envelope.partition_key,
             "idempotency_key": envelope.idempotency_key,
             "schema_subject": envelope.schema_subject,
-            "payload": json.dumps(envelope.to_value()),
+            "payload": json.dumps(envelope.to_value(), default=_json_default),
         },
     )
     row = result.first()

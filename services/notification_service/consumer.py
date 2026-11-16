@@ -82,6 +82,7 @@ from libs.shared.metrics import (
     set_service,
 )
 from libs.shared.outbox import enqueue
+from libs.shared.poison import UNDECODABLE
 from libs.shared.tenancy import set_rls
 from services.notification_service.email import EmailSender, email_sender_from_env, render_body
 from services.notification_service.prefs import CHANNELS, Channel, load_prefs
@@ -197,6 +198,12 @@ def _priority(raw: Any) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise PoisonMessage(f"priority is not an int: {raw!r}")
     return max(1, min(3, raw))
+
+
+def _id_str(raw: Any) -> str | None:
+    """A header id as text. The Avro reader returns `uuid` logical types as uuid.UUID objects,
+    which the outbox's JSON encoder cannot serialize; every id leaves this module as a str."""
+    return None if raw is None else str(raw)
 
 
 def _enum_str(raw: Any) -> str:
@@ -423,8 +430,8 @@ async def _apply(
                     to=user_email,
                     subject=note.title,
                     body=render_body(note.body, note.link),
-                    correlation_id=header.get("correlation_id"),
-                    causation_id=header.get("event_id"),
+                    correlation_id=_id_str(header.get("correlation_id")),
+                    causation_id=_id_str(header.get("event_id")),
                 )
             )
             continue
@@ -438,8 +445,8 @@ async def _apply(
                     title=note.title,
                     body=note.body,
                     link=note.link,
-                    correlation_id=header.get("correlation_id"),
-                    causation_id=header.get("event_id"),
+                    correlation_id=_id_str(header.get("correlation_id")),
+                    causation_id=_id_str(header.get("event_id")),
                 )
             )
             continue
@@ -452,8 +459,8 @@ async def _apply(
             channel,
             status,
             detail,
-            header.get("correlation_id"),
-            header.get("event_id"),
+            _id_str(header.get("correlation_id")),
+            _id_str(header.get("event_id")),
         )
     return inserted
 
@@ -557,7 +564,7 @@ def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:
     """Decode one record; a record that can never decode becomes `PoisonMessage`."""
     try:
         return deserializer(raw_value, ctx)
-    except (ValueError, TypeError, EOFError, IndexError) as exc:
+    except UNDECODABLE as exc:
         raise PoisonMessage(f"undecodable record: {exc}") from exc
 
 

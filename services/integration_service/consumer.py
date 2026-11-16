@@ -39,6 +39,7 @@ from libs.shared.metrics import (
     serve_metrics,
     set_service,
 )
+from libs.shared.poison import UNDECODABLE
 from libs.shared.tenancy import set_rls
 from services.integration_service import tracker
 from services.integration_service.clients import Clients, get_clients
@@ -106,7 +107,7 @@ async def handle_action(
 def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:
     try:
         return deserializer(raw_value, ctx)
-    except (ValueError, TypeError, EOFError, IndexError) as exc:
+    except UNDECODABLE as exc:
         raise PoisonMessage(f"undecodable record: {exc}") from exc
 
 
