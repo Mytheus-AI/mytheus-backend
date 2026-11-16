@@ -20,6 +20,7 @@ import logging
 import os
 from typing import Any
 
+from libs.shared.kafka_auth import kafka_conf
 from services.admin_ops_service.schemas import ConsumerLag, DlqCount
 
 log = logging.getLogger(__name__)
@@ -46,13 +47,15 @@ def _read(brokers: str) -> tuple[list[DlqCount], list[ConsumerLag]]:
     from confluent_kafka import Consumer, ConsumerGroupTopicPartitions
     from confluent_kafka.admin import AdminClient
 
-    admin = AdminClient({"bootstrap.servers": brokers})
+    admin = AdminClient(kafka_conf({"bootstrap.servers": brokers}))
     probe = Consumer(
-        {
-            "bootstrap.servers": brokers,
-            "group.id": "admin-ops-service.pipeline-probe",
-            "enable.auto.commit": False,
-        }
+        kafka_conf(
+            {
+                "bootstrap.servers": brokers,
+                "group.id": "admin-ops-service.pipeline-probe",
+                "enable.auto.commit": False,
+            }
+        )
     )
     try:
         meta = admin.list_topics(timeout=TIMEOUT_S)

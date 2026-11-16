@@ -73,6 +73,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from libs.shared.inbox import is_duplicate, record_consumed
+from libs.shared.kafka_auth import kafka_conf, registry_conf
 from libs.shared.metrics import (
     observe_consumer_lag,
     record_dlq,
@@ -292,19 +293,21 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, see module
     )
 
     consumer = Consumer(
-        {
-            "bootstrap.servers": brokers,
-            "group.id": CONSUMER_GROUP,
-            "enable.auto.commit": False,
-            "auto.offset.reset": "earliest",
-        }
+        kafka_conf(
+            {
+                "bootstrap.servers": brokers,
+                "group.id": CONSUMER_GROUP,
+                "enable.auto.commit": False,
+                "auto.offset.reset": "earliest",
+            }
+        )
     )
     consumer.subscribe([TOPIC])
 
     dlq_producer = KafkaProducer(
-        {"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True}
+        kafka_conf({"bootstrap.servers": brokers, "acks": "all", "enable.idempotence": True})
     )
-    deserializer = AvroDeserializer(SchemaRegistryClient({"url": sr_url}))
+    deserializer = AvroDeserializer(SchemaRegistryClient(registry_conf({"url": sr_url})))
     set_service("meeting-service-consumer")
     serve_metrics()  # no-op unless METRICS_PORT is set
     session_factory = get_sessionmaker()
