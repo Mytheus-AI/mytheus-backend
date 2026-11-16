@@ -59,6 +59,7 @@ from libs.shared.metrics import (
     serve_metrics,
     set_service,
 )
+from libs.shared.poison import UNDECODABLE
 from libs.shared.tenancy import set_rls
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ async def consume_one(
     try:
         try:
             value = decode_value(raw)
-        except (ValueError, TypeError, EOFError, IndexError) as exc:
+        except UNDECODABLE as exc:
             raise PoisonMessage(f"undecodable record: {exc}") from exc
         outcome: str = await process(session_factory, redis, value)
     except PoisonMessage as exc:

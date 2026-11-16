@@ -74,6 +74,7 @@ from libs.shared.metrics import (
     serve_metrics,
     set_service,
 )
+from libs.shared.poison import UNDECODABLE
 from libs.shared.tenancy import set_rls
 from services.core_api import briefings as briefings_mod
 from services.core_api import decision_why
@@ -1125,7 +1126,7 @@ def decode(deserializer: Any, raw_value: bytes | None, ctx: Any) -> Any:
     """
     try:
         return deserializer(raw_value, ctx)
-    except (ValueError, TypeError, EOFError, IndexError) as exc:
+    except UNDECODABLE as exc:
         raise PoisonMessage(f"undecodable record: {exc}") from exc
 
 

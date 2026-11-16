@@ -52,6 +52,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from libs.shared.kafka_auth import kafka_conf, registry_conf
+from libs.shared.poison import UNDECODABLE
 from services.workflow_service.actions_consumer import TOPIC as ACTIONS_TOPIC
 from services.workflow_service.actions_consumer import PoisonAction, handle_action_event
 from services.workflow_service.workflows.meeting_lifecycle import (
@@ -197,7 +198,7 @@ async def run_consumer() -> None:  # pragma: no cover - thin harness, like the o
             try:
                 try:
                     value = deserializer(raw, SerializationContext(topic, MessageField.VALUE))
-                except (ValueError, TypeError, EOFError, IndexError) as exc:
+                except UNDECODABLE as exc:
                     raise PoisonMessage(f"undecodable record: {exc}") from exc
                 if topic == ACTIONS_TOPIC:
                     outcome: str = await handle_action_event(client, value, task_queue=task_queue)
