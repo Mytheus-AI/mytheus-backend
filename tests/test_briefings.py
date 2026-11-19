@@ -768,6 +768,51 @@ async def test_deepgram_request_streams_mp3_and_never_leaks_the_key():
             pass
 
 
+async def test_deepgram_reuses_one_connection_and_retries_a_dropped_one_once():
+    import httpx
+
+    # One pooled client per event loop: the TLS connection is kept between sentences.
+    assert briefing_audio._deepgram_client() is briefing_audio._deepgram_client()
+
+    calls: list[int] = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return httpx.Response(200, content=b"ID3mp3")
+
+    got = b"".join(
+        [
+            c
+            async for c in briefing_audio.deepgram_stream(
+                "https://dg.test",
+                "k",
+                "Hi",
+                voice="aura-2-thalia-en",
+                transport=httpx.MockTransport(flaky),
+            )
+        ]
+    )
+    assert got == b"ID3mp3" and len(calls) == 2
+
+    def dropped(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    calls.clear()
+    with pytest.raises(briefing_audio.TtsError):
+        async for _ in briefing_audio.deepgram_stream(
+            "https://dg.test",
+            "k",
+            "Hi",
+            voice="aura-2-thalia-en",
+            transport=httpx.MockTransport(dropped),
+        ):
+            pass
+    assert len(calls) == 2  # retried once, never more
+
+
 async def test_deepgram_renders_a_long_briefing_in_ordered_pieces_under_the_limit(monkeypatch):
     calls: list[tuple[str, str]] = []
 
