@@ -160,12 +160,14 @@ async def put_preferences(
 ) -> BriefingSettings:
     if body.language not in briefings.LANGUAGES:
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Unknown briefing language")
-    if body.server_voice is not None and not any(
-        v.id == body.server_voice for v in briefing_audio.server_voices()
-    ):
+    server_voice = briefing_audio.known_voice(body.server_voice)
+    if body.server_voice is not None and server_voice is None:
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Unknown server voice")
     prefs = body.model_copy(
-        update={"voice": " ".join(body.voice.split()) or None if body.voice else None}
+        update={
+            "voice": " ".join(body.voice.split()) or None if body.voice else None,
+            "server_voice": server_voice,
+        }
     )
     await briefings.save_preferences(session, ctx.org_id, _me(ctx), prefs)
     return briefings.settings_view(prefs)
