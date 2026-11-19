@@ -1,19 +1,21 @@
 """Every Myte's voice: `/api/v1/voice/*` (core-api).
 
-Mytheus speaks with Kokoro-82M, self-hosted on the VPS (`briefing_audio`, `TTS_PROVIDER`,
-default `kokoro`). These routes are what the web app and the phone use whenever a Myte talks:
+Mytheus speaks with Deepgram Aura-2 (`briefing_audio`, `TTS_PROVIDER`, default `deepgram`,
+`DEEPGRAM_API_KEY`). These routes are what the web app and the phone use whenever a Myte talks:
 Ask Myte's read aloud and voice mode, and the briefing player.
 
 - `GET /api/v1/voice/voices`: whether server voice is on, the voices a person can choose
-  (curated Kokoro voices with a short description, accent and gender), the one they chose and
-  the one their Myte speaks with now (their choice, else their Myte's personality default).
+  (curated Aura-2 voices with a short description, accent and gender), the one they chose and
+  the one their Myte speaks with now (their choice, else their Myte's personality default). A
+  voice chosen while Mytheus spoke with Kokoro is shown as its Deepgram counterpart.
 - `PUT /api/v1/voice/preference` `{voice}`: choose the Myte's voice (`null` returns to the
   personality default). Stored as `briefing_preferences.server_voice`, so briefings use it too.
-- `POST /api/v1/voice/speech` `{text, voice?, speed?, language?}`: streams MP3 (`audio/mpeg`).
-  Text is 1 to 1500 characters (the apps send a sentence or two at a time, so the first sound
-  arrives quickly). 60 requests per minute per person (`VOICE_SPEECH_PER_MINUTE`;
-  cached phrases do not count), counted in
-  Redis at `nexus:{org_id}:ratelimit:voice:{user_id}:{minute}`. Server voice off or Kokoro
+- `POST /api/v1/voice/speech` `{text, voice?, speed?, language?}`: streams MP3 (`audio/mpeg`)
+  as Deepgram renders it. Text is 1 to 1500 characters (the apps send a sentence or two at a
+  time, so the first sound arrives quickly). 60 requests per minute per person
+  (`VOICE_SPEECH_PER_MINUTE`; cached phrases do not count), counted in
+  Redis at `nexus:{org_id}:ratelimit:voice:{user_id}:{minute}`. Server voice off, no voice for
+  the language (Aura-2 has none for Hindi, Portuguese, Korean, Chinese or Arabic) or Deepgram
   unreachable: 503 `voice_not_connected` before any audio is sent.
 - `POST /api/v1/voice/transcribe`: the raw recording (`audio/webm`, `audio/ogg`, `audio/mp4`,
   `audio/mpeg` or `audio/wav`, at most 10 MB) -> `{text}`. Talk mode's ears, so it works in
@@ -115,7 +117,10 @@ async def _view(session: AsyncSession, user_id: uuid.UUID) -> VoicesView:
         else None
     )
     return VoicesView(
-        connected=connected, voices=_options(), chosen=prefs.server_voice, selected=selected
+        connected=connected,
+        voices=_options(),
+        chosen=briefing_audio.known_voice(prefs.server_voice),
+        selected=selected,
     )
 
 
@@ -134,11 +139,12 @@ async def choose_voice(
     session: Annotated[AsyncSession, Depends(tenant_session)],
 ) -> VoicesView:
     me = _me(ctx)
-    if body.voice is not None and not any(v.id == body.voice for v in _options()):
+    voice = briefing_audio.known_voice(body.voice)
+    if body.voice is not None and voice is None:
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Unknown voice")
     prefs = await briefings.preferences(session, me)
     await briefings.save_preferences(
-        session, ctx.org_id, me, prefs.model_copy(update={"server_voice": body.voice})
+        session, ctx.org_id, me, prefs.model_copy(update={"server_voice": voice})
     )
     return await _view(session, me)
 
@@ -151,8 +157,9 @@ def _per_minute() -> int:
 
 
 async def _take(org_id: uuid.UUID, user_id: uuid.UUID, kind: str = "voice") -> bool:
-    """A fixed one-minute window per person. Redis down: allowed (the voice is self-hosted, so
-    an outage of the counter costs CPU time, never money) and logged."""
+    """A fixed one-minute window per person. Redis down: allowed and logged. Deepgram bills per
+    character, but a short counter outage is cheaper than silencing every Myte, and only
+    signed-in members reach this."""
     key = redis_key(org_id, "ratelimit", kind, user_id, int(time.time() // 60))
     try:
         redis = get_redis()
@@ -214,10 +221,11 @@ async def speak(
     if not text_in:
         raise ProblemDetail(422, ErrorCode.VALIDATION_FAILED, "Nothing to say")
     speaker = briefing_audio.speaker()
-    if speaker is None:
+    if speaker is None or not briefing_audio.speaks(body.language):
         raise _not_connected()
-    if body.voice is not None and any(v.id == body.voice for v in _options()):
-        voice = body.voice
+    sent = briefing_audio.known_voice(body.voice)
+    if sent is not None:
+        voice = sent
     else:
         prefs = await briefings.preferences(session, me)
         voice = briefing_audio.voice_for(

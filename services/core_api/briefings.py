@@ -219,8 +219,12 @@ async def preferences(session: AsyncSession, user_id: uuid.UUID) -> BriefingPref
 
 
 def settings_view(prefs: BriefingPreferences) -> BriefingSettings:
+    # A voice chosen while Mytheus spoke with Kokoro is shown as its Deepgram counterpart.
+    shown = prefs.model_copy(
+        update={"server_voice": briefing_audio.canonical_voice(prefs.server_voice)}
+    )
     return BriefingSettings(
-        **prefs.model_dump(),
+        **shown.model_dump(),
         server_voice_connected=briefing_audio.connected(),
         server_voices=[
             ServerVoiceOption(id=v.id, name=v.name, description=v.description)

@@ -547,15 +547,17 @@ async def test_server_voice_renders_stores_and_then_notifies(client):
     assert await render(host.org_id, briefing) == "ready"
     key = f"{host.org_id}/briefings/{member.user_id}/{briefing}.mp3"
     assert key in fake.objects
+    # 'bm_george' was chosen while Mytheus spoke with Kokoro: it carries over to Deepgram's Draco.
     text_, voice, language = fake.spoken[0]
-    assert text_.startswith("Hi Sam") and voice == "bm_george" and language == "en"
+    assert text_.startswith("Hi Sam") and voice == "aura-2-draco-en" and language == "en"
     got = client.get(f"/api/v1/briefings/{briefing}").json()
-    assert got["audio"] == {"status": "ready", "voice": "bm_george"}
+    assert got["audio"] == {"status": "ready", "voice": "aura-2-draco-en"}
     url = client.get(f"/api/v1/briefings/{briefing}/audio").json()
     assert url["url"].startswith("https://storage.test/") and url["mime"] == "audio/mpeg"
     assert len(notifications_for(briefing)) == 1
     settings = client.get("/api/v1/briefings/preferences").json()
     assert settings["server_voice_connected"] is True and len(settings["server_voices"]) >= 4
+    assert settings["server_voice"] == "aura-2-draco-en"
 
 
 async def test_a_failed_voice_falls_back_to_the_device_and_still_notifies(client):
@@ -646,21 +648,148 @@ def test_payload_shapes_are_json_safe():
     assert json.loads(json.dumps(script()))["segments"][0]["kind"] == "opening"
 
 
-# --- every Myte's voice (Kokoro, /api/v1/voice) -------------------------------------------------
+# --- every Myte's voice (Deepgram Aura-2, /api/v1/voice) ----------------------------------------
 
 
-def test_kokoro_is_the_default_provider_with_curated_voices(monkeypatch):
+def test_deepgram_is_the_default_provider_with_curated_voices(monkeypatch):
     monkeypatch.delenv("TTS_PROVIDER", raising=False)
-    assert briefing_audio.provider() == "kokoro"
+    assert briefing_audio.provider() == "deepgram"
     ids = [v.id for v in briefing_audio.server_voices()]
-    assert ids[0] == "af_heart" and "bm_george" in ids and len(ids) >= 8
-    assert briefing_audio.voice_for(None, "friendly") == "af_bella"
-    assert briefing_audio.voice_for("am_puck", "friendly") == "am_puck"
-    assert briefing_audio.voice_for("not-a-voice", None) == "af_heart"
-    # Another language speaks with that language's own Kokoro voice.
-    assert briefing_audio.voice_for("am_puck", "friendly", "es") == "ef_dora"
+    assert ids[0] == "aura-2-thalia-en" and "aura-2-draco-en" in ids and len(ids) == 9
+    assert {v.accent for v in briefing_audio.server_voices()} == {"American", "British"}
+    assert briefing_audio.voice_for(None, "friendly") == "aura-2-helena-en"
+    assert briefing_audio.voice_for("aura-2-apollo-en", "friendly") == "aura-2-apollo-en"
+    assert briefing_audio.voice_for("not-a-voice", None) == "aura-2-thalia-en"
+    # A Kokoro choice carries over to its Deepgram counterpart.
+    assert briefing_audio.voice_for("am_puck", "friendly") == "aura-2-apollo-en"
+    assert briefing_audio.known_voice("bf_emma") == "aura-2-pandora-en"
+    assert briefing_audio.known_voice("nope") is None
+    # Another language speaks with that language's own Aura-2 voice; some have none.
+    assert briefing_audio.voice_for("aura-2-apollo-en", "friendly", "es") == "aura-2-selena-es"
+    assert briefing_audio.voice_for(None, None, "ja-JP") == "aura-2-izanami-ja"
+    assert briefing_audio.speaks("de") and briefing_audio.speaks("en-GB")
+    assert not briefing_audio.speaks("hi") and not briefing_audio.speaks("zh")
+    # No key, no voice; with one, live speech is Deepgram's.
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    assert briefing_audio.speaker() is None
+    assert not briefing_audio.configured_from_env(
+        {"S3_ACCESS_KEY_ID": "k", "S3_SECRET_ACCESS_KEY": "s"}
+    )
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test")
+    assert isinstance(briefing_audio.speaker(), briefing_audio.DeepgramSpeaker)
+    assert briefing_audio.configured_from_env(
+        {"DEEPGRAM_API_KEY": "dg", "S3_ACCESS_KEY_ID": "k", "S3_SECRET_ACCESS_KEY": "s"}
+    )
     monkeypatch.setenv("TTS_PROVIDER", "none")
     assert briefing_audio.server_voices() == () and briefing_audio.speaker() is None
+
+
+def test_kokoro_stays_selectable(monkeypatch):
+    monkeypatch.setenv("TTS_PROVIDER", "kokoro")
+    assert briefing_audio.provider() == "kokoro"
+    assert [v.id for v in briefing_audio.server_voices()][0] == "af_heart"
+    assert briefing_audio.voice_for(None, "friendly") == "af_bella"
+    assert briefing_audio.voice_for("am_puck", "friendly") == "am_puck"
+    assert briefing_audio.voice_for("am_puck", "friendly", "es") == "ef_dora"
+    assert briefing_audio.canonical_voice("af_heart") == "af_heart"
+    assert briefing_audio.speaks("hi")
+    assert isinstance(briefing_audio.speaker(), briefing_audio.KokoroSpeaker)
+
+
+async def test_deepgram_request_streams_mp3_and_never_leaks_the_key():
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, headers={"content-type": "audio/mpeg"}, content=b"ID3mp3-bytes")
+
+    got = b"".join(
+        [
+            c
+            async for c in briefing_audio.deepgram_stream(
+                "https://dg.test/",
+                "dg-secret",
+                "Hello there.",
+                voice="aura-2-thalia-en",
+                speed=1.2,
+                transport=httpx.MockTransport(answer),
+            )
+        ]
+    )
+    assert got == b"ID3mp3-bytes"
+    req = seen[0]
+    assert req.method == "POST" and req.url.path == "/v1/speak"
+    assert dict(req.url.params) == {"model": "aura-2-thalia-en", "encoding": "mp3", "speed": "1.2"}
+    assert req.headers["authorization"] == "Token dg-secret"
+    assert json.loads(req.content) == {"text": "Hello there."}
+
+    # Only English and Spanish voices take speed (the others answer 400 to it).
+    async for _ in briefing_audio.deepgram_stream(
+        "https://dg.test",
+        "dg-secret",
+        "Bonjour.",
+        voice="aura-2-agathe-fr",
+        speed=1.2,
+        transport=httpx.MockTransport(answer),
+    ):
+        pass
+    assert "speed" not in seen[-1].url.params
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401, json={"err_code": "INVALID_AUTH", "err_msg": "Invalid credentials."}
+        )
+
+    with pytest.raises(briefing_audio.TtsError) as err:
+        async for _ in briefing_audio.deepgram_stream(
+            "https://dg.test",
+            "dg-secret",
+            "Hi",
+            voice="aura-2-thalia-en",
+            transport=httpx.MockTransport(refuse),
+        ):
+            pass
+    assert "401" in str(err.value) and "INVALID_AUTH" in str(err.value)
+    assert "dg-secret" not in str(err.value)
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    with pytest.raises(briefing_audio.TtsError):
+        async for _ in briefing_audio.deepgram_stream(
+            "https://dg.test",
+            "k",
+            "Hi",
+            voice="aura-2-thalia-en",
+            transport=httpx.MockTransport(down),
+        ):
+            pass
+
+
+async def test_deepgram_renders_a_long_briefing_in_ordered_pieces_under_the_limit(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    async def fake_stream(base_url, key, text, *, voice, speed=1.0, transport=None):  # type: ignore[no-untyped-def]
+        calls.append((text, voice))
+        yield f"<{text[:5]}>".encode()
+
+    monkeypatch.setattr(briefing_audio, "deepgram_stream", fake_stream)
+    backend = briefing_audio.DeepgramS3(
+        {
+            "DEEPGRAM_API_KEY": "dg",
+            "S3_ACCESS_KEY_ID": "k",
+            "S3_SECRET_ACCESS_KEY": "s",
+            "S3_ENDPOINT_URL": "http://s3.test",
+        }
+    )
+    text = " ".join(f"Point {i} is about the launch and who owns it." for i in range(90))
+    data = await backend.synthesize(text, voice="aura-2-thalia-en", language="en")
+    assert len(calls) >= 2 and all(len(t) <= 1900 for t, _ in calls)
+    assert data.startswith(b"<Point>") and data.count(b"<") == len(calls)
+    with pytest.raises(briefing_audio.TtsError):
+        await backend.synthesize("नमस्ते", voice="aura-2-thalia-en", language="hi")
 
 
 def test_voices_lists_the_choice_and_speech_streams_in_the_chosen_voice(client):
@@ -671,18 +800,25 @@ def test_voices_lists_the_choice_and_speech_streams_in_the_chosen_voice(client):
         sign_in(host)  # host's Myte is 'friendly'
         got = client.get("/api/v1/voice/voices").json()
         assert got["connected"] is True and got["chosen"] is None
-        assert got["selected"] == "af_bella"
+        assert got["selected"] == "aura-2-helena-en"
         assert {"id", "name", "description", "accent", "gender"} <= set(got["voices"][0])
         assert client.put("/api/v1/voice/preference", json={"voice": "nope"}).status_code == 422
-        chosen = client.put("/api/v1/voice/preference", json={"voice": "bm_george"}).json()
-        assert chosen["chosen"] == "bm_george" and chosen["selected"] == "bm_george"
+        chosen = client.put("/api/v1/voice/preference", json={"voice": "aura-2-draco-en"}).json()
+        assert chosen["chosen"] == "aura-2-draco-en" and chosen["selected"] == "aura-2-draco-en"
         # The same choice is the briefing's server voice.
-        assert client.get("/api/v1/briefings/preferences").json()["server_voice"] == "bm_george"
+        prefs = client.get("/api/v1/briefings/preferences").json()
+        assert prefs["server_voice"] == "aura-2-draco-en"
         res = client.post("/api/v1/voice/speech", json={"text": "Hello  there. "})
         assert res.status_code == 200 and res.headers["content-type"] == "audio/mpeg"
-        assert res.headers["x-myte-voice"] == "bm_george"
+        assert res.headers["x-myte-voice"] == "aura-2-draco-en"
         assert res.content.startswith(b"ID3fake-mp3:")
-        assert fake.spoken[-1] == ("Hello there.", "bm_george", 1.0)
+        assert fake.spoken[-1] == ("Hello there.", "aura-2-draco-en", 1.0)
+        # An app still holding a Kokoro id is understood and stored as its Deepgram counterpart.
+        legacy = client.put("/api/v1/voice/preference", json={"voice": "af_aoede"}).json()
+        assert legacy["chosen"] == "aura-2-harmonia-en"
+        # Aura-2 has no Hindi voice: a clear 503, never English sounds for Hindi text.
+        res = client.post("/api/v1/voice/speech", json={"text": "नमस्ते", "language": "hi"})
+        assert res.status_code == 503 and res.json()["reason"] == "voice_not_connected"
         assert client.post("/api/v1/voice/speech", json={"text": ""}).status_code == 422
         assert client.post("/api/v1/voice/speech", json={"text": "x" * 1501}).status_code == 422
     finally:
