@@ -536,6 +536,25 @@ def _deepgram_error(body: bytes) -> str:
     return "error"
 
 
+_DG_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+# Idle connections are let go after 30 s, before Deepgram's own idle timeout closes them first.
+_DG_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=8, keepalive_expiry=30.0)
+_STALE_CONNECTION = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
+_dg_pool: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
+
+
+def _deepgram_client() -> httpx.AsyncClient:
+    """One pooled client per event loop, so the TLS connection to Deepgram is reused. A new
+    connection for every sentence cost about 0.6 s before the first audio (2026-11-19: 1.0 s on
+    a fresh connection, 0.35 s on a kept-alive one; 1.2 s end to end in production)."""
+    loop = asyncio.get_running_loop()
+    if _dg_pool and _dg_pool[0][0] is loop and not _dg_pool[0][1].is_closed:
+        return _dg_pool[0][1]
+    client = httpx.AsyncClient(timeout=_DG_TIMEOUT, limits=_DG_LIMITS)
+    _dg_pool[:] = [(loop, client)]
+    return client
+
+
 async def deepgram_stream(
     base_url: str,
     key: str,
@@ -550,30 +569,38 @@ async def deepgram_stream(
     params = {"model": voice, "encoding": "mp3"}
     if abs(speed - 1.0) > 1e-3 and voice.endswith(("-en", "-es")):
         params["speed"] = f"{min(max(speed, 0.7), 1.5):g}"
+    own = httpx.AsyncClient(timeout=_DG_TIMEOUT, transport=transport) if transport else None
+    client = own or _deepgram_client()
     got = False
     try:
-        async with (
-            httpx.AsyncClient(
-                timeout=httpx.Timeout(60.0, connect=5.0), transport=transport
-            ) as client,
-            client.stream(
-                "POST",
-                f"{base_url.rstrip('/')}/v1/speak",
-                params=params,
-                headers={"Authorization": f"Token {key}", "Content-Type": "application/json"},
-                json={"text": text},
-            ) as res,
-        ):
-            if res.status_code != 200:
-                raise TtsError(
-                    f"tts answered {res.status_code} ({_deepgram_error(await res.aread())})"
-                )
-            async for chunk in res.aiter_bytes():
-                if chunk:
-                    got = True
-                    yield chunk
-    except httpx.HTTPError as exc:
-        raise TtsError(f"tts unreachable: {type(exc).__name__}") from None
+        for attempt in (1, 2):
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{base_url.rstrip('/')}/v1/speak",
+                    params=params,
+                    headers={"Authorization": f"Token {key}", "Content-Type": "application/json"},
+                    json={"text": text},
+                ) as res:
+                    if res.status_code != 200:
+                        detail = _deepgram_error(await res.aread())
+                        raise TtsError(f"tts answered {res.status_code} ({detail})")
+                    async for chunk in res.aiter_bytes():
+                        if chunk:
+                            got = True
+                            yield chunk
+                break
+            except _STALE_CONNECTION as exc:
+                # A kept-alive connection Deepgram already closed: try once more on a fresh
+                # one, but only if nothing has been played yet.
+                if got or attempt == 2:
+                    raise TtsError(f"tts unreachable: {type(exc).__name__}") from None
+                logger.info("voice: Deepgram connection dropped before any audio; retrying")
+            except httpx.HTTPError as exc:
+                raise TtsError(f"tts unreachable: {type(exc).__name__}") from None
+    finally:
+        if own is not None:
+            await own.aclose()
     if not got:
         raise TtsError("tts answered no audio")
 
